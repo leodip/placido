@@ -413,7 +413,7 @@ def cmd_close(args: argparse.Namespace) -> int:
 
 def _ask_fold(ctx: driver.Context, items: list[dict], reply=None) -> list[int]:
     """Ask once, in this terminal, which follow-ups to fold into the change; the rest
-    become GitHub issues. Without a terminal to ask in, none are folded in."""
+    are posted on the issue at delivery. Without a terminal to ask in, none are folded in."""
 
     if reply is None:
         if not sys.stdin.isatty():

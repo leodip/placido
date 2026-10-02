@@ -1746,7 +1746,18 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   placido posts every `followup-*.md` beside the agreement, in full, as one
   comment on the run's issue (`issue.commented`, once per run, headings
   demoted a level), and files none of them; the user files them by hand. The
-  review's follow-ups are still filed as issues, as decided in step 13. The
-  spec skill now names the draft format. The running `placido run` loaded
-  its code before this change, so this run posts the comment only if its
-  delivery is resumed by a new `placido run`.
+  spec skill now names the draft format.
+- The user then extended it to the review's follow-ups, reversing step 13's
+  filing: placido files no issues at all. The interview's drafts and the
+  review's follow-ups the user did not fold in go, each in full with why it
+  was left out, into one comment on the run's issue once the pull request
+  exists (`followups.posted`, once per run; on the pull request for a local
+  issue file), and the pull request's summary links to it. The user files
+  what they want. The running `placido run` loaded its code before these
+  changes, so it will still file the review's follow-ups as issues and not
+  post the drafts.
+- A rename in this change broke `summary.py` for about a minute in the live
+  checkout, which `~/.local/bin/placido` runs. The user's running process had
+  loaded its modules already, but any new command would have failed. From
+  now on, placido changes during a live run are made in a separate worktree
+  and merged only with the suite passing.

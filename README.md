@@ -39,11 +39,11 @@ placido close 439      after you merge: teardown, worktree and workspace removed
    Work that belongs to the issue is folded in; for out-of-scope follow-ups, you pick
    in the terminal which to fold in anyway.
 6. **Pull request.** Placido pushes the branch once, opens the pull request ready for
-   review (`Closes #N`, then a summary of everything the run did and decided), files
-   the review's follow-ups you did not fold in as issues, posts the follow-ups the
-   interview drafted as a comment on the issue, for you to file by hand, and waits
-   for CI. A red run's failed
-   logs go to a fixer agent, up to twice.
+   review (`Closes #N`, then a summary of everything the run did and decided), and
+   waits for CI. A red run's failed logs go to a fixer agent, up to twice. The
+   follow-ups, those the interview drafted and those from the review you did not fold
+   in, go in full into one comment on the issue; placido files no issues, so you file
+   the ones you want.
 7. **Close.** After you merge, `placido close` runs your project's teardown and
    removes the worktree and its workspace. The branch stays.
 

@@ -29,7 +29,7 @@ class FakeGh:
         if argv[0] == "git":
             return Result(0, "pushed")
         what = " ".join(argv[1:3])
-        if what in ("pr create", "pr edit", "issue create", "issue comment"):
+        if what in ("pr create", "pr edit", "issue create", "issue comment", "pr comment"):
             body = Path(argv[argv.index("--body-file") + 1]).read_text()
             self.bodies.setdefault(what, body)
             self.bodies[what + " last"] = body
@@ -40,6 +40,8 @@ class FakeGh:
             return Result(0, f"https://github.com/leodip/goiabada/issues/{self.issues}\n")
         if what == "issue comment":
             return Result(0, f"https://github.com/leodip/goiabada/issues/{argv[3]}#issuecomment-9001\n")
+        if what == "pr comment":
+            return Result(0, f"https://github.com/leodip/goiabada/pull/{argv[3]}#issuecomment-9002\n")
         if what == "pr checks":
             answer = self.checks.pop(0) if self.checks else []
             return Result(0, json.dumps(answer)) if answer else Result(1, "no checks reported on the 'x' branch")
@@ -119,11 +121,15 @@ class DeliverTest(DeliverCase):
         self.assertNotIn("**State:**", body)
         self.assertNotIn("#999", body.split("\n\n")[0])
         self.assertIn("Built by placido", body)
-        issue = self.gh.bodies["issue create"]
-        self.assertIn(f"**Left out of {PR} because:** separate feature", issue)
-        self.assertIn("Found by placido while working on #439.", issue)
+        self.assertEqual(self.gh.made("issue create"), 0)  # placido files no issues
+        comment = self.gh.bodies["issue comment"]
+        self.assertIn("## Left by the review\n\n### Expose the limit in metrics\n\nno gauge yet", comment)
+        self.assertIn("**Left out because:** separate feature", comment)
         final = self.gh.bodies["pr edit last"]
-        self.assertIn("## Follow-up issues\n\n- https://github.com/leodip/goiabada/issues/461 Expose the limit", final)
+        self.assertIn(
+            "## Follow-ups\n\nPosted for filing by hand (1 from the review):"
+            " https://github.com/leodip/goiabada/issues/439#issuecomment-9001", final,
+        )
         self.assertIn(f"- **Pull request:** {PR}", final)
         self.assertIn("- **CI:** green", final)
         self.assertEqual(self.events("pr.opened")[0]["number"], 450)
@@ -157,13 +163,13 @@ class DeliverTest(DeliverCase):
         self.gh.checks = [[check("build", "pass")]] * 2
         self.deliver()
         self.deliver()
-        self.assertEqual((self.gh.made("pr create"), self.gh.made("issue create")), (1, 1))
+        self.assertEqual((self.gh.made("pr create"), self.gh.made("issue comment")), (1, 1))
         self.assertEqual(self.gh.made("pr edit"), 4)
 
 
-class DraftsTest(DeliverCase):
-    """Follow-ups the interview drafted go to the run's issue as one comment, for
-    the user to file by hand; they are never filed as issues."""
+class FollowUpsTest(DeliverCase):
+    """Every follow-up, drafted by the interview or left by the review, goes into one
+    comment on the run's issue, for the user to file by hand; none is filed."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -182,14 +188,18 @@ class DraftsTest(DeliverCase):
         order = [" ".join(argv[1:3]) for argv in self.gh.calls if argv[0] == "gh"]
         self.assertLess(order.index("pr create"), order.index("issue comment"))
         body = self.gh.bodies["issue comment"]
-        self.assertTrue(body.startswith(f"Placido's interview for this issue drafted 2 follow-ups, left out of {PR}."))
-        self.assertLess(body.index("## Pin the alpine base"), body.index("## refactor: replace chi"))
-        self.assertIn("### Why\n\npprof is linked.", body)
+        self.assertTrue(body.startswith(f"Placido left 3 follow-ups out of {PR}. None is filed"))
+        self.assertLess(body.index("## Drafted during the interview"), body.index("### Pin the alpine base"))
+        self.assertLess(body.index("### Pin the alpine base"), body.index("### refactor: replace chi"))
+        self.assertLess(body.index("### refactor: replace chi"), body.index("## Left by the review"))
+        self.assertIn("#### Why\n\npprof is linked.", body)
         self.assertIn("```sh\n# not a heading\n```", body)
-        (event,) = self.events("issue.commented")
+        (event,) = self.events("followups.posted")
         self.assertEqual(event["url"], "https://github.com/leodip/goiabada/issues/439#issuecomment-9001")
         self.assertEqual(event["drafts"], ["followup-alpine-pin.md", "followup-remove-chi.md"])
-        self.assertEqual(self.gh.made("issue create"), 1)  # only the review's follow-up is filed
+        self.assertEqual(event["review"], ["F1"])
+        self.assertEqual(self.gh.made("issue create"), 0)
+        self.assertIn("(2 from the interview, 1 from the review)", self.gh.bodies["pr edit last"])
 
     def test_a_resumed_delivery_does_not_comment_again(self):
         self.deliver()
@@ -199,9 +209,20 @@ class DraftsTest(DeliverCase):
     def test_nothing_to_post(self):
         for path in self.run.path.parent.glob("followup-*.md"):
             path.unlink()
+        self.run.event("review.followups", items=[])
         self.deliver()
         self.assertEqual(self.gh.made("issue comment"), 0)
-        self.assertEqual(self.events("issue.commented"), [])
+        self.assertEqual(self.events("followups.posted"), [])
+        self.assertNotIn("## Follow-ups", self.gh.bodies["pr edit last"])
+
+    def test_a_local_issue_file_gets_them_on_the_pull_request(self):
+        record = runlog.read_record(self.run.path)
+        record["issue_number"] = None
+        (self.run.path / "run.json").write_text(json.dumps(record))
+        self.deliver()
+        comment = next(argv for argv in self.gh.calls if argv[1:3] == ["pr", "comment"])
+        self.assertEqual(comment[3], "450")
+        self.assertEqual(self.events("followups.posted")[0]["on"], "pr 450")
 
 
 class FoldedTest(unittest.TestCase):

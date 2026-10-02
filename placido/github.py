@@ -1,17 +1,18 @@
 """Delivering a finished run on GitHub: push the branch once, open the pull request
-ready for review with the run's summary as its body, post the follow-ups the
-interview drafted as a comment on the run's issue, file the follow-ups the user did
-not fold in during the review as issues, then wait for CI and fix a red run.
+ready for review with the run's summary as its body, post the follow-ups as a
+comment on the run's issue, then wait for CI and fix a red run.
 
 Decided with the user (step 13): nothing is pushed before the review is done, so a
 stopped or abandoned run leaves nothing on GitHub; the body closes the run's issue,
 and every issue folded in during the interview, with `Closes #N`, so the user's merge
-closes them and placido never does; follow-up issues are linked from the body, not a
-comment. Each action is an event, so a resumed run picks up where it stopped.
+closes them and placido never does. Each action is an event, so a resumed run picks
+up where it stopped.
 
-The interview's drafted follow-ups (`followup-*.md` beside the agreement) are not
-filed: the user files them by hand, from a comment on the run's issue that gives
-each in full, posted once the pull request exists (decided 2026-10-02).
+Placido files no issues (decided 2026-10-02): the follow-ups the interview drafted
+(`followup-*.md` beside the agreement) and those the review left that the user did
+not fold in go, each in full with why it was left out, into one comment on the run's
+issue once the pull request exists, and the user files the ones they want. A run
+from a local issue file comments on the pull request instead.
 """
 
 from __future__ import annotations
@@ -61,13 +62,12 @@ class GitHub:
     def edit_pr(self, number: int, body: Path) -> None:
         self._call("gh", "pr", "edit", str(number), "-R", self.repo, "--body-file", str(body))
 
-    def open_issue(self, title: str, body: Path) -> str:
-        return _url(self._call("gh", "issue", "create", "-R", self.repo, "--title", title, "--body-file", str(body)), "issues")
+    def comment(self, kind: str, number: int, body: Path) -> str:
+        """Comment on an issue or a pull request (kind "issue" or "pr"); the comment's URL."""
 
-    def comment_issue(self, number: int, body: Path) -> str:
-        out = self._call("gh", "issue", "comment", str(number), "-R", self.repo, "--body-file", str(body))
-        found = re.search(r"https://github\.com/\S+/issues/\d+#issuecomment-\d+", out)
-        return found.group(0) if found else _url(out, "issues")
+        out = self._call("gh", kind, "comment", str(number), "-R", self.repo, "--body-file", str(body))
+        found = re.search(r"https://github\.com/\S+/(?:issues|pull)/\d+#issuecomment-\d+", out)
+        return found.group(0) if found else _url(out, "issues" if kind == "issue" else "pull")
 
     def checks(self, number: int) -> list[dict[str, Any]]:
         """The pull request's checks; empty before CI has attached any."""
@@ -133,8 +133,7 @@ def deliver(
         url = github.open_pr(record.get("base", "main"), branch, _title(record, run.path), _body(run.path))
         run.event("pr.opened", url=url, number=number_of(url))
     number = int((runlog.last_event(run.path, "pr.opened") or {})["number"])
-    _comment_drafts(github, run, record)
-    _file_follow_ups(github, run, record)
+    _post_follow_ups(github, run, record, number)
     github.edit_pr(number, _body(run.path))
 
     outcome = "none"
@@ -189,64 +188,60 @@ def _save_logs(github: GitHub, folder: Path, failed: list[dict[str, Any]]) -> li
     return logs
 
 
-def _file_follow_ups(github: GitHub, run: runlog.Run, record: dict[str, Any]) -> None:
-    """Open an issue for each follow-up the review left and not yet filed, linking
-    back to the pull request. The review logs its follow-ups (`review.followups`), so a
-    resumed run files the same ones."""
-
-    filed = {e.get("id") for e in runlog.read_events(run.path) if e.get("event") == "followup.filed"}
-    pr = (runlog.last_event(run.path, "pr.opened") or {}).get("url", "")
-    source = f"#{record['issue_number']}" if record.get("issue_number") else _title(record, run.path)
-    for item in (runlog.last_event(run.path, "review.followups") or {}).get("items", []):
-        if item.get("id") in filed:
-            continue
-        body = (
-            f"{item.get('description') or item.get('title')}\n\n"
-            f"**Left out of {pr or 'the pull request'} because:** {item.get('why') or 'out of scope'}\n\n"
-            f"Found by placido while working on {source}."
-        )
-        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as out:
-            out.write(body + "\n")
-        url = github.open_issue(str(item.get("title")), Path(out.name))
-        Path(out.name).unlink(missing_ok=True)
-        run.event("followup.filed", id=item.get("id"), title=item.get("title"), why=item.get("why"), url=url)
-
-
 def drafts(issue_dir: Path) -> list[Path]:
     """The follow-ups the interview drafted beside the agreement, by name."""
 
     return sorted(issue_dir.glob("followup-*.md"))
 
 
-def _comment_drafts(github: GitHub, run: runlog.Run, record: dict[str, Any]) -> None:
-    """Post the interview's drafted follow-ups, each in full, as one comment on the
-    run's issue, for the user to file by hand. Once per run."""
+def _post_follow_ups(github: GitHub, run: runlog.Run, record: dict[str, Any], pr_number: int) -> None:
+    """One comment with every follow-up, in full, for the user to file by hand: on the
+    run's issue, or on the pull request for a local issue file. Once per run."""
 
     found = drafts(spec.issue_dir(run.path))
-    if not found or not record.get("issue_number") or runlog.last_event(run.path, "issue.commented"):
+    review = (runlog.last_event(run.path, "review.followups") or {}).get("items", [])
+    if not (found or review) or runlog.last_event(run.path, "followups.posted"):
         return
     pr = (runlog.last_event(run.path, "pr.opened") or {}).get("url", "the pull request")
+    count = len(found) + len(review)
     parts = [
-        f"Placido's interview for this issue drafted {len(found)} follow-up"
-        f"{'s' if len(found) != 1 else ''}, left out of {pr}. They are not filed as issues;"
-        " each is here in full, with its reasons and evidence, to file by hand if wanted."
+        f"Placido left {count} follow-up{'s' if count != 1 else ''} out of {pr}. None is filed"
+        " as an issue: each is here in full, with why it was left out, to file by hand if wanted."
     ]
-    parts += [_demote(path.read_text(encoding="utf-8").strip()) for path in found]
-    body = run.path / "issue-comment.md"
-    body.write_text("\n\n---\n\n".join(parts) + "\n", encoding="utf-8")
-    url = github.comment_issue(int(record["issue_number"]), body)
-    run.event("issue.commented", url=url, drafts=[path.name for path in found])
+    if found:
+        parts.append("## Drafted during the interview")
+        parts += [_demote(path.read_text(encoding="utf-8").strip(), 2) for path in found]
+    if review:
+        parts.append("## Left by the review")
+        parts += [
+            f"### {item.get('title')}\n\n{item.get('description') or item.get('title')}\n\n"
+            f"**Left out because:** {item.get('why') or 'out of scope'}"
+            for item in review
+        ]
+    body = run.path / "followups-comment.md"
+    body.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
+    if record.get("issue_number"):
+        kind, number = "issue", int(record["issue_number"])
+    else:
+        kind, number = "pr", pr_number
+    url = github.comment(kind, number, body)
+    run.event(
+        "followups.posted", url=url, on=f"{kind} {number}", drafts=[path.name for path in found],
+        review=[item.get("id") for item in review],
+    )
 
 
-def _demote(text: str) -> str:
-    """Each heading one level down, outside code fences, so a draft's title nests
-    under the comment rather than shouting as a top-level heading."""
+def _demote(text: str, levels: int) -> str:
+    """Each heading some levels down, outside code fences, so a draft's own title
+    nests under the comment's sections."""
 
     lines, fenced = [], False
     for line in text.splitlines():
         if line.lstrip().startswith("```"):
             fenced = not fenced
-        lines.append("#" + line if not fenced and re.match(r"#{1,5} ", line) else line)
+        if not fenced and re.match(r"#{1,6} ", line):
+            line = "#" * min(6, len(line) - len(line.lstrip("#")) + levels) + line.lstrip("#")
+        lines.append(line)
     return "\n".join(lines)
 
 

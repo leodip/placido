@@ -36,7 +36,7 @@ def write(run_dir: Path, stopped: str | None = None) -> str:
     lines += _slices(run_dir, events)
     lines += _decisions(run_dir, events)
     lines += _review(run_dir)
-    lines += _follow_up_issues(events)
+    lines += _posted_follow_ups(events)
     lines += _follow_ups(run_dir, events)
     lines += _trouble(events)
     text = "\n".join(lines).rstrip() + "\n"
@@ -163,15 +163,15 @@ def _bullets(text: str) -> list[str]:
     return [item for item in items if item]
 
 
-def _follow_up_issues(events: list[dict[str, Any]]) -> list[str]:
-    """The issues filed for the follow-ups the user did not fold in."""
+def _posted_follow_ups(events: list[dict[str, Any]]) -> list[str]:
+    """Where the follow-ups were posted for the user to file by hand."""
 
-    filed = [e for e in events if e.get("event") == "followup.filed"]
-    if not filed:
+    posted = next((e for e in reversed(events) if e.get("event") == "followups.posted"), None)
+    if posted is None:
         return []
-    lines = ["## Follow-up issues", ""]
-    lines += [f"- {e.get('url')} {e.get('title')}: {e.get('why') or 'out of scope'}" for e in filed]
-    return lines + [""]
+    counts = [f"{len(posted.get(key) or [])} {name}" for key, name in
+              (("drafts", "from the interview"), ("review", "from the review")) if posted.get(key)]
+    return ["## Follow-ups", "", f"Posted for filing by hand ({', '.join(counts)}): {posted.get('url')}", ""]
 
 
 def _trouble(events: list[dict[str, Any]]) -> list[str]:
