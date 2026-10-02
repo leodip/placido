@@ -692,6 +692,11 @@ can. Before the first real Goiabada runs, re-evaluate how to limit that:
 The leaning is toward the dedicated environment, or the agents' sandboxes if a
 test shows they cope with Docker.
 
+Decided on 2026-10-02, for the first run: accept the risk for now. Issue #331
+runs on the user's own WSL as it is, watched live, and isolation is
+re-evaluated after the first run. A dedicated environment changes nothing in
+placido, so it can come later without rework.
+
 ## Implementation plan
 
 Placido is built in small steps. Each step adds one capability and has a test that
@@ -1692,3 +1697,6 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   binaries, traceback and `core/errs` frames kept) rather than Go seams; the
   interview settles how. The user runs every live command; placido's side is
   building, testing, and giving exact steps.
+- Isolation (the open question due before step 14): the user chose to accept
+  the risk for the first run, on the current WSL, and re-evaluate afterwards
+  (over a dedicated WSL distro first, or testing the agents' own sandboxes).
