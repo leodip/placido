@@ -1,0 +1,222 @@
+"""`placido start <issue>`: a run folder, a worktree in its own Herdr workspace, and setup."""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import time
+from pathlib import Path
+from typing import TextIO
+
+from placido import __version__, config, doctor, issues, runlog, status
+from placido.herdr import Herdr, HerdrError
+from placido.proc import Runner, run_command
+
+
+class StartError(RuntimeError):
+    pass
+
+
+def git(repo: Path, *args: str) -> str:
+    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    if done.returncode != 0:
+        raise StartError(f"git {' '.join(args)}: {(done.stderr or done.stdout).strip()}")
+    return done.stdout.strip()
+
+
+def project_root(cwd: Path) -> Path:
+    """The main checkout, also from inside one of its worktrees."""
+
+    try:
+        common = Path(git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    except StartError:
+        raise StartError(f"{cwd} is not inside a git repository") from None
+    return common.parent if common.name == ".git" else Path(git(cwd, "rev-parse", "--show-toplevel"))
+
+
+def origin_repo(root: Path) -> str | None:
+    """owner/name when the repository's origin remote is on GitHub."""
+
+    try:
+        return issues.github_repo(git(root, "remote", "get-url", "origin"))
+    except StartError:
+        return None
+
+
+def select_run(cwd: Path, runs_root: Path) -> Path:
+    """The run a command in cwd means. Inside an issue's worktree, that issue's run;
+    in the main checkout, the project's only active run. With several issues in
+    flight, guessing could act on the wrong one, so placido asks instead."""
+
+    root = project_root(cwd)
+    top = Path(git(cwd, "rev-parse", "--show-toplevel")).resolve()
+    runs = runlog.active_runs(runs_root, root.name, str(root))
+    if top != root.resolve():
+        for run in runs:
+            created = runlog.last_event(run, "worktree.created") or {}
+            if created.get("path") and Path(created["path"]).resolve() == top:
+                return run
+        raise StartError(f"no active placido run uses this worktree, {top}")
+    if not runs:
+        raise StartError(f"no active run for {root.name}; run `placido start <issue>` first")
+    if len(runs) > 1:
+        lines = []
+        for run in runs:
+            created = runlog.last_event(run, "worktree.created") or {}
+            lines.append(f"  {run.parent.name}: cd {created.get('path', '?')}")
+        raise StartError(
+            f"{len(runs)} issues are in progress in {root.name}; run placido in the issue's"
+            " worktree, or pass --run:\n" + "\n".join(lines)
+        )
+    return runs[0]
+
+
+def find_run(root: Path, runs_root: Path, issue: str) -> Path:
+    """The project's active run for an issue named in full or by a unique prefix,
+    such as `02` for 02-many-names."""
+
+    runs = runlog.active_runs(runs_root, root.name, str(root))
+    found = [run for run in runs if run.parent.name == issue] or [
+        run for run in runs if run.parent.name.startswith(issue)
+    ]
+    if len(found) == 1:
+        return found[0]
+    names = ", ".join(sorted({run.parent.name for run in runs})) or "none"
+    if not found:
+        raise StartError(f"no active run of {root.name} matches {issue!r}; active: {names}")
+    raise StartError(f"{issue!r} is ambiguous: {', '.join(sorted(r.parent.name for r in found))}")
+
+
+def branch_name(issue: str) -> str:
+    return f"placido/{issue}"
+
+
+def start(
+    arg: str,
+    cwd: Path,
+    herdr: Herdr | None = None,
+    runs_root: Path | None = None,
+    echo: TextIO | None = None,
+    gh: Runner = run_command,
+) -> runlog.Run:
+    """Prepare a run for one issue; everything placido does is logged as it happens."""
+
+    herdr = herdr or Herdr()
+    root = project_root(cwd)
+    settings = config.load(config.find_config(root))
+    try:
+        found = issues.resolve(arg, root, origin_repo(root), gh)
+    except issues.IssueError as error:
+        raise StartError(str(error)) from None
+    issue = found.id
+    branch = branch_name(issue)
+    if git(root, "branch", "--list", branch):
+        raise StartError(f"branch {branch} already exists; resuming a run comes in a later step")
+    try:
+        base_commit = git(root, "rev-parse", "--verify", f"{settings.base}^{{commit}}")
+    except StartError:
+        raise StartError(f"base {settings.base!r} is not a commit in {root}") from None
+
+    run = runlog.Run.create(
+        runs_root or runlog.runs_dir(),
+        root.name,
+        issue,
+        {
+            "placido": __version__,
+            "versions": doctor.tool_versions(),
+            "repo": str(root),
+            "config": str(settings.source) if settings.source else None,
+            "base": settings.base,
+            "base_commit": base_commit,
+            "branch": branch,
+            "issue_title": found.title,
+            "issue_source": found.source,
+            "issue_number": found.number,
+        },
+        echo=echo,
+    )
+    (run.path / "issue.md").write_text(found.text, encoding="utf-8")
+    run.event("run.start", project=root.name, issue=issue, source=found.source, base=settings.base)
+
+    try:
+        worktree = herdr.create_worktree(root, branch, settings.base, issue)
+    except HerdrError as error:
+        run.event("worktree.failed", error=str(error))
+        run.event("run.end", outcome="failed", reason="worktree")
+        raise StartError(str(error)) from None
+    run.event(
+        "worktree.created",
+        path=str(worktree.path),
+        branch=worktree.branch,
+        workspace=worktree.workspace_id,
+        pane=worktree.pane_id,
+    )
+
+    if settings.setup:
+        _status(herdr, run, worktree.workspace_id, status.text(status.WORKING, "setting up"))
+        env = run_env(root.name, issue, found.number, worktree.path, run.path)
+        code = run_setup(run, settings.setup, worktree.path, env)
+        if code != 0:
+            _status(herdr, run, worktree.workspace_id, status.text(status.STOPPED, "setup failed"))
+            _notify(herdr, run, f"placido · {issue}: setup failed", f"see {run.path / 'setup.log'}")
+            run.event("run.end", outcome="failed", reason="setup")
+            raise StartError(f"setup failed with exit {code}; see {run.path / 'setup.log'}")
+    _status(herdr, run, worktree.workspace_id, status.text(status.READY, "run placido spec"))
+    run.event("run.ready", worktree=str(worktree.path))
+    return run
+
+
+def run_env(project: str, issue: str, number: int | None, worktree: Path, run_dir: Path) -> dict[str, str]:
+    """What project commands and agents are told about the run, as PLACIDO_* variables."""
+
+    name = re.sub(r"[^a-z0-9_-]+", "-", f"{project}-{number or issue}".lower()).strip("-")
+    return {
+        "PLACIDO_ISSUE": issue,
+        "PLACIDO_ISSUE_NUMBER": str(number) if number else "",
+        "PLACIDO_NAME": name,
+        "PLACIDO_WORKTREE": str(worktree),
+        "PLACIDO_RUN_DIR": str(run_dir),
+    }
+
+
+def env_of(run_dir: Path) -> dict[str, str]:
+    """The PLACIDO_* variables of an existing run, from its run.json and worktree."""
+
+    record = runlog.read_record(run_dir)
+    created = runlog.last_event(run_dir, "worktree.created") or {}
+    return run_env(
+        record.get("project", ""), record.get("issue", ""), record.get("issue_number"),
+        Path(created.get("path", "")), run_dir,
+    )
+
+
+def run_setup(run: runlog.Run, command: str, cwd: Path, env: dict[str, str]) -> int:
+    """Run the project's setup command in the worktree, its output in setup.log."""
+
+    return run_project_command(run, "setup", command, cwd, env)
+
+
+def run_project_command(run: runlog.Run, name: str, command: str, cwd: Path, env: dict[str, str]) -> int:
+    """Run one of the project's own commands, such as setup or teardown, in the
+    worktree with the run's variables; its output goes to <name>.log."""
+
+    run.event(f"{name}.start", command=command)
+    began = time.monotonic()
+    with (run.path / f"{name}.log").open("w", encoding="utf-8") as log:
+        code = subprocess.run(
+            command, shell=True, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, env={**os.environ, **env}
+        ).returncode
+    run.event(f"{name}.end", exit=code, seconds=round(time.monotonic() - began, 1))
+    return code
+
+
+def _status(herdr: Herdr, run: runlog.Run, workspace_id: str, text: str) -> None:
+    status.show(run.path, text)
+
+
+def _notify(herdr: Herdr, run: runlog.Run, title: str, body: str) -> None:
+    try:
+        herdr.notify(title, body, sound="request")
+    except HerdrError as error:
+        run.event("herdr.warning", error=str(error))
