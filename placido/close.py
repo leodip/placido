@@ -11,7 +11,8 @@ Then it tidies the main checkout, as the user did by hand after the first real r
 (decided 2026-10-02): it brings the base branch up to date (a fast-forward, only
 when the checkout is on the base with no changes), and deletes the issue's branch
 once its work is merged: its pull request merged on GitHub, which a squash merge
-hides from git, or the branch merged into the base. An unmerged branch stays.
+hides from git, or the branch merged into the base, and drops the git stashes the run
+set aside. An unmerged branch and its stashes stay.
 """
 
 from __future__ import annotations
@@ -73,8 +74,22 @@ def _tidy(run: runlog.Run, gh: Runner) -> None:
     done = _git(Path(repo), "branch", "-D", branch)
     if done.returncode == 0:
         run.event("branch.deleted", branch=branch, reason=merged)
+        _drop_stashes(run, Path(repo))
     else:
         run.event("branch.kept", branch=branch, reason=(done.stderr or done.stdout).strip())
+
+
+def _drop_stashes(run: runlog.Run, repo: Path) -> None:
+    """Drop the stashes this run set aside (interrupted or failed attempts), now that
+    its work is merged: stashes belong to the whole repository and would pile up."""
+
+    listed = _git(repo, "stash", "list", "--format=%gd%x09%gs").stdout.splitlines()
+    mine = [line.split("\t", 1) for line in listed if "\t" in line]
+    mine = [(ref, message) for ref, message in mine
+            if "placido: " in message and f"{run.path.name})" in message]
+    for ref, message in reversed(mine):  # highest index first, so the others keep theirs
+        if _git(repo, "stash", "drop", "-q", ref).returncode == 0:
+            run.event("stash.dropped", message=message.split(": ", 1)[-1])
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:

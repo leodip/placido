@@ -50,7 +50,7 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(len(lines), 3)
         self.assertTrue(lines[0].startswith("sandbox   04-farewell     you · answer in implement-slice-1  ("))
         self.assertIn("goiabada  439-rate-limit  working · slice 2/3", lines[1])
-        self.assertIn("sandbox   02-many-names   done · passed", lines[2])
+        self.assertIn("sandbox   02-many-names   done · passed · placido close when finished", lines[2])
         self.assertNotIn(closed.path.parent.name, "\n".join(lines))
 
     def test_a_retried_worktree_shows_only_its_newest_run(self):

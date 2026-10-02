@@ -74,6 +74,12 @@ BACKGROUND_LIMIT = 3600  # longest wait on an agent's background work before nud
 EXIT_BACKGROUND = ("Background work is running", "Exit and stop tasks")
 
 
+def _missing(error: HerdrError) -> bool:
+    """Herdr no longer knows the pane or tab."""
+
+    return error.code.endswith("not_found") or "not found" in str(error)
+
+
 def background_running(screen: str) -> bool:
     """Whether the agent's screen shows background work still running."""
 
@@ -587,7 +593,13 @@ class Step:
         """Save the screen and the transcript, then close the tab, but only once the agent
         has exited and the copies are verified; otherwise keep the tab as evidence."""
 
-        (folder / "screen.txt").write_text(self._screen(pane), encoding="utf-8")
+        try:
+            (folder / "screen.txt").write_text(self.herdr.read(pane), encoding="utf-8")
+        except HerdrError as error:
+            # The pane is gone, as when a resumed run tidies an attempt whose tab was
+            # already closed: keep the screen saved back then.
+            if not (folder / "screen.txt").is_file():
+                (folder / "screen.txt").write_text(f"(screen unavailable: {error})\n", encoding="utf-8")
         session = self._session(agent, folder) or self._known_session(folder)
         if keep_open:
             self._copy_transcript(session, folder)
@@ -604,7 +616,10 @@ class Step:
                 self.herdr.close_tab(tab)
                 self.run.event("tab.closed", step=folder.name, tab=tab)
             except HerdrError as error:
-                self._keep_tab(folder, pane, f"closing failed: {error}")
+                if _missing(error):  # closed already, by placido or the user: nothing to keep
+                    self.run.event("tab.gone", step=folder.name, pane=pane)
+                else:
+                    self._keep_tab(folder, pane, f"closing failed: {error}")
 
     def _session(self, agent: str, folder: Path) -> dict[str, Any] | None:
         try:

@@ -76,6 +76,8 @@ def board(runs_root: Path, now: float | None = None) -> str:
         claimed.add(created["path"])
         value = read(run) or (text(DONE, runlog.outcome(run)) if "run.end" in kinds else text(READY))
         state = value.split(" ", 1)[0]
+        if state == DONE:
+            value += " · placido close when finished"  # its worktree and stack are still up
         rank = ORDER.index(state) if state in ORDER else len(ORDER)
         last = (run / "events.jsonl").stat().st_mtime if (run / "events.jsonl").is_file() else now
         rows.append((rank, -last, run.parent.parent.name, run.parent.name, value, now - last))

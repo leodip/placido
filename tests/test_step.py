@@ -47,6 +47,7 @@ class FakeHerdr:
         self.error_screen: str | None = None  # what the screen shows after a failed turn
         self.background = 0  # waits the agent spends idle on background work before waking
         self.exit_question = False  # quitting asks about the background work still running
+        self.pane_gone = False  # the agent's tab was closed already
 
     def _alive(self):
         if not self.alive:
@@ -155,6 +156,8 @@ class FakeHerdr:
         return AgentInfo(self.status, self.session)
 
     def read(self, pane_id, source="recent-unwrapped", lines=200):
+        if self.pane_gone:
+            raise HerdrError(f"herdr pane read: pane {pane_id} not found", "pane_not_found")
         if self.notice:
             return (
                 "Warnings · 1 of 1 · Startup\nRunning without the shared background server: "
@@ -217,6 +220,8 @@ class FakeHerdr:
                 self.result.write_text("done\n")
 
     def tab_of(self, pane_id):
+        if self.pane_gone:
+            raise HerdrError(f"herdr pane get: pane {pane_id} not found", "pane_not_found")
         return "w8:t2"
 
     def close_tab(self, tab_id):
@@ -639,6 +644,24 @@ class TabTest(StepTestCase):
 
     def test_exit_command_per_agent(self):
         self.assertEqual(step.EXIT_COMMANDS, {"claude": "/exit", "codex": "/quit", "pi": "/quit"})
+
+
+class GoneTabTest(StepTestCase):
+    """A resumed run tidies an attempt whose agent and tab are gone already: the screen
+    saved back then stays, and there is no tab to keep (Goiabada #331)."""
+
+    def test_nothing_is_overwritten_or_kept(self):
+        folder = self.run.path / "steps" / "04-implement-slice-2"
+        folder.mkdir(parents=True)
+        (folder / "screen.txt").write_text("the screen when the attempt stopped\n")
+        self.run.event("agent.session", step=folder.name, agent="claude", kind="id", value="abc-123")
+        self.fake.alive, self.fake.pane_gone = False, True
+        runner = step.Step(self.run, self.fake, "w8", self.tmp / "wt", home=self.home, sleep=self.fake.sleep)
+        runner.close_agent("implement-w8-p5", "w8:p5", folder, "claude")
+        self.assertEqual((folder / "screen.txt").read_text(), "the screen when the attempt stopped\n")
+        self.assertIn("tab.gone", self.events())
+        self.assertNotIn("tab.kept", self.events())
+        self.assertFalse(any(c[0] == "notify" for c in self.fake.calls))
 
 
 class InteractiveTest(StepTestCase):

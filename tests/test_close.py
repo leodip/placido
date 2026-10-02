@@ -123,6 +123,29 @@ class TidyTest(StartTestCase):
         self.assertEqual(self.branches(), "")
         self.assertEqual(runlog.last_event(self.run.path, "branch.deleted")["reason"], "merged into main")
 
+    def test_the_run_s_stashes_go_with_a_merged_branch(self):
+        def stash(message: str) -> None:
+            (self.worktree / "half.txt").write_text(message)
+            sh(self.worktree, "git", "stash", "push", "-q", "--include-untracked", "-m", message)
+        stash("someone else's work")
+        stash(f"placido: slice 1 attempt failed (no-result, {self.run.path.name})")
+        stash(f"placido: interrupted slice 1 ({self.run.path.name})")
+        stash("placido: interrupted slice 1 (2026-01-01T000000)")  # another run's
+        self.close()  # nothing committed on the branch, so it counts as merged
+        left = sh(self.repo, "git", "stash", "list", "--format=%gs")
+        self.assertIn("someone else's work", left)
+        self.assertIn("(2026-01-01T000000)", left)
+        self.assertNotIn(self.run.path.name, left)
+        self.assertEqual(len([e for e in runlog.read_events(self.run.path) if e["event"] == "stash.dropped"]), 2)
+
+    def test_an_unmerged_branch_keeps_its_stashes(self):
+        self.commit_in_worktree()
+        (self.worktree / "half.txt").write_text("x")
+        sh(self.worktree, "git", "stash", "push", "-q", "--include-untracked", "-m",
+           f"placido: interrupted slice 1 ({self.run.path.name})")
+        self.close()
+        self.assertIn(self.run.path.name, sh(self.repo, "git", "stash", "list", "--format=%gs"))
+
     def test_an_unmerged_branch_stays(self):
         self.commit_in_worktree()
         self.close()

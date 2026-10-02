@@ -1838,3 +1838,21 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   git), or the branch merged into the base (`branch.deleted` with the reason).
   An unmerged branch stays (`branch.kept`), as before, so an abandoned issue
   can be picked up again. 461 tests pass.
+- At the user's request, filed #331's two real follow-ups by hand: #462
+  (replace chi with the standard library, the interview's draft, which the
+  review's F1 duplicated) and #463 (rule 9 reads the setup wizard with the
+  `production` tag its release build does not set, F2). F3 was a note for
+  #396, not an issue. The user also had every local Goiabada branch but
+  `main` deleted (53, two never pushed), as garbage.
+- Three fixes from the first run, the user's go-ahead:
+  - A resume tidying an attempt whose agent and tab were gone overwrote its
+    saved `screen.txt` with "(screen unavailable)" and kept a tab that no
+    longer existed, with a notification (`tab.kept … pane wK:p5 not found`).
+    Now the saved screen stays and `tab.gone` is logged, with nothing kept.
+  - `placido status` adds "placido close when finished" to a finished run,
+    whose worktree and stack are still up: the sandbox's 01 had sat "done"
+    for three hours, which read as nothing left to do.
+  - Interrupted and failed attempts are set aside as git stashes, which
+    belong to the whole repository; Goiabada kept one after #331 merged.
+    `placido close` drops the run's own stashes when it deletes a merged
+    branch; an unmerged branch keeps its stashes. 464 tests pass.
