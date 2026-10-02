@@ -1685,3 +1685,10 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   repository except for the rewritten README and the new LICENSE, so at the
   user's choice it was removed from leodip/ai with no pointer left behind
   (ead2ec5).
+- The user chose Goiabada issue #331 (strip release binaries with `-s -w` in
+  both Dockerfiles and `build-binaries.sh`, dev and test builds unchanged)
+  for the first live run, over #410, #152, and #289. It is build-only, so its
+  slices' tests and mutations must work against build checks (stripped
+  binaries, traceback and `core/errs` frames kept) rather than Go seams; the
+  interview settles how. The user runs every live command; placido's side is
+  building, testing, and giving exact steps.
