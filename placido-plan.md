@@ -1789,3 +1789,40 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   - The implement, fix, and checks skills say to run commands in the
     foreground and never end a turn while background work runs. 450 tests
     pass.
+- The user resumed #331 on the fixed code, with slice 2 built afresh: slices
+  2, 3, and 4 committed with no nudge or kept tab, the final gates passed, and
+  codex's review found 3 blocking problems in round 1 (the new smoke script
+  not executable in a checkout, the `core.fileMode = false` trap again; rule 9
+  missing frameworks behind third-party dependencies; an empty `TZ` not
+  selecting UTC on Windows), all fixed in one commit and verified in round 2.
+  The user folded in none of the 3 follow-ups. Placido pushed once, opened
+  #460 ready for review, posted the follow-ups comment on #331, and CI went
+  green in 9 minutes: `run.end outcome=passed ci=green`. The first real run
+  of the whole flow, issue to green pull request.
+- The user found the pull request confusing: its body was the run's summary,
+  "Follow-ups" three times (the review's list, the pointer to the comment,
+  the slices' raw notes), and it never said what the change does. Decided,
+  one question at a time:
+  - The body is written for the reviewer (`placido/prbody.py`): `Closes`
+    lines, a warning when CI is not green, "What this changes" (the
+    agreement's Solution), "Decisions" (each agreed decision's bold lead, and
+    those made during the run), "Review" (the outcome, each finding and how it
+    ended, what needs the user), and one "Follow-ups" line. The run's own
+    story stays in `summary.md`.
+  - Follow-ups go in a comment on the pull request (over the body, collapsed,
+    and over the issue), as GBD's pull requests did, each drafted in full
+    with a ready `gh issue create` command whose `--body-file` is the draft's
+    body, saved in the run folder.
+  - One drafting step (the fix role, `skills/followups/SKILL.md`), after the
+    fold-in question, drafts every review follow-up the user did not fold in:
+    title, labels from the repository, why it was left out, a duplicate
+    search, and a body with evidence and "Done when:". A follow-up the
+    interview already drafted is written as `Duplicate of followup-….md` and
+    posted once. The worktree must stay untouched. A failed step does not stop
+    delivery; the follow-ups are then posted as the review wrote them.
+  - At the user's suggestion, the same agent writes a short note for each
+    other open issue the change affects (`notes/<number>.md`), and placido
+    posts each on its issue once the pull request exists, with a link to it
+    (`issue.noted`). Agents still write nothing to GitHub themselves.
+  - The interview's drafts use the same format, so both kinds get a command.
+  455 tests pass.

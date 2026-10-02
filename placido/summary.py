@@ -3,7 +3,8 @@ from the event log and the run's files, with no agent.
 
 It says what the run did and what is left: each slice and its commit, the decisions
 the user made, the review, follow-ups, and anything that went wrong on the way
-(failed attempts, fallbacks, waits). Step 13 turns it into the pull request's body.
+(failed attempts, fallbacks, waits). The pull request's body is shorter, for reviewers
+(placido/prbody.py).
 """
 
 from __future__ import annotations
@@ -164,14 +165,17 @@ def _bullets(text: str) -> list[str]:
 
 
 def _posted_follow_ups(events: list[dict[str, Any]]) -> list[str]:
-    """Where the follow-ups were posted for the user to file by hand."""
+    """Where the follow-ups were posted for the user to file, and the issues noted."""
 
     posted = next((e for e in reversed(events) if e.get("event") == "followups.posted"), None)
-    if posted is None:
+    noted = [e for e in events if e.get("event") == "issue.noted"]
+    if posted is None and not noted:
         return []
-    counts = [f"{len(posted.get(key) or [])} {name}" for key, name in
-              (("drafts", "from the interview"), ("review", "from the review")) if posted.get(key)]
-    return ["## Follow-ups", "", f"Posted for filing by hand ({', '.join(counts)}): {posted.get('url')}", ""]
+    lines = ["## Follow-ups posted", ""]
+    if posted:
+        lines.append(f"- {posted.get('count', '')} drafted for filing by hand: {posted.get('url')}".replace("-  ", "- "))
+    lines += [f"- Noted on #{e.get('issue')}: {e.get('url')}" for e in noted]
+    return lines + [""]
 
 
 def _trouble(events: list[dict[str, Any]]) -> list[str]:

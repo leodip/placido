@@ -109,7 +109,7 @@ class DeliverTest(DeliverCase):
         self.assertEqual(github.deliver(self.ctx(), None, None), "local")
         self.assertEqual(len(self.events("github.skipped")), 1)
 
-    def test_push_open_file_follow_ups_and_wait_for_green(self):
+    def test_push_open_post_follow_ups_and_wait_for_green(self):
         self.gh.checks = [[], [check("build", "pending")], [check("build", "pass"), check("lint", "skipping")]]
         self.assertEqual(self.deliver(), "green")
         self.assertEqual(self.gh.calls[0][:5], ["git", "-C", str(self.repo), "push", "--set-upstream"])
@@ -117,21 +117,17 @@ class DeliverTest(DeliverCase):
         self.assertEqual(create[create.index("--title") + 1], "Rate limiter counts half moves")
         self.assertEqual(create[create.index("--base") + 1], "main")
         body = self.gh.bodies["pr create"]
-        self.assertTrue(body.startswith("Closes #439\nCloses #440\n\n- **Branch:**"), body[:80])
-        self.assertNotIn("**State:**", body)
+        self.assertTrue(body.startswith("Closes #439\nCloses #440\n\n"), body[:80])
+        for run_detail in ("**State:**", "**Branch:**", "**Time:**", "Along the way"):
+            self.assertNotIn(run_detail, body)
         self.assertNotIn("#999", body.split("\n\n")[0])
         self.assertIn("Built by placido", body)
         self.assertEqual(self.gh.made("issue create"), 0)  # placido files no issues
-        comment = self.gh.bodies["issue comment"]
-        self.assertIn("## Left by the review\n\n### Expose the limit in metrics\n\nno gauge yet", comment)
-        self.assertIn("**Left out because:** separate feature", comment)
+        comment = self.gh.bodies["pr comment"]
+        self.assertIn("### 1. Expose the limit in metrics\n\nLeft out because: separate feature", comment)
+        self.assertIn("gh issue create --title 'Expose the limit in metrics' --body-file ", comment)
         final = self.gh.bodies["pr edit last"]
-        self.assertIn(
-            "## Follow-ups\n\nPosted for filing by hand (1 from the review):"
-            " https://github.com/leodip/goiabada/issues/439#issuecomment-9001", final,
-        )
-        self.assertIn(f"- **Pull request:** {PR}", final)
-        self.assertIn("- **CI:** green", final)
+        self.assertIn("[the follow-ups comment](https://github.com/leodip/goiabada/pull/450#issuecomment-9002)", final)
         self.assertEqual(self.events("pr.opened")[0]["number"], 450)
         self.assertEqual(self.events("ci.result")[-1]["outcome"], "green")
 
@@ -149,7 +145,7 @@ class DeliverTest(DeliverCase):
         self.gh.checks = [[check("build", "fail")]] * 3
         self.assertEqual(self.deliver(), "red")
         self.assertEqual(len(self.fixer.prompts), 2)
-        self.assertIn("- **CI:** red after placido's fixes (build)", self.gh.bodies["pr edit last"])
+        self.assertIn("> **CI is red after placido's fixes (build).**", self.gh.bodies["pr edit last"])
 
     def test_no_ci_at_all(self):
         self.assertEqual(self.deliver(), "none")
@@ -163,66 +159,84 @@ class DeliverTest(DeliverCase):
         self.gh.checks = [[check("build", "pass")]] * 2
         self.deliver()
         self.deliver()
-        self.assertEqual((self.gh.made("pr create"), self.gh.made("issue comment")), (1, 1))
+        self.assertEqual((self.gh.made("pr create"), self.gh.made("pr comment")), (1, 1))
         self.assertEqual(self.gh.made("pr edit"), 4)
 
 
 class FollowUpsTest(DeliverCase):
-    """Every follow-up, drafted by the interview or left by the review, goes into one
-    comment on the run's issue, for the user to file by hand; none is filed."""
+    """Every follow-up, drafted by the interview or by the drafting step, goes into one
+    comment on the pull request with the command that files it; none is filed. Notes
+    for other issues the change affects are posted on them."""
 
     def setUp(self) -> None:
         super().setUp()
         self.gh.checks = [[check("build", "pass")]] * 2
-        folder = self.run.path.parent
-        (folder / "followup-remove-chi.md").write_text(
+        issue = self.run.path.parent
+        (issue / "followup-remove-chi.md").write_text(  # an older draft, without header lines
             "# refactor: replace chi\n\nDrafted during the specification.\n\n## Why\n\npprof is linked.\n"
-            "\n```sh\n# not a heading\n```\n"
         )
-        (folder / "followup-alpine-pin.md").write_text("# Pin the alpine base\n\nIt floats.\n")
+        self.run.event("review.followups", items=[
+            {"id": "F1", "title": "Expose the limit in metrics", "description": "no gauge yet", "why": "separate feature"},
+            {"id": "F2", "title": "Carry the chi draft forward", "description": "", "why": "decision 9"},
+        ])
+        drafts = self.run.path / "followups"
+        (drafts / "notes").mkdir(parents=True)
+        (drafts / "F1.md").write_text(
+            "# feat: expose the rate limit as a gauge\n\nLabels: `enhancement`, `go`\n"
+            "Left out because: metrics are a feature of their own.\n"
+            "Searched: `gh issue list --state all --search \"rate limit metrics\"`: no match.\n\n"
+            "The limiter counts in memory and nothing exports it.\n\nDone when: a gauge exists.\n"
+        )
+        (drafts / "F2.md").write_text("Duplicate of followup-remove-chi.md\n")
+        (drafts / "notes" / "396.md").write_text("The images no longer need zone data from their base image.\n")
+        (drafts / "notes" / "439.md").write_text("The run's own issue gets no note.\n")
 
-    def test_posted_in_full_on_the_issue_once_the_pull_request_exists(self):
+    def test_drafts_and_commands_on_the_pull_request(self):
         self.deliver()
-        comment = next(argv for argv in self.gh.calls if argv[1:3] == ["issue", "comment"])
-        self.assertEqual(comment[3], "439")
+        comment = next(argv for argv in self.gh.calls if argv[1:3] == ["pr", "comment"])
+        self.assertEqual(comment[3], "450")
         order = [" ".join(argv[1:3]) for argv in self.gh.calls if argv[0] == "gh"]
-        self.assertLess(order.index("pr create"), order.index("issue comment"))
-        body = self.gh.bodies["issue comment"]
-        self.assertTrue(body.startswith(f"Placido left 3 follow-ups out of {PR}. None is filed"))
-        self.assertLess(body.index("## Drafted during the interview"), body.index("### Pin the alpine base"))
-        self.assertLess(body.index("### Pin the alpine base"), body.index("### refactor: replace chi"))
-        self.assertLess(body.index("### refactor: replace chi"), body.index("## Left by the review"))
-        self.assertIn("#### Why\n\npprof is linked.", body)
-        self.assertIn("```sh\n# not a heading\n```", body)
+        self.assertLess(order.index("pr create"), order.index("pr comment"))
+        body = self.gh.bodies["pr comment"]
+        self.assertIn(f"2 pieces of work left out of {PR}", body)
+        self.assertLess(body.index("### 1. refactor: replace chi"), body.index("### 2. feat: expose the rate limit"))
+        self.assertNotIn("Carry the chi draft forward", body)  # F2 duplicates the interview's draft
+        self.assertIn("Left out because: metrics are a feature of their own.", body)
+        self.assertIn("Labels: `enhancement`, `go` · Searched: `gh issue list", body)
+        self.assertIn("> The limiter counts in memory and nothing exports it.\n>\n> Done when: a gauge exists.", body)
+        bodies = self.run.path / "followups" / "bodies"
+        self.assertIn(
+            "gh issue create --title 'feat: expose the rate limit as a gauge' --label enhancement --label go"
+            f" --body-file {bodies / '2.md'}", body,
+        )
+        self.assertEqual((bodies / "2.md").read_text(), "The limiter counts in memory and nothing exports it.\n\nDone when: a gauge exists.\n")
         (event,) = self.events("followups.posted")
-        self.assertEqual(event["url"], "https://github.com/leodip/goiabada/issues/439#issuecomment-9001")
-        self.assertEqual(event["drafts"], ["followup-alpine-pin.md", "followup-remove-chi.md"])
-        self.assertEqual(event["review"], ["F1"])
+        self.assertEqual((event["on"], event["count"]), ("pr 450", 2))
         self.assertEqual(self.gh.made("issue create"), 0)
-        self.assertIn("(2 from the interview, 1 from the review)", self.gh.bodies["pr edit last"])
 
-    def test_a_resumed_delivery_does_not_comment_again(self):
+    def test_notes_go_on_the_issues_they_concern(self):
+        self.deliver()
+        notes = [argv for argv in self.gh.calls if argv[1:3] == ["issue", "comment"]]
+        self.assertEqual([argv[3] for argv in notes], ["396"])
+        self.assertEqual(self.gh.bodies["issue comment"],
+                         f"The images no longer need zone data from their base image.\n\nFrom {PR}.\n")
+        self.assertIn("Noted on [#396](https://github.com/leodip/goiabada/issues/396#issuecomment-9001)",
+                      self.gh.bodies["pr edit last"])
+
+    def test_a_resumed_delivery_posts_nothing_again(self):
         self.deliver()
         self.deliver()
-        self.assertEqual(self.gh.made("issue comment"), 1)
+        self.assertEqual((self.gh.made("pr comment"), self.gh.made("issue comment")), (1, 1))
 
     def test_nothing_to_post(self):
         for path in self.run.path.parent.glob("followup-*.md"):
             path.unlink()
+        for path in (self.run.path / "followups").rglob("*.md"):
+            path.unlink()
         self.run.event("review.followups", items=[])
         self.deliver()
-        self.assertEqual(self.gh.made("issue comment"), 0)
-        self.assertEqual(self.events("followups.posted"), [])
+        self.assertEqual((self.gh.made("pr comment"), self.gh.made("issue comment")), (0, 0))
         self.assertNotIn("## Follow-ups", self.gh.bodies["pr edit last"])
-
-    def test_a_local_issue_file_gets_them_on_the_pull_request(self):
-        record = runlog.read_record(self.run.path)
-        record["issue_number"] = None
-        (self.run.path / "run.json").write_text(json.dumps(record))
-        self.deliver()
-        comment = next(argv for argv in self.gh.calls if argv[1:3] == ["pr", "comment"])
-        self.assertEqual(comment[3], "450")
-        self.assertEqual(self.events("followups.posted")[0]["on"], "pr 450")
 
 
 class FoldedTest(unittest.TestCase):

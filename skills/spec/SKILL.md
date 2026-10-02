@@ -111,10 +111,22 @@ Rules, in order:
    recommendation. The user prefers folding in when it is small and close; recommend
    that unless it would change the nature or the risk of this change. What is folded
    in is part of the agreement: decide it, slice it, and list it under `## Folded in`.
-   A draft is a `followup-<slug>.md` beside the agreement: a `# <title>` line, then
-   what, why, and the evidence, complete enough to file as an issue unedited. When
-   the pull request opens, placido posts every draft in full as a comment on this
-   issue, and the user files the ones they want.
+   A draft is a `followup-<slug>.md` beside the agreement, complete enough to file
+   as an issue unedited, in this shape (placido builds the command that files it
+   from the header lines):
+
+   ```
+   # <issue title>
+
+   Labels: `<label>`, `<label>`
+   Left out because: <why this change does not do it>
+   Searched: `gh issue list --state all --search "<terms>"`: <what it found>
+
+   <the body: the problem, the evidence, and a last paragraph "Done when: …">
+   ```
+
+   When the pull request opens, placido posts every draft in a comment on it, with
+   its `gh issue create` command, and the user files the ones they want.
 7. **Offer the escape.** The user may skip the remaining questions; then say plainly
    that the agreement cannot be sealed while any decision is open.
 

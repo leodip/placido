@@ -40,10 +40,12 @@ placido close 439      after you merge: teardown, worktree and workspace removed
    in the terminal which to fold in anyway.
 6. **Pull request.** Placido pushes the branch once, opens the pull request ready for
    review (`Closes #N`, then a summary of everything the run did and decided), and
-   waits for CI. A red run's failed logs go to a fixer agent, up to twice. The
+   waits for CI. A red run's failed logs go to a fixer agent, up to twice. The body
+   says what the change does, its decisions, and what the review found. The
    follow-ups, those the interview drafted and those from the review you did not fold
-   in, go in full into one comment on the issue; placido files no issues, so you file
-   the ones you want.
+   in (drafted by an agent with evidence and a duplicate search), go into one comment
+   on the pull request, each with the `gh issue create` command that files it;
+   placido files none. Other open issues the change affects get a short note.
 7. **Close.** After you merge, `placido close` runs your project's teardown and
    removes the worktree and its workspace. The branch stays.
 

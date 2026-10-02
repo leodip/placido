@@ -1,6 +1,6 @@
 """Delivering a finished run on GitHub: push the branch once, open the pull request
-ready for review with the run's summary as its body, post the follow-ups as a
-comment on the run's issue, then wait for CI and fix a red run.
+ready for review, post the follow-ups as a comment on it and the notes on other
+issues the change affects, then wait for CI and fix a red run.
 
 Decided with the user (step 13): nothing is pushed before the review is done, so a
 stopped or abandoned run leaves nothing on GitHub; the body closes the run's issue,
@@ -8,11 +8,10 @@ and every issue folded in during the interview, with `Closes #N`, so the user's 
 closes them and placido never does. Each action is an event, so a resumed run picks
 up where it stopped.
 
-Placido files no issues (decided 2026-10-02): the follow-ups the interview drafted
-(`followup-*.md` beside the agreement) and those the review left that the user did
-not fold in go, each in full with why it was left out, into one comment on the run's
-issue once the pull request exists, and the user files the ones they want. A run
-from a local issue file comments on the pull request instead.
+Decided 2026-10-02: the body is written for the person reviewing the change (what it
+does, the decisions, what the review found), not the run's log, which stays in
+summary.md. Placido files no issues: every follow-up goes, drafted in full with the
+command that files it, into one comment on the pull request (placido/followups.py).
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import checks, implement, runlog, spec, start, status, summary
+from placido import checks, followups, implement, prbody, runlog, spec, start, status, summary
 from placido.proc import Runner, run_command
 
 ATTACH_SECONDS = 180  # how long CI may take to show its first check after a push
@@ -188,84 +187,34 @@ def _save_logs(github: GitHub, folder: Path, failed: list[dict[str, Any]]) -> li
     return logs
 
 
-def drafts(issue_dir: Path) -> list[Path]:
-    """The follow-ups the interview drafted beside the agreement, by name."""
-
-    return sorted(issue_dir.glob("followup-*.md"))
-
-
 def _post_follow_ups(github: GitHub, run: runlog.Run, record: dict[str, Any], pr_number: int) -> None:
-    """One comment with every follow-up, in full, for the user to file by hand: on the
-    run's issue, or on the pull request for a local issue file. Once per run."""
+    """The follow-ups comment on the pull request, then each note on its issue; once each."""
 
-    found = drafts(spec.issue_dir(run.path))
-    review = (runlog.last_event(run.path, "review.followups") or {}).get("items", [])
-    if not (found or review) or runlog.last_event(run.path, "followups.posted"):
-        return
     pr = (runlog.last_event(run.path, "pr.opened") or {}).get("url", "the pull request")
-    count = len(found) + len(review)
-    parts = [
-        f"Placido left {count} follow-up{'s' if count != 1 else ''} out of {pr}. None is filed"
-        " as an issue: each is here in full, with why it was left out, to file by hand if wanted."
-    ]
-    if found:
-        parts.append("## Drafted during the interview")
-        parts += [_demote(path.read_text(encoding="utf-8").strip(), 2) for path in found]
-    if review:
-        parts.append("## Left by the review")
-        parts += [
-            f"### {item.get('title')}\n\n{item.get('description') or item.get('title')}\n\n"
-            f"**Left out because:** {item.get('why') or 'out of scope'}"
-            for item in review
-        ]
-    body = run.path / "followups-comment.md"
-    body.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
-    if record.get("issue_number"):
-        kind, number = "issue", int(record["issue_number"])
-    else:
-        kind, number = "pr", pr_number
-    url = github.comment(kind, number, body)
-    run.event(
-        "followups.posted", url=url, on=f"{kind} {number}", drafts=[path.name for path in found],
-        review=[item.get("id") for item in review],
-    )
-
-
-def _demote(text: str, levels: int) -> str:
-    """Each heading some levels down, outside code fences, so a draft's own title
-    nests under the comment's sections."""
-
-    lines, fenced = [], False
-    for line in text.splitlines():
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
-        if not fenced and re.match(r"#{1,6} ", line):
-            line = "#" * min(6, len(line) - len(line.lstrip("#")) + levels) + line.lstrip("#")
-        lines.append(line)
-    return "\n".join(lines)
+    if not runlog.last_event(run.path, "followups.posted"):
+        text, drafts = followups.comment(run.path, pr)
+        if text:
+            body = run.path / "followups-comment.md"
+            body.write_text(text, encoding="utf-8")
+            url = github.comment("pr", pr_number, body)
+            run.event("followups.posted", url=url, on=f"pr {pr_number}", count=len(drafts))
+    noted = {e.get("issue") for e in runlog.read_events(run.path) if e.get("event") == "issue.noted"}
+    for number, note in followups.notes(run.path).items():
+        if number in noted or number == record.get("issue_number"):
+            continue
+        body = followups.folder(run.path) / "notes" / f"{number}.posted.md"
+        body.write_text(f"{note}\n\nFrom {pr}.\n", encoding="utf-8")
+        url = github.comment("issue", number, body)
+        run.event("issue.noted", issue=number, url=url)
 
 
 def _body(run_dir: Path) -> Path:
-    """The pull request's body, written to the run folder: what closes on merge, then
-    the run's summary without its title, which is the pull request's own."""
+    """The pull request's body, written to the run folder; the run's summary is
+    rewritten beside it as the full record."""
 
-    record = runlog.read_record(run_dir)
-    closes = []
-    if record.get("issue_number"):
-        closes.append(f"Closes #{record['issue_number']}")
-    closes += [f"Closes #{n}" for n in folded_issues(spec.issue_dir(run_dir))
-               if n != record.get("issue_number")]
-    text = summary.write(run_dir)
-    # The title is the pull request's own, and the run's state is not the pull
-    # request's: the run ends only once CI has answered.
-    lines = [line for line in text.splitlines()[1:] if not line.startswith("- **State:**")]
-    while lines and not lines[0].strip():
-        lines = lines[1:]
-    body = "\n".join(closes + [""] + lines).strip() + (
-        f"\n\n---\nBuilt by placido · run `{run_dir.parent.name}/{run_dir.name}`\n"
-    )
+    summary.write(run_dir)
     path = run_dir / "pr-body.md"
-    path.write_text(body, encoding="utf-8")
+    path.write_text(prbody.build(run_dir, folded_issues(spec.issue_dir(run_dir))), encoding="utf-8")
     return path
 
 

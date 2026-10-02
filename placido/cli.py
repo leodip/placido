@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from placido import __version__, checks, config, doctor, driver, github, implement, mutate, report, review, runlog, spec, start, status, step, summary
+from placido import __version__, checks, config, doctor, driver, followups, github, implement, mutate, report, review, runlog, spec, start, status, step, summary
 from placido import close as closing
 from placido import retro as retrospect
 from placido.herdr import Herdr, HerdrError
@@ -312,6 +312,7 @@ def _deliver(ctx: driver.Context, outcome: str) -> int:
     then end the run. Its work is done once CI is green, or there is no CI or GitHub;
     what is left (trying the branch, merging, escalations) is the user's."""
 
+    followups.draft(ctx, ctx.settings.roles["fix"].agent)
     try:
         ci = github.deliver(ctx, ctx.settings.roles["fix"].agent)
     except github.GitHubError as error:
@@ -413,7 +414,8 @@ def cmd_close(args: argparse.Namespace) -> int:
 
 def _ask_fold(ctx: driver.Context, items: list[dict], reply=None) -> list[int]:
     """Ask once, in this terminal, which follow-ups to fold into the change; the rest
-    are posted on the issue at delivery. Without a terminal to ask in, none are folded in."""
+    are drafted as issues, for the user to file, in a comment on the pull request.
+    Without a terminal to ask in, none are folded in."""
 
     if reply is None:
         if not sys.stdin.isatty():
