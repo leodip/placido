@@ -13,7 +13,7 @@ decision is genuinely yours.
 placido start 439      worktree, branch, Herdr workspace, the project's setup
 placido spec           an interview, one question at a time, sealed as an agreement
 placido run            slices built and committed, final checks, review, pull request
-placido close 439      after you merge: teardown, worktree and workspace removed
+placido close 439      after you merge: teardown, worktree removed, main pulled, branch deleted
 ```
 
 ## How a run goes
@@ -46,8 +46,10 @@ placido close 439      after you merge: teardown, worktree and workspace removed
    in (drafted by an agent with evidence and a duplicate search), go into one comment
    on the pull request, each with the `gh issue create` command that files it;
    placido files none. Other open issues the change affects get a short note.
-7. **Close.** After you merge, `placido close` runs your project's teardown and
-   removes the worktree and its workspace. The branch stays.
+7. **Close.** After you merge, `placido close` runs your project's teardown,
+   removes the worktree and its workspace, brings your base branch up to date, and
+   deletes the issue's branch once its pull request is merged. An unmerged branch
+   stays.
 
 Every step is recorded: prompts, results, agents' transcripts, check output, and an
 event log, under `~/placido/runs/`. A run that stops, or that you stop with Ctrl+C,
@@ -234,7 +236,10 @@ Afterwards:
   such as a lint rule or a note for agents, so the same trouble does not come back.
   It changes nothing.
 - **`placido close`**, once you have merged or given up: teardown, worktree, and
-  workspace go; the branch stays. Run it from outside the issue's own workspace.
+  workspace go. Your main checkout is then pulled (a fast-forward, only when it is on
+  the base branch with no changes), and the issue's branch is deleted if its pull
+  request was merged, or it is merged into the base; otherwise it stays. Run it from
+  outside the issue's own workspace.
 
 Several issues can be in flight at once, in one project or several: each has its own
 branch, worktree, workspace, and run. Inside an issue's worktree, placido acts on
@@ -262,7 +267,7 @@ Placido reads why from the agent's own session file and responds by itself:
 | `placido run` | Builds the slices, runs the final checks, reviews, opens the pull request; resumes |
 | `placido implement [slice]` | Builds one slice by hand |
 | `placido review` | Reviews the change and delivers it, as `run` does at its end |
-| `placido close [issue]` | Teardown, worktree, and workspace removed; `--force` discards changes |
+| `placido close [issue]` | Teardown, worktree, and workspace removed, base pulled, merged branch deleted; `--force` discards changes |
 | `placido status` | Every issue in progress, those needing you first |
 | `placido report [run]` | A run's steps, time, and tokens; `--runs` for trends, `--json` for data |
 | `placido retro` | Suggestions for the project from a finished run |

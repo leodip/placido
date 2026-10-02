@@ -4,8 +4,14 @@ the pull request is merged, or to abandon the issue.
 The run's work ends on its own (`run.end`), but its resources stay so the branch can
 be tried: the worktree, its Herdr workspace, and whatever the project's setup
 started, such as a Docker stack. Closing runs the project's teardown, removes the
-worktree and its workspace through Herdr (the branch stays), and logs `run.closed`,
-after which the run is no longer active.
+worktree and its workspace through Herdr, and logs `run.closed`, after which the run
+is no longer active.
+
+Then it tidies the main checkout, as the user did by hand after the first real run
+(decided 2026-10-02): it brings the base branch up to date (a fast-forward, only
+when the checkout is on the base with no changes), and deletes the issue's branch
+once its work is merged: its pull request merged on GitHub, which a squash merge
+hides from git, or the branch merged into the base. An unmerged branch stays.
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ from pathlib import Path
 
 from placido import config, driver, implement, runlog, start, summary
 from placido.herdr import Herdr, HerdrError
+from placido.proc import Runner, run_command
 
 
 class CloseError(RuntimeError):
@@ -23,6 +30,7 @@ class CloseError(RuntimeError):
 
 def close(
     run: runlog.Run, herdr: Herdr, settings: config.Config, force: bool = False, here: str | None = None,
+    gh: Runner = run_command,
 ) -> None:
     """Close the run. force removes a worktree with uncommitted changes and goes on
     past a failing teardown. here: the calling pane's ID, which must not be in the
@@ -41,6 +49,72 @@ def close(
             _close(run, herdr, settings, worktree, workspace, force)
     except driver.RunError as error:
         raise CloseError(str(error)) from None
+    try:
+        _tidy(run, gh)
+    except (OSError, subprocess.SubprocessError) as error:
+        run.event("close.tidy_failed", error=str(error))
+
+
+def _tidy(run: runlog.Run, gh: Runner) -> None:
+    """Bring the base up to date in the main checkout, then delete the issue's branch
+    if its work is merged."""
+
+    record = runlog.read_record(run.path)
+    repo, base, branch = record.get("repo"), record.get("base") or "main", record.get("branch")
+    if not repo or not branch or not Path(repo).is_dir():
+        return
+    _pull(run, Path(repo), base)
+    merged = _merged(run, Path(repo), base, branch, gh)
+    if not _git(Path(repo), "branch", "--list", branch).stdout.strip():
+        return
+    if merged is None:
+        run.event("branch.kept", branch=branch, reason="not merged")
+        return
+    done = _git(Path(repo), "branch", "-D", branch)
+    if done.returncode == 0:
+        run.event("branch.deleted", branch=branch, reason=merged)
+    else:
+        run.event("branch.kept", branch=branch, reason=(done.stderr or done.stdout).strip())
+
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+
+
+def _pull(run: runlog.Run, repo: Path, base: str) -> None:
+    current = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if current != base:
+        run.event("base.pull_skipped", reason=f"the checkout is on {current}, not {base}")
+        return
+    if _git(repo, "status", "--porcelain", "--untracked-files=no").stdout.strip():
+        run.event("base.pull_skipped", reason="the checkout has uncommitted changes")
+        return
+    if not _git(repo, "remote").stdout.strip():
+        run.event("base.pull_skipped", reason="no remote")
+        return
+    before = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    done = _git(repo, "pull", "--ff-only", "-q")
+    if done.returncode != 0:
+        run.event("base.pull_skipped", reason=(done.stderr or done.stdout).strip()[-300:])
+        return
+    after = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    run.event("base.pulled", base=base, before=before[:12], after=after[:12])
+
+
+def _merged(run: runlog.Run, repo: Path, base: str, branch: str, gh: Runner) -> str | None:
+    """Why the branch counts as merged, or None: its pull request merged, or the
+    branch already in the base."""
+
+    opened = runlog.last_event(run.path, "pr.opened")
+    owner_repo = start.origin_repo(repo)
+    if opened and owner_repo:
+        result = gh(["gh", "pr", "view", str(opened.get("number")), "-R", owner_repo,
+                     "--json", "state", "--jq", ".state"], timeout=60)
+        if result.code == 0 and result.out.strip() == "MERGED":
+            return f"pull request #{opened.get('number')} merged"
+    if _git(repo, "merge-base", "--is-ancestor", branch, base).returncode == 0:
+        return f"merged into {base}"
+    return None
 
 
 def _close(

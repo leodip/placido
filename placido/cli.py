@@ -381,7 +381,8 @@ def cmd_retro(args: argparse.Namespace) -> int:
 
 
 def cmd_close(args: argparse.Namespace) -> int:
-    """Clean up an issue: teardown, then its worktree and workspace; the branch stays."""
+    """Clean up an issue: teardown, its worktree and workspace, then the base pulled and
+    the branch deleted once its work is merged."""
 
     try:
         root = start.project_root(Path.cwd())
@@ -406,7 +407,19 @@ def cmd_close(args: argparse.Namespace) -> int:
         print(f"placido: {error}", file=sys.stderr)
         return 1
     branch = runlog.read_record(path).get("branch", "")
-    print(f"\nclosed {path.parent.name}: its worktree and workspace are gone; the branch {branch} stays.")
+    print(f"\nclosed {path.parent.name}: its worktree and workspace are gone.")
+    pulled = runlog.last_event(path, "base.pulled")
+    skipped = runlog.last_event(path, "base.pull_skipped")
+    if pulled:
+        print(f"{pulled.get('base')} is up to date ({pulled.get('before')[:7]} → {pulled.get('after')[:7]}).")
+    elif skipped:
+        print(f"{runlog.read_record(path).get('base') or 'The base'} was not pulled: {skipped.get('reason')}.")
+    deleted = runlog.last_event(path, "branch.deleted")
+    kept = runlog.last_event(path, "branch.kept")
+    if deleted:
+        print(f"The branch {branch} is deleted: {deleted.get('reason')}.")
+    elif kept:
+        print(f"The branch {branch} stays: {kept.get('reason')}.")
     if inside:
         print(f"This shell's folder is gone with the worktree: cd {root}")
     return 0

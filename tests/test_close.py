@@ -25,12 +25,13 @@ class CloseTest(StartTestCase):
     def test_tears_down_removes_the_worktree_and_ends_the_run(self):
         self.close(teardown="echo $PLACIDO_NAME > $PLACIDO_RUN_DIR/torn-down")
         self.assertFalse(self.worktree.exists())
-        self.assertIn("placido/02-many-names", sh(self.repo, "git", "branch"))  # the branch stays
+        # The branch has no commits of its own, so it counts as merged and goes.
+        self.assertNotIn("placido/02-many-names", sh(self.repo, "git", "branch"))
         self.assertEqual((self.run.path / "torn-down").read_text(), "proj-02-many-names\n")
         events = self.events(self.run.path)
         self.assertLess(events.index("teardown.end"), events.index("worktree.removed"))
         self.assertEqual(runlog.last_event(self.run.path, "run.end")["outcome"], "abandoned")
-        self.assertEqual(events[-1], "run.closed")
+        self.assertIn("run.closed", events)
         self.assertTrue((self.run.path / "summary.md").is_file())
         self.assertEqual(runlog.active_runs(self.runs, "proj", str(self.repo)), [])
 
@@ -82,7 +83,92 @@ class CloseTest(StartTestCase):
         sh(self.repo, "git", "worktree", "remove", str(self.worktree))
         self.close()
         self.assertIn("worktree.missing", self.events(self.run.path))
-        self.assertEqual(self.events(self.run.path)[-1], "run.closed")
+        self.assertIn("run.closed", self.events(self.run.path))
+
+
+class TidyTest(StartTestCase):
+    """After the worktree goes: the base is brought up to date in the main checkout,
+    and the branch is deleted once its work is merged (decided 2026-10-02)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.repo = make_repo(self.tmp, setup="true")
+        self.run = self.start("02", self.repo)
+        self.worktree = self.tmp / "worktrees" / "placido-02-many-names"
+        self.gh_calls: list[list[str]] = []
+        self.pr_state = "OPEN"
+
+    def gh(self, argv, timeout=None):
+        self.gh_calls.append(argv)
+        return Result(0, self.pr_state + "\n")
+
+    def close(self) -> None:
+        cfg = self.tmp / "close.toml"
+        cfg.write_text("[project]\n")
+        close.close(self.run, Herdr(self.fake), config.load(cfg), gh=self.gh)
+
+    def commit_in_worktree(self) -> None:
+        (self.worktree / "new.txt").write_text("x\n")
+        sh(self.worktree, "git", "add", "-A")
+        sh(self.worktree, "git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "work")
+
+    def branches(self) -> str:
+        return sh(self.repo, "git", "branch", "--list", "placido/*")
+
+    def test_a_branch_merged_into_the_base_is_deleted(self):
+        self.commit_in_worktree()
+        sh(self.repo, "git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit",
+           "placido/02-many-names")
+        self.close()
+        self.assertEqual(self.branches(), "")
+        self.assertEqual(runlog.last_event(self.run.path, "branch.deleted")["reason"], "merged into main")
+
+    def test_an_unmerged_branch_stays(self):
+        self.commit_in_worktree()
+        self.close()
+        self.assertIn("placido/02-many-names", self.branches())
+        self.assertEqual(runlog.last_event(self.run.path, "branch.kept")["reason"], "not merged")
+
+    def test_a_squash_merged_pull_request_deletes_the_branch(self):
+        self.commit_in_worktree()  # squashed on GitHub, so git cannot see the merge
+        sh(self.repo, "git", "remote", "add", "origin", "https://github.com/leodip/proj.git")
+        self.run.event("pr.opened", url="https://github.com/leodip/proj/pull/460", number=460)
+        self.pr_state = "MERGED"
+        self.close()
+        self.assertEqual(self.branches(), "")
+        self.assertEqual(runlog.last_event(self.run.path, "branch.deleted")["reason"], "pull request #460 merged")
+        self.assertEqual(self.gh_calls[0][:4], ["gh", "pr", "view", "460"])
+
+    def test_an_open_pull_request_keeps_the_branch(self):
+        self.commit_in_worktree()
+        sh(self.repo, "git", "remote", "add", "origin", "https://github.com/leodip/proj.git")
+        self.run.event("pr.opened", url="https://github.com/leodip/proj/pull/460", number=460)
+        self.close()
+        self.assertIn("placido/02-many-names", self.branches())
+
+    def test_the_base_is_pulled_as_a_fast_forward(self):
+        origin = self.tmp / "origin.git"
+        sh(self.tmp, "git", "clone", "-q", "--bare", str(self.repo), str(origin))
+        sh(self.repo, "git", "remote", "add", "origin", str(origin))
+        sh(self.repo, "git", "fetch", "-q", "origin")
+        sh(self.repo, "git", "branch", "-q", "--set-upstream-to=origin/main", "main")
+        other = self.tmp / "other"
+        sh(self.tmp, "git", "clone", "-q", str(origin), str(other))
+        (other / "merged.txt").write_text("the merged change\n")
+        sh(other, "git", "add", "-A")
+        sh(other, "git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "merged")
+        sh(other, "git", "push", "-q", "origin", "main")
+        self.close()
+        self.assertTrue((self.repo / "merged.txt").is_file())
+        self.assertIn("base.pulled", self.events(self.run.path))
+
+    def test_no_pull_with_uncommitted_changes_or_on_another_branch(self):
+        sh(self.repo, "git", "remote", "add", "origin", str(self.tmp / "nowhere.git"))
+        (self.repo / "README").write_text("edited\n")
+        sh(self.repo, "git", "add", "README")
+        self.close()
+        skipped = runlog.last_event(self.run.path, "base.pull_skipped")
+        self.assertEqual(skipped["reason"], "the checkout has uncommitted changes")
 
 
 class FindRunTest(StartTestCase):

@@ -1826,3 +1826,15 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
     (`issue.noted`). Agents still write nothing to GitHub themselves.
   - The interview's drafts use the same format, so both kinds get a command.
   455 tests pass.
+- The user merged #460, which closed #331, and closed the issue by hand with
+  three commands: `placido close 331` (teardown in 11 seconds, worktree and
+  workspace removed), `git pull`, and `git branch -D` on the issue's branch
+  (GitHub had already deleted the remote one). At the user's request,
+  `placido close` now does all three. After the worktree goes, it pulls the
+  main checkout as a fast-forward, only when it is on the base branch with no
+  uncommitted changes (`base.pulled` or `base.pull_skipped` with the reason),
+  then deletes the issue's branch once its work is merged: its pull request
+  merged on GitHub (`gh pr view`, since a squash merge hides the merge from
+  git), or the branch merged into the base (`branch.deleted` with the reason).
+  An unmerged branch stays (`branch.kept`), as before, so an abandoned issue
+  can be picked up again. 461 tests pass.
