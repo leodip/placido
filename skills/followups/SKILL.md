@@ -56,7 +56,9 @@ When the change affects another open issue (it finishes part of it, removes one 
 its constraints, or changes what it assumes), write a short comment for that issue
 as `notes/<number>.md` in the same folder: what this change does that matters to
 the issue, in two to five sentences, plain, with no file-by-file detail. Placido
-posts each note on its issue once the pull request exists, with a link to it. Write
+posts each note on its issue once the pull request exists, with a link to it, and
+before anyone merges it: say what the pull request does, never that it has landed
+or that the issue is done. Write
 none when no other issue is affected; never one for the issue this change closes.
 Take the issues from the agreement, the review, and the follow-ups' searches.
 

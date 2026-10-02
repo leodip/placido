@@ -1890,3 +1890,7 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
     deliverable was test code. Following the user's principle (when in doubt,
     one more round), any committed fix or dispute on a serious finding now
     earns a verification round, whatever files it touches.
+- The two notes the drafting step wrote for #394 and #423 were accurate and
+  useful, but said "#439 has landed" and "Part 16 is done" while #464 was
+  still open. The followups skill now says notes are posted before the merge,
+  so they say what the pull request does.
