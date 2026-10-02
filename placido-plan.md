@@ -459,9 +459,10 @@ are never settled by the run on its own judgment.
   in the next round. Security findings at blocking or significant severity
   cannot be disputed away: they are fixed or escalated to the user.
 - **Starting a new round.** Round 1 always runs. Another round runs only when
-  the previous round had blocking or significant findings, the fix changed
-  production code rather than only tests or documentation, and the round budget
-  remains. Minor-only findings are fixed or deferred without a new round.
+  the previous round had blocking or significant findings, the fixer changed
+  something (tests count: on 2026-10-02 the rule "production code only" left a
+  rewrite of #463's test-code deliverable unverified) or disputed one, and the
+  round budget remains. Minor-only findings are fixed or deferred without a new round.
 - **Later rounds.** The same reviewer session is resumed in its pane, which
   keeps cache hits high, and verifies each earlier finding, its resolution, and
   the fix diff for regressions instead of starting a fresh search. The first
@@ -1870,3 +1871,22 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   worktree. Not during setup, so its progress stays visible where `start`
   ran; a failed focus is only a warning. (Checking the call by hand moved the
   user's view off #439's workspace; it was put back at once.) 468 tests pass.
+- Both parallel runs ended green, the first live test of parallel issues and
+  of the new delivery. #439 (PR #464): one review round, no follow-ups; the
+  drafting step wrote notes for #394 and #423, which placido posted. #463 (PR
+  #465): its follow-up was drafted with a filing command and posted on the
+  pull request.
+- #463's review exposed two problems, both fixed at the user's request:
+  - Goiabada's `.placido` told agents to narrow the unit tiers with `--run`,
+    which `run-tests.sh` applies to the data and integration tiers only, so a
+    "single test" ran a whole module tier; the implement notes' mutation
+    example had the same mistake. The config now says so and gains an `exec`
+    command (one quoted command in the issue's devcontainer, from
+    `src/authserver`), with `go test -count=1 -run` for one unit test; checked
+    on #463's stack. Pushed to Goiabada's main as a63a5a68.
+  - Round 1 found a significant flaw in #463's build-script reader; the fixer
+    rewrote it, all in a `_test.go` file, and placido stopped with "the fix
+    changed no production code", so the rewrite went out unverified. #463's
+    deliverable was test code. Following the user's principle (when in doubt,
+    one more round), any committed fix or dispute on a serious finding now
+    earns a verification round, whatever files it touches.

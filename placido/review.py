@@ -1,8 +1,11 @@
 """The review loop: a resumed reviewer, a fresh fixer, and rounds that must be earned.
 
 Round 1 always runs. Another round runs only when the round left blocking or
-significant findings, the fix changed production code, and the budget allows; the
-same reviewer session then verifies the fixes rather than searching again. What the
+significant findings, the fixer changed something or disputed one, and the budget
+allows; the same reviewer session then verifies the fixes rather than searching
+again. Any change counts, tests included: on Goiabada #463 the change under review
+was test code, and a rewrite fixing a significant finding went unverified because
+it touched only a `_test.go` file (decided 2026-10-02). What the
 budget leaves open goes to the user (blocking findings, unresolved disputes) or to
 follow-ups (significant and minor ones).
 """
@@ -224,24 +227,6 @@ def fixer_prompt(
     return "\n".join(lines) + "\n\n" + (menu or "The project defines no commands.\n")
 
 
-# ---- what a fix changed ----------------------------------------------------------------
-
-
-def production_changed(worktree: Path, before: str, after: str) -> bool:
-    """Whether commits changed production code, not only tests and documentation."""
-
-    done = subprocess.run(
-        ["git", "-C", str(worktree), "diff", "--name-only", before, after],
-        capture_output=True, text=True,
-    )
-    return any(not _test_or_doc(name) for name in done.stdout.split())
-
-
-def _test_or_doc(name: str) -> bool:
-    lower = name.lower()
-    return "test" in lower or lower.endswith(".md") or lower.startswith("docs/") or "/docs/" in lower
-
-
 # ---- the loop ----------------------------------------------------------------------------
 
 
@@ -333,16 +318,16 @@ class Loop:
             ]
             serious = [f for f in open_findings if f["severity"] != "minor"]
             disputed = [f for f in serious if answers.get(f["id"], {}).get("status") == "disputed"]
-            changed = after != before and production_changed(self.worktree, before, after)
+            changed = after != before
             if not serious:
                 reason = "only minor findings"
             elif not changed and not disputed:
-                reason = "the fix changed no production code"
+                reason = "the fix changed nothing"
             elif round_ == budget:
                 reason = "round budget used"
             else:
                 self.run.event("review.decision", round=round_, decision="next round",
-                               reason="serious findings with a production fix or a dispute to judge")
+                               reason="serious findings with a fix or a dispute to judge")
                 continue
             self.run.event("review.decision", round=round_, decision="stop", reason=reason)
             if reason != "round budget used":

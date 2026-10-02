@@ -150,7 +150,7 @@ class LoopTest(LoopTestCase):
         self.assertIn("Placido-Review-Round: 1", body)
         self.assertEqual(
             self.decisions(),
-            [(1, "next round", "serious findings with a production fix or a dispute to judge"),
+            [(1, "next round", "serious findings with a fix or a dispute to judge"),
              (2, "pass", "nothing open")],
         )
 
@@ -163,11 +163,23 @@ class LoopTest(LoopTestCase):
         self.assertEqual(account.unverified, ["R1-1"])
         self.assertEqual([f["id"] for f in account.followups], ["R1-2"])
 
-    def test_a_fix_in_tests_only_earns_no_round(self):
-        self.runner.reviews = [{"findings": [finding(1, "significant")]}]
+    def test_a_fix_in_tests_only_is_verified_too(self):
+        # The change under review may be test code itself (Goiabada #463).
+        self.runner.reviews = [
+            {"findings": [finding(1, "significant")]},
+            {"findings": [], "verdicts": [{"id": "R1-1", "verdict": "resolved"}]},
+        ]
         self.runner.fixes = [{"answers": {"R1-1": "fixed"}, "change": "test"}]
-        self.loop()
-        self.assertEqual(self.decisions(), [(1, "stop", "the fix changed no production code")])
+        account = self.loop()
+        self.assertEqual(self.decisions()[0], (1, "next round", "serious findings with a fix or a dispute to judge"))
+        self.assertEqual(account.unverified, [])
+
+    def test_a_fix_that_changed_nothing_earns_no_round(self):
+        self.runner.reviews = [{"findings": [finding(1, "significant")]}]
+        self.runner.fixes = [{"answers": {"R1-1": "fixed"}, "change": None}]
+        account = self.loop()
+        self.assertEqual(self.decisions(), [(1, "stop", "the fix changed nothing")])
+        self.assertEqual(account.unverified, ["R1-1"])
 
     def test_a_disputed_blocking_finding_is_judged_and_escalated_when_rejected(self):
         self.runner.reviews = [
@@ -314,29 +326,6 @@ class CheckTest(unittest.TestCase):
     def test_answers_need_a_note(self):
         problems = self.resolutions([{"id": "R1-1", "status": "fixed", "note": " "}], [finding(1, "minor")])
         self.assertEqual(problems, ["finding R1-1 needs a note explaining its fixed answer."])
-
-
-class ProductionTest(LoopTestCase):
-    def commit(self, name: str) -> str:
-        path = self.repo / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("changed\n")
-        sh(self.repo, "git", "add", "-A")
-        sh(self.repo, "git", "commit", "-qm", name)
-        return sh(self.repo, "git", "rev-parse", "HEAD")
-
-    def test_tests_and_docs_are_not_production(self):
-        before = sh(self.repo, "git", "rev-parse", "HEAD")
-        self.commit("test_greet.py")
-        self.commit("docs/guide.txt")
-        after = self.commit("README.md")
-        self.assertFalse(review.production_changed(self.repo, before, after))
-        after = self.commit("greet.py")
-        self.assertTrue(review.production_changed(self.repo, before, after))
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class FallbackTest(LoopTestCase):
