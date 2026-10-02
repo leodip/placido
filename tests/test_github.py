@@ -29,7 +29,7 @@ class FakeGh:
         if argv[0] == "git":
             return Result(0, "pushed")
         what = " ".join(argv[1:3])
-        if what in ("pr create", "pr edit", "issue create"):
+        if what in ("pr create", "pr edit", "issue create", "issue comment"):
             body = Path(argv[argv.index("--body-file") + 1]).read_text()
             self.bodies.setdefault(what, body)
             self.bodies[what + " last"] = body
@@ -38,6 +38,8 @@ class FakeGh:
         if what == "issue create":
             self.issues += 1
             return Result(0, f"https://github.com/leodip/goiabada/issues/{self.issues}\n")
+        if what == "issue comment":
+            return Result(0, f"https://github.com/leodip/goiabada/issues/{argv[3]}#issuecomment-9001\n")
         if what == "pr checks":
             answer = self.checks.pop(0) if self.checks else []
             return Result(0, json.dumps(answer)) if answer else Result(1, "no checks reported on the 'x' branch")
@@ -54,7 +56,7 @@ def check(name: str, bucket: str) -> dict:
             "link": "https://github.com/leodip/goiabada/actions/runs/111/job/222"}
 
 
-class DeliverTest(unittest.TestCase):
+class DeliverCase(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -98,6 +100,8 @@ class DeliverTest(unittest.TestCase):
     def events(self, kind: str) -> list[dict]:
         return [e for e in runlog.read_events(self.run.path) if e["event"] == kind]
 
+
+class DeliverTest(DeliverCase):
     def test_without_a_github_remote_the_branch_stays_local(self):
         sh(self.repo, "git", "remote", "remove", "origin")
         self.assertEqual(github.deliver(self.ctx(), None, None), "local")
@@ -155,6 +159,49 @@ class DeliverTest(unittest.TestCase):
         self.deliver()
         self.assertEqual((self.gh.made("pr create"), self.gh.made("issue create")), (1, 1))
         self.assertEqual(self.gh.made("pr edit"), 4)
+
+
+class DraftsTest(DeliverCase):
+    """Follow-ups the interview drafted go to the run's issue as one comment, for
+    the user to file by hand; they are never filed as issues."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.gh.checks = [[check("build", "pass")]] * 2
+        folder = self.run.path.parent
+        (folder / "followup-remove-chi.md").write_text(
+            "# refactor: replace chi\n\nDrafted during the specification.\n\n## Why\n\npprof is linked.\n"
+            "\n```sh\n# not a heading\n```\n"
+        )
+        (folder / "followup-alpine-pin.md").write_text("# Pin the alpine base\n\nIt floats.\n")
+
+    def test_posted_in_full_on_the_issue_once_the_pull_request_exists(self):
+        self.deliver()
+        comment = next(argv for argv in self.gh.calls if argv[1:3] == ["issue", "comment"])
+        self.assertEqual(comment[3], "439")
+        order = [" ".join(argv[1:3]) for argv in self.gh.calls if argv[0] == "gh"]
+        self.assertLess(order.index("pr create"), order.index("issue comment"))
+        body = self.gh.bodies["issue comment"]
+        self.assertTrue(body.startswith(f"Placido's interview for this issue drafted 2 follow-ups, left out of {PR}."))
+        self.assertLess(body.index("## Pin the alpine base"), body.index("## refactor: replace chi"))
+        self.assertIn("### Why\n\npprof is linked.", body)
+        self.assertIn("```sh\n# not a heading\n```", body)
+        (event,) = self.events("issue.commented")
+        self.assertEqual(event["url"], "https://github.com/leodip/goiabada/issues/439#issuecomment-9001")
+        self.assertEqual(event["drafts"], ["followup-alpine-pin.md", "followup-remove-chi.md"])
+        self.assertEqual(self.gh.made("issue create"), 1)  # only the review's follow-up is filed
+
+    def test_a_resumed_delivery_does_not_comment_again(self):
+        self.deliver()
+        self.deliver()
+        self.assertEqual(self.gh.made("issue comment"), 1)
+
+    def test_nothing_to_post(self):
+        for path in self.run.path.parent.glob("followup-*.md"):
+            path.unlink()
+        self.deliver()
+        self.assertEqual(self.gh.made("issue comment"), 0)
+        self.assertEqual(self.events("issue.commented"), [])
 
 
 class FoldedTest(unittest.TestCase):

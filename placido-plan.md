@@ -1727,3 +1727,26 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   433 tests pass.
 - With the bit fixed, the user's second `placido start 331` passed setup in
   46 seconds. The user then chose to start the issue over from a blank slate.
+- The user restarted #331 from a blank slate. On the new worktree placido
+  answered Claude Code's folder-trust question itself (`agent.trusted`), the
+  first time live. The interview took 37 minutes, about 7.5 of reading before
+  the first question, and sealed 4 slices: `-w` rather than the issue's
+  `-s -w` (the symbol table keeps `govulncheck -mode=binary` precise; `-s`
+  made it report GO-2026-5932 falsely), the setup tool moved to `-w` too, a
+  `TZ` defect it found (the embedded zone database unreachable, so the images
+  needed Alpine's `tzdata`), a new architecture rule against test code in
+  shipped binaries, and a CI smoke run of the images. Its probes take 301 MB
+  beside the agreement.
+- Slices 2 and 4 change only builds, Dockerfiles, and CI, yet must kill 2
+  mutations each. Not changed ahead of a real failure; watched in this run.
+- Found: the interview drafted a follow-up (`followup-remove-chi.md`, chi's
+  middleware linking `net/http/pprof` and `expvar` into both servers), but
+  delivery files only the review's follow-ups, so the draft would have been
+  dropped silently. The user's choice: when the pull request is opened,
+  placido posts every `followup-*.md` beside the agreement, in full, as one
+  comment on the run's issue (`issue.commented`, once per run, headings
+  demoted a level), and files none of them; the user files them by hand. The
+  review's follow-ups are still filed as issues, as decided in step 13. The
+  spec skill now names the draft format. The running `placido run` loaded
+  its code before this change, so this run posts the comment only if its
+  delivery is resumed by a new `placido run`.
