@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import time
 from dataclasses import dataclass
@@ -58,6 +59,31 @@ TRUST_DIALOGS = (
     TrustDialog("Is this a project you created or one you trust?", "Yes, I trust this folder", "❯"),
     TrustDialog("Trust this folder? Codex can read, edit, and run files here", "Trust and continue", "›"),
 )
+
+# Claude Code can run commands in the background and end its turn while they run,
+# waking the agent again when they finish. Herdr then reports the agent idle, which
+# placido took for "stopped" and nudged, then gave up on (Goiabada #331, 2026-10-02).
+# So the screen decides: a turn's footer ("done 6:01 PM · 1 shell, 1 monitor still
+# running") or the status bar ("bypass permissions on · 1 shell") naming running
+# shells or monitors means the agent is waiting, not done.
+FOOTER_LINE = re.compile(r"\bdone \d{1,2}:\d{2}")
+RUNNING = re.compile(r"·\s*\d+ (?:shells?|monitors?)\b")
+BACKGROUND_LIMIT = 3600  # longest wait on an agent's background work before nudging it
+# Quitting with background work running asks first; placido stops the work, so no
+# build or test of a finished step goes on in the worktree.
+EXIT_BACKGROUND = ("Background work is running", "Exit and stop tasks")
+
+
+def background_running(screen: str) -> bool:
+    """Whether the agent's screen shows background work still running."""
+
+    lines = screen.splitlines()[-30:]
+    footers = [line for line in lines if FOOTER_LINE.search(line)]
+    if footers and "still running" in footers[-1] and RUNNING.search(footers[-1]):
+        return True
+    bars = [line for line in lines if "permissions on" in line]
+    return bool(bars and RUNNING.search(bars[-1]))
+
 
 # Herdr error codes meaning the agent is no longer running in its pane.
 GONE = ("agent_not_found", "agent_not_running", "agent_exited")
@@ -424,6 +450,7 @@ class Step:
         and the prompt's Enter answered it."""
 
         began = self.clock()
+        background: float | None = None  # when the agent was first seen waiting on background work
         while True:
             status = self._status_of(agent)
             if status in ("working", "unknown"):
@@ -440,11 +467,37 @@ class Step:
                 if not self._answer_known(pane, folder):
                     self._needs_user(agent, pane, folder, phase)
                 continue
+            # Waited the limit out, or the result says it is done whatever still runs: no wait.
+            waiting = not (background is not None and background < 0) and not (folder / "result.md").is_file()
+            if waiting and background_running(self._screen(pane, source="visible")):
+                if background is None:
+                    background = self.clock()
+                    self.run.event("agent.background", step=folder.name, name=agent)
+                if self.clock() - background < BACKGROUND_LIMIT:
+                    self._await_background(agent, folder, began)
+                    continue
+                self.run.event("agent.background_limit", step=folder.name, name=agent,
+                               seconds=round(self.clock() - background))
+                background = -1.0
+            elif background is not None and background >= 0:
+                self.run.event("agent.background_done", step=folder.name, name=agent,
+                               seconds=round(self.clock() - background, 1))
+                background = None
             if not settle:
                 return
             self.sleep(SETTLE_SECONDS)
             if self._status_of(agent) in ("idle", "done") and not self._dialog(pane):
                 return
+
+    def _await_background(self, agent: str, folder: Path, began: float) -> None:
+        """Wait for an agent idle on its background work to be woken by it."""
+
+        try:
+            self._call(self.herdr.wait, agent, ("working", "blocked"), timeout=PROGRESS_SECONDS)
+        except HerdrError as error:
+            if error.code != "timeout":
+                raise
+            self._progress(folder, agent, self.clock() - began, "waiting on its background work")
 
     def _answer_known(self, pane: str, folder: Path) -> bool:
         """Answer an agent's folder-trust question with yes; False when the screen shows
@@ -465,14 +518,14 @@ class Step:
             self.sleep(0.5)
         return False
 
-    def _progress(self, folder: Path, agent: str, seconds: float) -> None:
+    def _progress(self, folder: Path, agent: str, seconds: float, doing: str = "working") -> None:
         """A live-view line only, not an event: the log records what happened, not waiting."""
 
         if self.run.echo is None:
             return
         minutes, secs = divmod(int(seconds), 60)
         stamp = time.strftime("%H:%M:%S")
-        print(f"{stamp}  …             {folder.name} · {agent} working ({minutes}:{secs:02d})",
+        print(f"{stamp}  …             {folder.name} · {agent} {doing} ({minutes}:{secs:02d})",
               file=self.run.echo, flush=True)
 
     def _needs_user(self, agent: str, pane: str, folder: Path, phase: str) -> None:
@@ -539,7 +592,7 @@ class Step:
         if keep_open:
             self._copy_transcript(session, folder)
             return
-        exited = self._exit(agent, kind)
+        exited = self._exit(agent, kind, pane)
         copied = self._copy_transcript(session, folder)
         if not exited:
             self._keep_tab(folder, pane, "the agent did not exit")
@@ -577,7 +630,7 @@ class Step:
                 found = {key: event.get(key) for key in ("agent", "kind", "value")}
         return found
 
-    def _exit(self, agent: str, kind: str) -> bool:
+    def _exit(self, agent: str, kind: str, pane: str = "") -> bool:
         """Ask the agent to quit and wait until it has; True once it is gone."""
 
         if self._gone(agent):
@@ -589,12 +642,28 @@ class Step:
                 return True
             self.run.event("herdr.warning", error=str(error))
             return False
+        answered = False
         for _ in range(EXIT_SECONDS):
             self.sleep(1)
             if self._gone(agent):
                 self.run.event("agent.exited", name=agent, by="placido")
                 return True
+            if not answered and pane and self._stop_background(agent, pane):
+                answered = True
         return False
+
+    def _stop_background(self, agent: str, pane: str) -> bool:
+        """Answer "Exit and stop tasks" when quitting asks about background work; True if
+        it did. Only with the selection seen on that option."""
+
+        screen = self._screen(pane, source="visible")
+        question, option = EXIT_BACKGROUND
+        selected = next((line for line in screen.splitlines() if "❯" in line), "")
+        if question not in screen or option not in selected:
+            return False
+        self.herdr.send_keys(pane, "enter")
+        self.run.event("agent.background_stopped", name=agent)
+        return True
 
     def _gone(self, agent: str) -> bool:
         try:

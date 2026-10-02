@@ -42,6 +42,9 @@ Rules:
 - **Tests first where a finding is about behavior:** a test that fails before the
   fix and passes after.
 - **Never commit.** Placido runs the gates and commits.
+- **Run commands in the foreground and wait for them,** however long they take. Do not
+  end your turn while a background command or monitor is running: placido reads the
+  end of your turn as the end of your work.
 
 **Done when** every finding has an answer and the gates your prompt lists pass.
 

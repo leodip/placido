@@ -26,6 +26,9 @@ where the failure touches what they decided.
   again after the fix. A CI-only failure, such as another database or operating
   system, may not reproduce; reason from the output, and say so in the evidence.
 - **Never commit.** Placido runs the checks again and commits.
+- **Run commands in the foreground and wait for them,** however long they take. Do not
+  end your turn while a background command or monitor is running: placido reads the
+  end of your turn as the end of your work.
 
 When the failure is not the change's fault (a flaky test, an outage, a broken CI
 setup) or fixing it needs the user's decision, write the result as

@@ -1761,3 +1761,31 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   loaded its modules already, but any new command would have failed. From
   now on, placido changes during a live run are made in a separate worktree
   and merged only with the suite passing.
+- `placido run` on #331: slice 1 (the `TZ` fix) committed after 13 minutes
+  (181d1785), its four gates passing, after one nudge. The cause showed in the
+  transcript: Claude Code ran the gates as a background command and ended its
+  turn to wait, so Herdr reported it idle and placido read "stopped without a
+  result". Claude Code wakes the agent itself when such work finishes.
+- Slice 2's first attempt did the same with a long build pass: nudged, it
+  answered "I'm still working" and ended its turn again, so the step ended
+  `no-result` (attempt 1 of 3). Its `/exit` then met Claude Code's "Background
+  work is running: Exit and stop tasks / Move to background / Stay", which
+  placido did not know, so the tab was kept. A second attempt finished its
+  work (4 mutations killed) while the user stopped the run with Ctrl+C; a
+  second Ctrl+C stopped the salvage of that attempt during its gates. The
+  user found the experience not good, and chose to resume as if slice 1 had
+  just completed, with slice 2 built afresh.
+- Fixed (the user's go-ahead):
+  - Placido reads Claude Code's screen for background work: a turn footer
+    ("done 6:01 PM · 1 shell, 1 monitor still running") or the status bar
+    ("bypass permissions on · 1 shell"). An idle agent with background work
+    and no result yet is waiting, not done: placido waits for it to wake
+    (`agent.background`, `agent.background_done`, the live view saying
+    "waiting on its background work") for up to an hour
+    (`agent.background_limit`), then nudges as before.
+  - Quitting answers "Exit and stop tasks" when the selection is seen on it
+    (`agent.background_stopped`), so a finished step leaves nothing running in
+    the worktree and its tab closes.
+  - The implement, fix, and checks skills say to run commands in the
+    foreground and never end a turn while background work runs. 450 tests
+    pass.

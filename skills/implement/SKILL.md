@@ -64,6 +64,9 @@ after you, and the slice is committed only when they pass.
 - **The agreement decides.** When the code shows the agreement cannot work as
   written, or needs a decision it does not contain, **stop**: do not choose for the
   user. Write a blocked result (below) instead.
+- **Run commands in the foreground and wait for them,** however long they take. Do not
+  end your turn while a background command or monitor is running: placido reads the
+  end of your turn as the end of your work.
 - **Never commit,** amend, push, or switch branches. Placido commits the slice after
   checking it, using the message in your result.
 

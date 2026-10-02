@@ -45,6 +45,8 @@ class FakeHerdr:
         self.transcript: Path | None = None  # where a failing turn writes its error
         self.errors: dict[str, str] = {}  # behaviour name -> the API error text it writes
         self.error_screen: str | None = None  # what the screen shows after a failed turn
+        self.background = 0  # waits the agent spends idle on background work before waking
+        self.exit_question = False  # quitting asks about the background work still running
 
     def _alive(self):
         if not self.alive:
@@ -69,6 +71,9 @@ class FakeHerdr:
         self._alive()
         if text in step.EXIT_COMMANDS.values():
             self.calls.append(("exit", text))
+            if self.background:  # Claude Code asks before stopping background work
+                self.exit_question = True
+                return
             self.alive = self.refuses_exit
             return
         self.calls.append(("prompt", name, text))
@@ -89,6 +94,11 @@ class FakeHerdr:
             self.status, self.dialog, self.write_after_answer = "blocked", True, True
         elif behaviour == "exit":
             self.alive = False
+        elif behaviour == "background":  # ends its turn while its builds run, then wakes
+            self.background = 2
+        elif behaviour == "write-background":  # done, but a monitor it started still runs
+            self.result.write_text("done\n")
+            self.background = 99
         elif behaviour in self.errors:  # the turn fails with an API error
             text = self.errors[behaviour]
             refused = "safeguards" in text
@@ -118,6 +128,12 @@ class FakeHerdr:
             self.working_timeout = False
             self._finish()
             raise HerdrError("timed out", "timeout")
+        if self.status == "idle" and self.background and not self.exit_question and until == ("working", "blocked"):
+            self.background -= 1
+            if self.background:
+                raise HerdrError("timed out", "timeout")
+            self.status, self.pending = "working", "write"  # its work finished and woke it
+            return self.status
         if self.status == "idle" and self.pending == "interview" and until == ("working", "blocked"):
             self.questions -= 1  # the user answers in the agent's tab
             self.status = "working"
@@ -160,12 +176,28 @@ class FakeHerdr:
             )
         if self.dialog:
             return DIALOG
+        if self.exit_question:
+            return (
+                "Background work is running\nThe following will stop when you exit:\n\n"
+                "shell · S=/tmp/claude/scratchpad; for g in vet unit; do …\n\n"
+                " ❯ 1. Exit and stop tasks\n   2. Move to background and exit\n   3. Stay\n\n"
+                "Enter to confirm · Esc to cancel\n"
+            )
+        if self.background:
+            return (
+                "● The gates are running; I'll write the result when they finish.\n\n"
+                "✻ Brewed for 2m 10s · done 6:01 PM · 1 shell, 1 monitor still running\n\n"
+                "❯ \n  ⏵⏵ bypass permissions on · 1 shell · ← for agents\n"
+            )
         return self.error_screen or "screen text\n"
 
     def send_keys(self, pane_id, *keys):
         self.calls.append(("keys", keys))
         if keys == ("esc",) and self.status == "working":
             self.status = "idle"  # the agent's turn is interrupted
+            return
+        if keys == ("enter",) and self.exit_question:
+            self.exit_question, self.background, self.alive = False, 0, False  # stops its tasks and quits
             return
         for key in keys:
             if key == "down":
@@ -320,6 +352,78 @@ class MissingResultTest(StepTestCase):
         result = self.step()
         self.assertEqual(result.outcome, "no-result")
         self.assertEqual(runlog.last_event(self.run.path, "step.end")["outcome"], "no-result")
+
+
+class BackgroundTest(StepTestCase):
+    """Claude Code ends its turn while its background commands run and wakes when they
+    finish; placido waits rather than nudge (Goiabada #331)."""
+
+    def test_an_agent_waiting_on_background_work_is_not_nudged(self):
+        out = io.StringIO()
+        self.run.echo = out
+        self.fake.behaviours = ["background"]
+        result = self.step()
+        self.assertEqual(result.outcome, "success")
+        self.assertNotIn("agent.nudge", self.events())
+        self.assertEqual(len(self.fake.prompts()), 1)
+        events = self.events()
+        self.assertLess(events.index("agent.background"), events.index("agent.background_done"))
+        self.assertIn("waiting on its background work (", out.getvalue())
+
+    def test_the_wait_has_a_limit_then_the_nudge_comes(self):
+        clock = [0.0]
+        def sleep(seconds):
+            clock[0] += seconds
+            self.fake.sleep(seconds)
+        def wait(name, until, timeout=None):
+            clock[0] += timeout or 0
+            raise HerdrError("timed out", "timeout")
+        self.fake.behaviours = ["background", "write"]
+        self.fake.background = 0
+        runner = step.Step(self.run, self.fake, "w8", self.tmp / "wt", home=self.home,
+                           clock=lambda: clock[0], sleep=sleep, wall=lambda: self.now)
+        real_wait = self.fake.wait
+        def waiting(name, until, timeout=None):
+            if self.fake.background and until == ("working", "blocked"):
+                self.fake.background = 99  # never wakes on its own
+                return wait(name, until, timeout)
+            return real_wait(name, until, timeout)
+        self.fake.wait = waiting
+        result = runner("implement", CLAUDE, "Build it.")
+        self.assertEqual(result.outcome, "success")
+        self.assertIn("agent.background_limit", self.events())
+        self.assertIn("agent.nudge", self.events())
+        self.assertGreaterEqual(clock[0], step.BACKGROUND_LIMIT)
+
+    def test_quitting_stops_the_background_work_and_the_tab_closes(self):
+        self.fake.behaviours = ["write-background"]
+        result = self.step()
+        self.assertEqual(result.outcome, "success")
+        self.assertIn(("keys", ("enter",)), self.fake.calls)
+        self.assertIn("agent.background_stopped", self.events())
+        self.assertIn("tab.closed", self.events())
+
+
+class BackgroundScreenTest(unittest.TestCase):
+    def test_seen_on_live_screens(self):
+        for screen in (
+            "✻ Brewed for 2m 10s · done 6:01 PM · 1 shell, 1 monitor still running\n",
+            "✻ Cooked for 9s · done 6:01 PM · 1 shell, 1 monitor still running\n\n❯ \n",
+            "❯ \n  ⏵⏵ bypass permissions on · 1 shell · ← for agents\n",
+            "  ⏵⏵ bypass permissions on · 2 shells\n",
+        ):
+            with self.subTest(screen=screen):
+                self.assertTrue(step.background_running(screen))
+
+    def test_finished_work_does_not_count(self):
+        for screen in (
+            "✻ Sautéed for 3m 9s · done 5:56 PM\n\n❯ \n  ⏵⏵ bypass permissions on\n",
+            # an older footer still on screen, above the newest one
+            "✻ Brewed · done 6:01 PM · 1 shell still running\n● Done.\n✻ Cooked · done 6:04 PM\n",
+            "● I ran 2 shells in the background earlier; both are done.\n",
+        ):
+            with self.subTest(screen=screen):
+                self.assertFalse(step.background_running(screen))
 
 
 class DialogMarkerTest(unittest.TestCase):
