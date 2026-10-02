@@ -1856,3 +1856,17 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
     belong to the whole repository; Goiabada kept one after #331 merged.
     `placido close` drops the run's own stashes when it deletes a merged
     branch; an unmerged branch keeps its stashes. 464 tests pass.
+- Posted the review's F3 as a comment on #396 at the user's request: the
+  images no longer need `tzdata`, one of the constraints #396 lists against a
+  distroless or scratch base.
+- The user started two issues at once (#439 and #463), the first live test of
+  parallel issues.
+- The user asked for `placido start` to say where the worktree is, or `cd`
+  there. A program cannot change its parent shell's folder, so: placido prints
+  the `cd` and the next command (`placido spec`, or `placido run` when the
+  agreement is already sealed), and, the user's choice after checking that
+  `herdr workspace focus` works, switches Herdr to the issue's workspace once
+  setup has passed (`workspace.focused`), whose pane is already in the
+  worktree. Not during setup, so its progress stays visible where `start`
+  ran; a failed focus is only a warning. (Checking the call by hand moved the
+  user's view off #439's workspace; it was put back at once.) 468 tests pass.

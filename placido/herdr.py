@@ -120,6 +120,9 @@ class Herdr:
             raise HerdrError(f"herdr pane read: {result.out.strip()}")
         return result.out
 
+    def focus_workspace(self, workspace_id: str) -> None:
+        self.call("workspace", "focus", workspace_id)
+
     def tab_of(self, pane_id: str) -> str:
         return self.call("pane", "get", pane_id)["pane"]["tab_id"]
 

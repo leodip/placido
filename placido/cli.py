@@ -38,7 +38,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     except (start.StartError, config.ConfigError) as error:
         print(f"placido: {error}", file=sys.stderr)
         return 1
-    print(f"\nrun folder: {run.path}")
+    print(f"\nrun folder: {run.path}\n{start.next_steps(run)}", end="")
     return 0
 
 

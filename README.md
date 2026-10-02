@@ -20,7 +20,8 @@ placido close 439      after you merge: teardown, worktree removed, main pulled,
 
 1. **Start.** `placido start <issue>` creates the branch `placido/<issue>` in a git
    worktree, opens it as a Herdr workspace, and runs your project's setup command
-   (for example, a Docker stack of its own for this issue).
+   (for example, a Docker stack of its own for this issue). Then Herdr switches to
+   that workspace, and placido prints the `cd` and the next command.
 2. **Interview.** `placido spec` opens an agent that reads the issue and the code,
    then asks you one question at a time until no decision is left open. It also looks
    for adjacent work (problems next to the change, open issues on the same area) and

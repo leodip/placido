@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import TextIO
 
-from placido import __version__, config, doctor, issues, runlog, status
+from placido import __version__, config, doctor, issues, runlog, spec, status
 from placido.herdr import Herdr, HerdrError, Worktree
 from placido.proc import Runner, run_command
 
@@ -177,7 +177,25 @@ def start(
             )
     _status(herdr, run, worktree.workspace_id, status.text(status.READY, "run placido spec"))
     run.event("run.ready", worktree=str(worktree.path))
+    # Herdr opens the workspace without moving the user there; once setup is done,
+    # switch to it, where the pane is already in the worktree (the user's ask).
+    try:
+        herdr.focus_workspace(worktree.workspace_id)
+        run.event("workspace.focused", workspace=worktree.workspace_id)
+    except HerdrError as error:
+        run.event("herdr.warning", error=str(error))
     return run
+
+
+def next_steps(run: runlog.Run) -> str:
+    """What to do after start: where the issue's worktree is, and the next command."""
+
+    created = runlog.last_event(run.path, "worktree.created") or {}
+    following = "placido run" if spec.sealed(spec.issue_dir(run.path)) else "placido spec"
+    focused = runlog.last_event(run.path, "workspace.focused")
+    where = ("Herdr has switched to the issue's workspace, whose pane is in the worktree."
+             if focused else "The issue's workspace in Herdr has a pane in the worktree.")
+    return f"{where} Next, there or here:\n  cd {created.get('path', '?')}\n  {following}\n"
 
 
 def failed_setup(root: Path, runs_root: Path, issue: str, branch: str, base: str) -> Path | None:
