@@ -1678,3 +1678,10 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
     SQLite 42s, a narrow integration run on the stack's MySQL 32s, lint 19s,
     all passing; `down` in 7s left no container, volume, network, or image.
 - Next: the user picks a small Goiabada issue for the first live run.
+- Placido moved to its own repository, github.com/leodip/placido (cloned at
+  `~/code/placido`), as a snapshot without history; its history up to the
+  move stays in github.com/leodip/ai. `~/.local/bin/placido` already pointed
+  at `~/code/placido/bin/placido`. The old `placido/` folder matched this
+  repository except for the rewritten README and the new LICENSE, so at the
+  user's choice it was removed from leodip/ai with no pointer left behind
+  (ead2ec5).
