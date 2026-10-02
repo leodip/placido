@@ -134,10 +134,11 @@ def read_record(path: Path) -> dict[str, Any]:
     return json.loads((path / "run.json").read_text(encoding="utf-8"))
 
 
-def active_runs(root: Path, project: str, repo: str | None = None) -> list[Path]:
+def active_runs(root: Path, project: str, repo: str | None = None, unready: bool = False) -> list[Path]:
     """The project's runs that are ready for steps and not yet closed, newest first.
     With repo, only runs of that repository, so two projects sharing a folder name
-    never mix.
+    never mix. With unready, also runs whose worktree exists but never got ready,
+    such as one whose setup failed, so `placido close` can clean them up.
 
     A run whose worktree is gone, or was taken over by a newer run of the same issue,
     is not active either: its worktree was removed outside placido, so nothing more
@@ -157,7 +158,7 @@ def active_runs(root: Path, project: str, repo: str | None = None) -> list[Path]
                 continue
         events = list(read_events(run))
         kinds = {event.get("event") for event in events}
-        if "run.ready" not in kinds or "run.closed" in kinds:
+        if "run.closed" in kinds or ("run.ready" not in kinds and not unready):
             continue  # a run stays selectable after it ends, until `placido close`
         worktree = next(
             (e.get("path") for e in reversed(events) if e.get("event") == "worktree.created"), None

@@ -232,6 +232,82 @@ class SetupFailureTest(StartTestCase):
         self.assertTrue(any(argv[1:3] == ["notification", "show"] for argv in self.fake.calls))
 
 
+class SetupRetryTest(StartTestCase):
+    """A failed setup is fixed on the base, then `placido start` again retries it in
+    the same worktree (first seen on Goiabada: a setup script committed without its
+    executable bit)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.repo = make_repo(self.tmp, setup="test -f fixed")
+        self.worktree = self.tmp / "worktrees" / "placido-01-shout-flag"
+        with self.assertRaisesRegex(start.StartError, "run `placido start 01` again"):
+            self.start("01", self.repo)
+        (self.failed,) = (self.runs / "proj" / "01-shout-flag").iterdir()
+        os.utime(self.failed / "run.json", (1, 1))  # started before the retry
+
+    def fix_on_main(self) -> str:
+        (self.repo / "fixed").write_text("")
+        sh(self.repo, "git", "add", "fixed")
+        sh(self.repo, "git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "fix setup")
+        return sh(self.repo, "git", "rev-parse", "HEAD")
+
+    def test_retries_setup_in_the_same_worktree_brought_up_to_the_base(self):
+        fixed = self.fix_on_main()
+        creates = sum(argv[1:3] == ["worktree", "create"] for argv in self.fake.calls)
+        run = self.start("01", self.repo)
+        self.assertEqual(sum(argv[1:3] == ["worktree", "create"] for argv in self.fake.calls), creates)
+        self.assertEqual(
+            self.events(run.path),
+            ["run.start", "worktree.created", "setup.start", "setup.end", "run.ready"],
+        )
+        self.assertEqual(runlog.last_event(run.path, "run.start")["retry_of"], f"01-shout-flag/{self.failed.name}")
+        created = runlog.last_event(run.path, "worktree.created")
+        self.assertTrue(created["reused"])
+        self.assertEqual((created["path"], created["workspace"]), (str(self.worktree), "w2"))
+        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD"), fixed)
+        self.assertEqual(runlog.read_record(run.path)["base_commit"], fixed)
+        self.assertEqual(start.select_run(self.repo, self.runs), run.path)
+        self.assertEqual(start.select_run(self.worktree, self.runs), run.path)
+
+    def test_a_fix_made_in_the_worktree_itself_also_works(self):
+        (self.worktree / "fixed").write_text("")
+        run = self.start("01", self.repo)
+        self.assertEqual(self.events(run.path)[-1], "run.ready")
+
+    def test_failing_again_can_be_retried_again(self):
+        with self.assertRaisesRegex(start.StartError, "setup failed"):
+            self.start("01", self.repo)
+        for folder in (self.runs / "proj" / "01-shout-flag").iterdir():
+            os.utime(folder / "run.json", (1, 1))
+        self.fix_on_main()
+        run = self.start("01", self.repo)
+        self.assertEqual(self.events(run.path)[-1], "run.ready")
+
+    def test_commits_on_the_branch_mean_something_else_happened(self):
+        (self.worktree / "work.txt").write_text("")
+        sh(self.worktree, "git", "add", "work.txt")
+        sh(self.worktree, "git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "work")
+        with self.assertRaisesRegex(start.StartError, "already exists: `placido run` resumes"):
+            self.start("01", self.repo)
+
+    def test_a_closed_run_is_not_retried(self):
+        runlog.Run(self.failed).event("run.closed")
+        with self.assertRaisesRegex(start.StartError, "already exists"):
+            self.start("01", self.repo)
+
+    def test_a_branch_whose_setup_passed_is_not_retried(self):
+        repo = make_repo(self.tmp / "other")
+        self.start("02", repo)
+        with self.assertRaisesRegex(start.StartError, "`placido close 02` ends one"):
+            self.start("02", repo)
+
+    def test_a_failed_setup_is_closable_but_not_active(self):
+        self.assertEqual(runlog.active_runs(self.runs, "proj", str(self.repo)), [])
+        self.assertEqual(start.find_run(self.repo, self.runs, "01", unready=True), self.failed)
+        self.assertEqual(start.select_run(self.repo, self.runs, unready=True), self.failed)
+
+
 class RefusalTest(StartTestCase):
     def test_not_a_git_repository(self):
         with self.assertRaisesRegex(start.StartError, "not inside a git repository"):

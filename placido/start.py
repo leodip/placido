@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TextIO
 
 from placido import __version__, config, doctor, issues, runlog, status
-from placido.herdr import Herdr, HerdrError
+from placido.herdr import Herdr, HerdrError, Worktree
 from placido.proc import Runner, run_command
 
 
@@ -44,14 +44,15 @@ def origin_repo(root: Path) -> str | None:
         return None
 
 
-def select_run(cwd: Path, runs_root: Path) -> Path:
+def select_run(cwd: Path, runs_root: Path, unready: bool = False) -> Path:
     """The run a command in cwd means. Inside an issue's worktree, that issue's run;
     in the main checkout, the project's only active run. With several issues in
-    flight, guessing could act on the wrong one, so placido asks instead."""
+    flight, guessing could act on the wrong one, so placido asks instead. unready
+    also counts runs that never got ready, for `placido close`."""
 
     root = project_root(cwd)
     top = Path(git(cwd, "rev-parse", "--show-toplevel")).resolve()
-    runs = runlog.active_runs(runs_root, root.name, str(root))
+    runs = runlog.active_runs(runs_root, root.name, str(root), unready)
     if top != root.resolve():
         for run in runs:
             created = runlog.last_event(run, "worktree.created") or {}
@@ -72,11 +73,11 @@ def select_run(cwd: Path, runs_root: Path) -> Path:
     return runs[0]
 
 
-def find_run(root: Path, runs_root: Path, issue: str) -> Path:
+def find_run(root: Path, runs_root: Path, issue: str, unready: bool = False) -> Path:
     """The project's active run for an issue named in full or by a unique prefix,
-    such as `02` for 02-many-names."""
+    such as `02` for 02-many-names. unready as in select_run."""
 
-    runs = runlog.active_runs(runs_root, root.name, str(root))
+    runs = runlog.active_runs(runs_root, root.name, str(root), unready)
     found = [run for run in runs if run.parent.name == issue] or [
         run for run in runs if run.parent.name.startswith(issue)
     ]
@@ -111,15 +112,22 @@ def start(
         raise StartError(str(error)) from None
     issue = found.id
     branch = branch_name(issue)
+    runs_root = runs_root or runlog.runs_dir()
+    retry = None
     if git(root, "branch", "--list", branch):
-        raise StartError(f"branch {branch} already exists; resuming a run comes in a later step")
+        retry = failed_setup(root, runs_root, issue, branch, settings.base)
+        if retry is None:
+            raise StartError(
+                f"branch {branch} already exists: `placido run` resumes an issue in progress,"
+                f" and `placido close {arg}` ends one"
+            )
     try:
         base_commit = git(root, "rev-parse", "--verify", f"{settings.base}^{{commit}}")
     except StartError:
         raise StartError(f"base {settings.base!r} is not a commit in {root}") from None
 
     run = runlog.Run.create(
-        runs_root or runlog.runs_dir(),
+        runs_root,
         root.name,
         issue,
         {
@@ -137,21 +145,23 @@ def start(
         echo=echo,
     )
     (run.path / "issue.md").write_text(found.text, encoding="utf-8")
-    run.event("run.start", project=root.name, issue=issue, source=found.source, base=settings.base)
-
-    try:
-        worktree = herdr.create_worktree(root, branch, settings.base, issue)
-    except HerdrError as error:
-        run.event("worktree.failed", error=str(error))
-        run.event("run.end", outcome="failed", reason="worktree")
-        raise StartError(str(error)) from None
-    run.event(
-        "worktree.created",
-        path=str(worktree.path),
-        branch=worktree.branch,
-        workspace=worktree.workspace_id,
-        pane=worktree.pane_id,
-    )
+    if retry is None:
+        run.event("run.start", project=root.name, issue=issue, source=found.source, base=settings.base)
+        try:
+            worktree = herdr.create_worktree(root, branch, settings.base, issue)
+        except HerdrError as error:
+            run.event("worktree.failed", error=str(error))
+            run.event("run.end", outcome="failed", reason="worktree")
+            raise StartError(str(error)) from None
+        run.event(
+            "worktree.created",
+            path=str(worktree.path),
+            branch=worktree.branch,
+            workspace=worktree.workspace_id,
+            pane=worktree.pane_id,
+        )
+    else:
+        worktree = _reuse(run, retry, root, issue, found.source, settings.base)
 
     if settings.setup:
         _status(herdr, run, worktree.workspace_id, status.text(status.WORKING, "setting up"))
@@ -161,10 +171,67 @@ def start(
             _status(herdr, run, worktree.workspace_id, status.text(status.STOPPED, "setup failed"))
             _notify(herdr, run, f"placido · {issue}: setup failed", f"see {run.path / 'setup.log'}")
             run.event("run.end", outcome="failed", reason="setup")
-            raise StartError(f"setup failed with exit {code}; see {run.path / 'setup.log'}")
+            raise StartError(
+                f"setup failed with exit {code}; see {run.path / 'setup.log'}. Fix it, then run"
+                f" `placido start {arg}` again to retry setup in the same worktree"
+            )
     _status(herdr, run, worktree.workspace_id, status.text(status.READY, "run placido spec"))
     run.event("run.ready", worktree=str(worktree.path))
     return run
+
+
+def failed_setup(root: Path, runs_root: Path, issue: str, branch: str, base: str) -> Path | None:
+    """The issue's latest run when its setup failed and nothing has happened since:
+    not closed, its worktree still there, and no commits on the branch beyond the
+    base. Starting the issue again retries setup in that worktree."""
+
+    mine = [
+        run for run in runlog.all_runs(runs_root)
+        if run.parent.parent.name == root.name and run.parent.name == issue
+        and runlog.read_record(run).get("repo") in (None, str(root))
+    ]
+    if not mine:
+        return None
+    latest = mine[0]
+    events = list(runlog.read_events(latest))
+    end = runlog.last_event(latest, "run.end") or {}
+    created = runlog.last_event(latest, "worktree.created") or {}
+    if (
+        end.get("reason") != "setup"
+        or any(e.get("event") == "run.closed" for e in events)
+        or not created.get("path") or not Path(created["path"]).is_dir()
+        or git(root, "rev-list", f"{base}..{branch}")
+    ):
+        return None
+    return latest
+
+
+def _reuse(run: runlog.Run, previous: Path, root: Path, issue: str, source: str, base: str) -> Worktree:
+    """Take over the worktree of a run whose setup failed, brought up to the base,
+    where a fix to the setup most likely landed."""
+
+    created = runlog.last_event(previous, "worktree.created") or {}
+    run.event(
+        "run.start", project=root.name, issue=issue, source=source, base=base,
+        retry_of=f"{previous.parent.name}/{previous.name}",
+    )
+    worktree = Worktree(
+        path=Path(created["path"]), branch=str(created.get("branch", "")),
+        workspace_id=str(created.get("workspace", "")), pane_id=str(created.get("pane", "")),
+    )
+    done = subprocess.run(
+        ["git", "-C", str(worktree.path), "merge", "--ff-only", "-q", base], capture_output=True, text=True
+    )
+    if done.returncode != 0:
+        error = (done.stderr or done.stdout).strip()
+        run.event("worktree.failed", error=error)
+        run.event("run.end", outcome="failed", reason="worktree")
+        raise StartError(f"could not bring {worktree.path} up to {base}: {error}")
+    run.event(
+        "worktree.created", path=str(worktree.path), branch=worktree.branch,
+        workspace=worktree.workspace_id, pane=worktree.pane_id, reused=True,
+    )
+    return worktree
 
 
 def run_env(project: str, issue: str, number: int | None, worktree: Path, run_dir: Path) -> dict[str, str]:

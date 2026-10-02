@@ -219,6 +219,8 @@ While a run works:
   follow-ups to fold in: `all`, `none`, or numbers such as `1,3`.
 - **`placido run` again** resumes after a stop: an interruption, a failed check, red
   CI, or a logout you have since fixed.
+- **`placido start` again** after a failed setup retries it in the same worktree,
+  brought up to the base, once you have fixed the setup.
 
 Afterwards:
 

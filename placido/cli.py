@@ -389,9 +389,9 @@ def cmd_close(args: argparse.Namespace) -> int:
         if args.run:
             path = runlog.resolve_run(args.run, runs_root)
         elif args.issue:
-            path = start.find_run(root, runs_root, args.issue)
+            path = start.find_run(root, runs_root, args.issue, unready=True)
         else:
-            path = start.select_run(Path.cwd(), runs_root)
+            path = start.select_run(Path.cwd(), runs_root, unready=True)
     except (start.StartError, config.ConfigError) as error:
         print(f"placido: {error}", file=sys.stderr)
         return 1

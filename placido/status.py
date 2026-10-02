@@ -64,12 +64,16 @@ def board(runs_root: Path, now: float | None = None) -> str:
 
     now = time.time() if now is None else now
     rows = []
+    claimed: set[str] = set()
     for run in runlog.all_runs(runs_root):
         events = list(runlog.read_events(run))
         kinds = {e.get("event") for e in events}
         created = next((e for e in reversed(events) if e.get("event") == "worktree.created"), {})
         if "run.closed" in kinds or not created.get("path") or not Path(created["path"]).is_dir():
             continue
+        if created["path"] in claimed:
+            continue  # a newer run, such as a retried setup, has taken over this worktree
+        claimed.add(created["path"])
         value = read(run) or (text(DONE, runlog.outcome(run)) if "run.end" in kinds else text(READY))
         state = value.split(" ", 1)[0]
         rank = ORDER.index(state) if state in ORDER else len(ORDER)

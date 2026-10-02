@@ -1,3 +1,4 @@
+import os
 import tempfile
 import time
 import unittest
@@ -51,6 +52,15 @@ class BoardTest(unittest.TestCase):
         self.assertIn("goiabada  439-rate-limit  working · slice 2/3", lines[1])
         self.assertIn("sandbox   02-many-names   done · passed", lines[2])
         self.assertNotIn(closed.path.parent.name, "\n".join(lines))
+
+    def test_a_retried_worktree_shows_only_its_newest_run(self):
+        old = self.run_of("goiabada", "331-strip", "stopped · setup failed")
+        os.utime(old.path / "run.json", (1, 1))
+        new = runlog.Run.create(self.root, "goiabada", "331-strip", {})
+        new.event("worktree.created", path=str(self.trees / "331-strip"), workspace="w2")
+        status.show(new.path, "ready · run placido spec")
+        self.assertEqual(status.board(self.root).count("331-strip"), 1)
+        self.assertIn("ready · run placido spec", status.board(self.root))
 
     def test_nothing_in_progress(self):
         self.assertEqual(status.board(self.root), "No issues in progress.\n")

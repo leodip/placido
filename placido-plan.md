@@ -1700,3 +1700,30 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
 - Isolation (the open question due before step 14): the user chose to accept
   the risk for the first run, on the current WSL, and re-evaluate afterwards
   (over a dedicated WSL distro first, or testing the agents' own sandboxes).
+- First live `placido start 331`: setup failed at once with exit 126.
+  Goiabada's repository has `core.fileMode = false`, so the `chmod +x` on
+  `.placido/stack.sh` was never recorded and git stored it as 100644; a fresh
+  worktree checked it out without its executable bit. The user recorded the
+  bit in Goiabada (35a77b4e, pushed to main); it was the only such file.
+- The failure exposed an orphan in placido: a run whose setup failed never
+  logs `run.ready`, so `placido close 331` did not find it, and `placido
+  start 331` refused the existing branch, leaving only `close --run` with the
+  folder spelled out, then deleting the branch by hand. At the user's request
+  I cleaned up by hand (worktree and workspace removed through Herdr, the
+  local branch and the run folder deleted). The user's choice (over making it
+  closable only, or having start tear everything down on failure):
+  - `placido close` also finds a run that never got ready (`unready` in
+    `active_runs`, `find_run`, and `select_run`); every other command still
+    ignores it, since its setup is not up.
+  - `placido start <issue>` on an existing branch whose latest run failed
+    setup, is not closed, still has its worktree, and has no commits beyond
+    the base starts a new run in that worktree: `run.start` with `retry_of`,
+    a fast-forward to the base (where the fix most likely landed; a fix made
+    in the worktree itself also works), `worktree.created` with `reused`,
+    then setup. Any other existing branch is refused, now saying that
+    `placido run` resumes and `placido close` ends an issue. A failed setup's
+    message says to run `placido start` again.
+  - `placido status` shows only the newest run of a worktree.
+  433 tests pass.
+- With the bit fixed, the user's second `placido start 331` passed setup in
+  46 seconds. The user then chose to start the issue over from a blank slate.
