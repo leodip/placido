@@ -188,6 +188,26 @@ def start(
     return run
 
 
+def ensure_workspace(run_dir: Path, herdr: Herdr) -> dict:
+    """The run's worktree.created record, after reopening the worktree as a workspace if
+    its workspace was closed. Closing an issue's workspace from Herdr's sidebar leaves
+    the worktree, branch, and stack in place, but every step opens its tab in that
+    workspace (#404, 2026-10-02)."""
+
+    created = runlog.last_event(run_dir, "worktree.created") or {}
+    workspace, path = str(created.get("workspace", "")), Path(created.get("path", ""))
+    if not workspace or not path.is_dir() or herdr.workspace_exists(workspace):
+        return created
+    record = runlog.read_record(run_dir)
+    reopened = herdr.open_worktree(Path(record.get("repo") or path), path, run_dir.parent.name)
+    run = runlog.Run(run_dir)
+    run.event(
+        "worktree.created", path=str(reopened.path), branch=reopened.branch or created.get("branch"),
+        workspace=reopened.workspace_id, pane=reopened.pane_id, reopened=True, was=workspace,
+    )
+    return runlog.last_event(run_dir, "worktree.created") or created
+
+
 def _name_repo_workspace(herdr: Herdr, run: runlog.Run, root: Path) -> None:
     """Give the repository's workspace, which groups the issues in Herdr's sidebar, the
     repository's name. Otherwise Herdr labels it after its pane's folder, and once that

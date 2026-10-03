@@ -1930,3 +1930,10 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   renames the repository's workspace to the repository's name when its label
   differs (`workspace.renamed`); a renamed label stays put. Checked against the
   user's Herdr. 471 tests pass.
+- #404's workspace was closed from the sidebar (probably mistaken for the
+  extra "new" workspace, both labeled after #404's folder), leaving its
+  worktree, branch, and stack in place; `placido spec` then failed with
+  "herdr tab create: workspace wT not found". Now every command that runs a
+  step first checks the run's workspace and, when Herdr no longer knows it,
+  reopens the worktree with `herdr worktree open` and records the new
+  workspace as a `worktree.created` with `reopened` and `was`. 474 tests pass.

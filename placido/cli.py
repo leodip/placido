@@ -61,6 +61,11 @@ def _active(args: argparse.Namespace) -> tuple[Path, config.Config, Path, dict] 
     if created is None:
         print(f"placido: {path} is not a run with a worktree", file=sys.stderr)
         return None
+    try:
+        created = start.ensure_workspace(path, Herdr())
+    except HerdrError as error:
+        print(f"placido: the issue's workspace is gone and could not be reopened: {error}", file=sys.stderr)
+        return None
     return root, settings, path, created
 
 

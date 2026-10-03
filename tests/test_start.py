@@ -67,6 +67,12 @@ class FakeHerdr:
             return Result(0, json.dumps({"result": {"type": "worktree_removed", "path": str(path)}}))
         if command in ("workspace report-metadata",):
             return Result(0, "")
+        if command == "worktree open":
+            opts = dict(zip(argv[3::2], argv[4::2]))
+            return Result(0, json.dumps({"result": {
+                "worktree": {"path": opts["--path"], "branch": "placido/01-shout-flag"},
+                "workspace": {"workspace_id": "w3"}, "root_pane": {"pane_id": "w3:p1"},
+            }}))
         if command == "workspace list":
             return Result(0, json.dumps({"result": {"type": "workspace_list", "workspaces": self.workspaces}}))
         return Result(0, json.dumps({"result": {"type": "ok"}}))
@@ -260,6 +266,37 @@ class RepoLabelTest(StartTestCase):
         run = self.start("01", repo)
         self.assertNotIn("workspace.renamed", self.events(run.path))
         self.assertIn("run.ready", self.events(run.path))
+
+
+class ReopenTest(StartTestCase):
+    """An issue's workspace closed from Herdr's sidebar is reopened on its worktree, so
+    the next step has somewhere to open its tab (#404)."""
+
+    def test_a_closed_workspace_is_reopened_and_recorded(self):
+        repo = make_repo(self.tmp)
+        run = self.start("01", repo)
+        self.fake.fail["workspace get"] = Result(
+            1, '{"error":{"code":"workspace_not_found","message":"workspace w2 not found"}}')
+        created = start.ensure_workspace(run.path, Herdr(self.fake))
+        self.assertEqual((created["workspace"], created["pane"], created["was"]), ("w3", "w3:p1", "w2"))
+        self.assertTrue(created["reopened"])
+        opened = next(argv for argv in self.fake.calls if argv[1:3] == ["worktree", "open"])
+        self.assertEqual(opened[opened.index("--cwd") + 1], str(repo))
+        self.assertEqual(opened[opened.index("--label") + 1], "01-shout-flag")
+        self.assertEqual(start.select_run(repo, self.runs), run.path)  # still the active run
+
+    def test_an_open_workspace_is_left_alone(self):
+        repo = make_repo(self.tmp)
+        run = self.start("01", repo)
+        self.assertEqual(start.ensure_workspace(run.path, Herdr(self.fake))["workspace"], "w2")
+        self.assertFalse(any(argv[1:3] == ["worktree", "open"] for argv in self.fake.calls))
+
+    def test_other_herdr_errors_are_not_hidden(self):
+        repo = make_repo(self.tmp)
+        run = self.start("01", repo)
+        self.fake.fail["workspace get"] = Result(1, '{"error":{"code":"server_down","message":"no server"}}')
+        with self.assertRaises(HerdrError):
+            start.ensure_workspace(run.path, Herdr(self.fake))
 
 
 class EnvTest(StartTestCase):

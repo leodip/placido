@@ -66,6 +66,37 @@ class Herdr:
             pane_id=result["root_pane"]["pane_id"],
         )
 
+    def open_worktree(self, repo: Path, path: Path, label: str) -> Worktree:
+        """Open an existing checkout as a workspace again, grouped under its repository."""
+
+        result = self.call(
+            "worktree", "open", "--cwd", str(repo), "--path", str(path), "--label", label, "--no-focus",
+            timeout=120,
+        )
+        workspace = str((result.get("workspace") or {}).get("workspace_id", ""))
+        if not workspace:  # the reply's shape is not documented: find the workspace on the checkout
+            workspace = next((
+                str(w["workspace_id"]) for w in self.call("workspace", "list").get("workspaces", [])
+                if (w.get("worktree") or {}).get("checkout_path") == str(path)
+            ), "")
+        if not workspace:
+            raise HerdrError(f"herdr worktree open: no workspace for {path}")
+        return Worktree(
+            path=Path((result.get("worktree") or {}).get("path") or path),
+            branch=str((result.get("worktree") or {}).get("branch", "")),
+            workspace_id=workspace,
+            pane_id=str((result.get("root_pane") or {}).get("pane_id", "")),
+        )
+
+    def workspace_exists(self, workspace_id: str) -> bool:
+        try:
+            self.call("workspace", "get", workspace_id)
+        except HerdrError as error:
+            if error.code == "workspace_not_found":
+                return False
+            raise
+        return True
+
     def remove_worktree(self, workspace_id: str, force: bool = False) -> None:
         """Remove the workspace's checkout and close the workspace; the branch stays.
         Without force, Herdr refuses a checkout with changes (dirty_worktree_requires_force)."""
