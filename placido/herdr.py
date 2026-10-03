@@ -34,9 +34,15 @@ class AgentInfo:
     session: dict[str, Any] | None  # Herdr's agent_session: source, agent, kind, value
 
 
+REAL_RUNNER: list[HerdrRunner] = [run_command]  # what Herdr() runs commands with
+
+
 class Herdr:
-    def __init__(self, run: HerdrRunner = run_command) -> None:
-        self.run = run
+    def __init__(self, run: HerdrRunner | None = None) -> None:
+        # Looked up when made, not when defined, so the test suite can refuse every
+        # real herdr call: tests once reopened their temporary repositories as
+        # workspaces in the user's own Herdr (2026-10-02).
+        self.run = run if run is not None else REAL_RUNNER[0]
 
     def call(self, *args: str, timeout: float | None = 60) -> dict[str, Any]:
         """Run `herdr <args>` and return its result; Herdr reports errors as JSON too."""

@@ -61,18 +61,23 @@ def _active(args: argparse.Namespace) -> tuple[Path, config.Config, Path, dict] 
     if created is None:
         print(f"placido: {path} is not a run with a worktree", file=sys.stderr)
         return None
-    try:
-        created = start.ensure_workspace(path, Herdr())
-    except HerdrError as error:
-        print(f"placido: the issue's workspace is gone and could not be reopened: {error}", file=sys.stderr)
-        return None
     return root, settings, path, created
 
 
 def _runner(path: Path, created: dict, settings: config.Config) -> tuple[runlog.Run, step.Step]:
+    """The run and a Step that opens its tabs in the issue's workspace, reopened first
+    if it was closed from Herdr's sidebar. Built only once a step will run, after a
+    command's own refusals, so they never touch Herdr."""
+
+    herdr = Herdr()
+    try:
+        created = start.ensure_workspace(path, herdr)
+    except HerdrError as error:
+        print(f"placido: the issue's workspace is gone and could not be reopened: {error}", file=sys.stderr)
+        raise SystemExit(1) from None
     run = runlog.Run(path, echo=sys.stdout)
     runner = step.Step(
-        run, Herdr(), created["workspace"], Path(created["path"]), env=start.env_of(path),
+        run, herdr, created["workspace"], Path(created["path"]), env=start.env_of(path),
         quota_wait=settings.quota_wait,
     )
     return run, runner

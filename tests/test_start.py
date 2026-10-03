@@ -531,6 +531,13 @@ class SelectRunTest(StartTestCase):
             start.select_run(other, self.runs)
 
 
+class RealHerdrGuardTest(unittest.TestCase):
+    def test_the_suite_never_reaches_the_real_herdr(self):
+        # tests/__init__.py makes every Herdr built without a runner refuse to run.
+        with self.assertRaisesRegex(AssertionError, "a test reached the real herdr: herdr workspace list"):
+            Herdr().call("workspace", "list")
+
+
 class HerdrCallTest(unittest.TestCase):
     def herdr(self, result: Result) -> Herdr:
         return Herdr(lambda argv, timeout=None: result)

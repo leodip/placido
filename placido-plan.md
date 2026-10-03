@@ -1937,3 +1937,13 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   step first checks the run's workspace and, when Herdr no longer knows it,
   reopens the worktree with `herdr worktree open` and records the new
   workspace as a `worktree.created` with `reopened` and `was`. 474 tests pass.
+- That change reached the user's real Herdr from the test suite: a CLI test of
+  `placido spec`'s refusal now passed through the workspace check, Herdr did
+  not know the test's made-up workspace, and placido "reopened" the test's
+  temporary repository, once per suite run: four `02-x` workspaces on deleted
+  folders appeared in the user's sidebar (closed by hand). Fixed twice over:
+  the check runs only when a step is about to open its tab, after a command's
+  own refusals; and the suite now refuses every real herdr call
+  (`tests/__init__.py` replaces the runner a `Herdr()` gets by default), so a
+  test that reaches Herdr fails instead of acting on the user's session.
+  475 tests pass.
