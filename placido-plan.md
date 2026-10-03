@@ -1953,3 +1953,14 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   repository with two issues. The last confusing line was the repository
   header's subtitle, the git branch of its pane's folder (#440's), which reads
   `main` again once that pane is back in the main checkout.
+
+### 2026-10-03
+
+- #404's run stood all night at the fold-in question ("Fold which into this
+  change? all, none, or numbers"), so it never delivered. The user's choice
+  (over asking with a timeout, or asking only when started with a flag):
+  never ask. The review's out-of-scope follow-ups, and findings deferred or
+  left unjudged, always go to the pull request's follow-ups comment, drafted
+  with their filing commands; folding one in later is a new issue or a commit
+  on the branch. Removed the question, the fold-in round, and their tests.
+  469 tests pass.

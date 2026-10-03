@@ -427,54 +427,20 @@ class FollowUpTest(LoopTestCase):
         path.write_text(json.dumps({"findings": [], "followups": [{"id": "X", "title": "t"}]}))
         self.assertEqual(review.check_findings(path, 1, []), ["follow-up 1 needs id F1."])
 
-    def test_unchosen_follow_ups_are_kept_with_why(self):
-        offered = []
-        self.loop.ask_fold = lambda items: offered.append(items) or []
+    def test_follow_ups_are_kept_with_why_without_asking(self):
+        # The run never stops to ask which to fold in: it runs unattended.
         self.runner.reviews = [{"findings": [], "followups": [FOLLOWUP]}]
         account = self.loop()
-        self.assertEqual(offered, [[FOLLOWUP]])
         self.assertEqual(account.followups, [FOLLOWUP])
+        self.assertEqual(account.outcome, "passed")
         text = review.summary(account, self.run.path)
         self.assertIn("- **F1** (out of scope) Mention --bye in the usage line: the agreement froze", text)
 
-    def test_a_chosen_follow_up_is_decided_built_and_verified(self):
-        self.loop.ask_fold = lambda items: [0]
-        self.runner.reviews = [
-            {"findings": [], "followups": [FOLLOWUP]},
-            {"findings": [], "verdicts": [{"id": "F1", "verdict": "resolved"}]},
-        ]
-        self.runner.fixes = [{"answers": {"F1": "fixed"}, "change": "code"}]
-        account = self.loop()
-        self.assertEqual(account.outcome, "passed")
-        self.assertEqual(account.folded, [FOLLOWUP])
-        self.assertEqual(account.followups, [])
-        self.assertEqual([c[0] for c in self.runner.calls], ["start", "start", "resume"])  # review, fix, verify
-        self.assertIn("Fold in: Mention --bye in the usage line?", decisions.path(self.run.path).read_text())
-        text = review.summary(account, self.run.path)
-        commit = account.rounds[1]["commit"][:7]
-        self.assertIn(f"- Round 2: folded in 1 follow-up at your request; fixes committed as {commit}.", text)
-        self.assertIn(f"- **F1** significant · spec · Mention --bye in the usage line\n  fixed in {commit} → resolved (round 3)", text)
-        self.assertIn("## Folded in at your request\n\n- **F1** Mention --bye in the usage line", text)
-
-    def test_folded_work_left_unresolved_goes_to_the_user(self):
-        self.loop.ask_fold = lambda items: [0]
-        self.runner.reviews = [
-            {"findings": [], "followups": [FOLLOWUP]},
-            {"findings": [finding(1, "minor", round_=3)], "verdicts": [{"id": "F1", "verdict": "unresolved", "note": "half"}]},
-        ]
-        self.runner.fixes = [{"answers": {"F1": "fixed"}, "change": "code"}]
-        account = self.loop()
-        self.assertEqual(account.outcome, "escalated")
-        self.assertEqual(account.escalated[0]["why"], "folded in, but not resolved: half")
-        self.assertEqual([f["id"] for f in account.followups], ["R3-1"])
-
-    def test_deferred_findings_are_offered_too(self):
-        offered = []
-        self.loop.ask_fold = lambda items: offered.append([i["id"] for i in items]) or []
+    def test_deferred_findings_join_the_follow_ups(self):
         self.runner.reviews = [{"findings": [finding(1, "minor")], "followups": [FOLLOWUP]}]
         self.runner.fixes = [{"answers": {"R1-1": "deferred"}}]
-        self.loop()
-        self.assertEqual(offered, [["F1", "R1-1"]])
+        account = self.loop()
+        self.assertEqual([f["id"] for f in account.followups], ["F1", "R1-1"])
 
     def test_the_first_round_prompt_lists_the_slices_results(self):
         self.run.event("slice.committed", slice=1)

@@ -20,7 +20,7 @@ CI_WORDS = {
 }
 LEAD = re.compile(r"^\d+\.\s+\*\*(.+?)\*\*", re.MULTILINE | re.DOTALL)
 FINDING = re.compile(r"^- \*\*(?P<id>[^*]+)\*\* (?P<severity>\w+) · (?P<rest>.*)$")
-REVIEW_KEPT = ("Needs your decision", "Folded in at your request", "Fixed, not verified by a later round")
+REVIEW_KEPT = ("Needs your decision", "Fixed, not verified by a later round")
 
 
 def build(run_dir: Path, folded: list[int]) -> str:

@@ -37,14 +37,14 @@ placido close 439      after you merge: teardown, worktree removed, main pulled,
 5. **Review.** A different agent reviews the whole change against the agreement and
    the project's standards, with severities. A fixer answers each finding, and the
    reviewer, resumed with its context, verifies the fixes, for up to three rounds.
-   Work that belongs to the issue is folded in; for out-of-scope follow-ups, you pick
-   in the terminal which to fold in anyway.
+   Work that belongs to the issue is folded in; out-of-scope work becomes a follow-up,
+   without stopping to ask.
 6. **Pull request.** Placido pushes the branch once, opens the pull request ready for
    review (`Closes #N`, then a summary of everything the run did and decided), and
    waits for CI. A red run's failed logs go to a fixer agent, up to twice. The body
    says what the change does, its decisions, and what the review found. The
-   follow-ups, those the interview drafted and those from the review you did not fold
-   in (drafted by an agent with evidence and a duplicate search), go into one comment
+   follow-ups, those the interview drafted and those the review left out (drafted by an
+   agent with evidence and a duplicate search), go into one comment
    on the pull request, each with the `gh issue create` command that files it;
    placido files none. Other open issues the change affects get a short note.
 7. **Close.** After you merge, `placido close` runs your project's teardown,
@@ -222,8 +222,6 @@ While a run works:
   need you first.
 - **A question** comes as a Herdr notification: go to the agent's tab and answer
   there.
-- **At the end of the review**, the terminal running `placido run` may ask which
-  follow-ups to fold in: `all`, `none`, or numbers such as `1,3`.
 - **`placido run` again** resumes after a stop: an interruption, a failed check, red
   CI, or a logout you have since fixed.
 - **`placido start` again** after a failed setup retries it in the same worktree,

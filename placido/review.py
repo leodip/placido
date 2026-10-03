@@ -16,7 +16,7 @@ import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from placido import config, decisions, fallback, implement, runlog, spec
 from placido.herdr import Herdr, HerdrError
@@ -42,7 +42,6 @@ class Review:
     escalated: list[dict[str, Any]] = field(default_factory=list)
     followups: list[dict[str, Any]] = field(default_factory=list)
     unverified: list[str] = field(default_factory=list)  # fixed, but no round left to verify
-    folded: list[dict[str, Any]] = field(default_factory=list)  # follow-ups the user chose to fold in
     outcome: str = "passed"
 
 
@@ -236,14 +235,9 @@ class Loop:
     def __init__(
         self, run: runlog.Run, runner: Step, herdr: Herdr, settings: config.Config,
         reviewer: config.AgentSpec, fixer: config.AgentSpec, worktree: Path, env: dict[str, str],
-        ask_fold: Callable[[list[dict[str, Any]]], list[int]] | None = None,
     ) -> None:
-        """ask_fold, given the follow-ups left when the review ends, returns the indexes
-        of those the user wants folded into this change; without it, none are."""
-
         self.run, self.runner, self.herdr, self.settings = run, runner, herdr, settings
         self.reviewer, self.fixer, self.worktree, self.env = reviewer, fixer, worktree, env
-        self.ask_fold = ask_fold
 
     def __call__(self) -> Review:
         account = Review()
@@ -347,77 +341,15 @@ class Loop:
             elif status == "disputed":
                 account.followups.append({**finding, "why": f"dispute not judged: {answer.get('note', '')}"})
         # What is left out of the change: follow-ups found out of scope, and findings the
-        # fixer deferred or the budget left unjudged. The user may fold any of them in.
-        candidates = outside + account.followups
-        account.followups = candidates
-        if account.outcome != "failed" and candidates and self.ask_fold is not None:
-            picks = sorted({i for i in self.ask_fold(candidates) if 0 <= i < len(candidates)})
-            if picks:
-                account.followups = [c for i, c in enumerate(candidates) if i not in picks]
-                next_round = max((r["round"] for r in account.rounds), default=0) + 1
-                agent, pane, folder = self._fold_in(
-                    [candidates[i] for i in picks], next_round, agent, pane, done, account,
-                )
-                last_folder = folder or last_folder
+        # fixer deferred or the budget left unjudged. They are drafted as issues on the
+        # pull request; the run never stops to ask about them, since it runs unattended
+        # (a fold-in question waited all night on 2026-10-02).
+        account.followups = outside + account.followups
         if account.outcome != "failed" and account.escalated:
             account.outcome = "escalated"
         if agent and last_folder is not None:
             self.runner.close_agent(agent, pane, last_folder, self.reviewer.agent)
         return account
-
-    def _fold_in(
-        self, chosen: list[dict[str, Any]], round_: int, agent: str, pane: str, done: list[Path],
-        account: Review,
-    ) -> tuple[str, str, Path | None]:
-        """Build the follow-ups the user chose, as decisions they made: one fix round,
-        then one more review round to verify it, beyond the budget, since the user asked
-        for the work. Whatever that round leaves open goes to the user."""
-
-        for item in chosen:
-            decisions.record(
-                self.run.path, "review", f"Fold in: {item['title']}?", "Yes: build it in this change.",
-                f"Chosen at the end of the review; it was a follow-up because: {item.get('why') or 'out of scope'}.",
-            )
-        findings = [{
-            "id": item["id"], "axis": item.get("axis", "spec"), "severity": "significant", "security": False,
-            "location": item.get("location", ""), "title": item["title"],
-            "description": item.get("description", ""), "fix": item.get("fix") or "Build it, as the user decided.",
-        } for item in chosen]
-        account.folded = chosen
-        self.run.event("review.fold_in", round=round_, items=[f["id"] for f in findings])
-        entry: dict[str, Any] = {"round": round_, "findings": findings, "verdicts": [], "folded": True}
-        account.rounds.append(entry)
-        fixed = self._fix_round(round_, findings, done[-1])
-        if fixed is None:
-            account.outcome = "failed"
-            return agent, pane, None
-        before, after, resolutions, answers = fixed
-        entry["answers"] = {i: a.get("status") for i, a in answers.items()}
-        entry["commit"] = after if after != before else None
-        verify = round_ + 1
-        self.run.event("review.round", round=verify, budget=verify)
-        commits = f"{before[:12]}..{after[:12]}" if after != before else ""
-        ids = [f["id"] for f in findings]
-        step = self._review_round(verify, verify, agent, pane, commits, resolutions, ids, done)
-        if step.outcome != "success":
-            account.outcome = "failed"
-            self.run.event("review.failed", round=verify, outcome=step.outcome)
-            return agent, pane, None
-        done.append(step.path)
-        data = json.loads((step.path / "findings.json").read_text(encoding="utf-8"))
-        new, verdicts = data["findings"], data.get("verdicts", [])
-        account.rounds.append({"round": verify, "findings": new, "verdicts": verdicts})
-        by_id = {f["id"]: f for f in findings}
-        for verdict in verdicts:
-            if verdict.get("verdict") in STILL_OPEN and verdict.get("id") in by_id:
-                account.escalated.append(
-                    {**by_id[verdict["id"]], "why": f"folded in, but not resolved: {verdict.get('note', '')}"}
-                )
-        for finding in new:
-            why = "found while verifying the folded-in work, with no round left"
-            (account.escalated if finding["severity"] != "minor" else account.followups).append({**finding, "why": why})
-        self.run.event("review.decision", round=verify, decision="stop", reason="folded-in work verified")
-        return step.agent or agent, step.pane or pane, step.path
 
     def _carry_on(self, role: str, chain: fallback.Chain, step: Any, overflowed: bool) -> bool:
         """Whether a failed step gets another go: on the next agent after a refusal or a
@@ -598,9 +530,6 @@ def summary(account: Review, run_dir: Path) -> str:
     if account.escalated:
         lines += ["", "## Needs your decision", ""]
         lines += [f"- **{f['id']}** ({f['severity']}) {f['title']}: {f['why']}" for f in account.escalated]
-    if account.folded:
-        lines += ["", "## Folded in at your request", ""]
-        lines += [f"- **{f['id']}** {f['title']}" for f in account.folded]
     if account.followups:
         lines += ["", "## Follow-ups", ""]
         lines += [f"- **{f['id']}** ({f.get('severity', 'out of scope')}) {f['title']}: {f['why']}"
@@ -614,9 +543,6 @@ def summary(account: Review, run_dir: Path) -> str:
 
 
 def _round_line(entry: dict[str, Any]) -> str:
-    if entry.get("folded"):
-        built = f"fixes committed as {entry['commit'][:7]}" if entry.get("commit") else "no code changed"
-        return f"Round {entry['round']}: folded in {_count(len(entry['findings']), 'follow-up')} at your request; {built}."
     parts = []
     if entry["verdicts"]:
         parts.append(f"judged {_count(len(entry['verdicts']), 'earlier finding')}")

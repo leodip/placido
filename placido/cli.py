@@ -296,7 +296,7 @@ def cmd_review(args: argparse.Namespace) -> int:
 def _review(ctx: driver.Context, reviewer: config.AgentSpec) -> int:
     loop = review.Loop(
         ctx.run, ctx.runner, ctx.herdr, ctx.settings, reviewer, ctx.settings.roles["fix"].agent,
-        ctx.worktree, ctx.env, ask_fold=lambda items: _ask_fold(ctx, items),
+        ctx.worktree, ctx.env,
     )
     account = loop()
     ctx.run.event(
@@ -433,36 +433,6 @@ def cmd_close(args: argparse.Namespace) -> int:
     if inside:
         print(f"This shell's folder is gone with the worktree: cd {root}")
     return 0
-
-
-def _ask_fold(ctx: driver.Context, items: list[dict], reply=None) -> list[int]:
-    """Ask once, in this terminal, which follow-ups to fold into the change; the rest
-    are drafted as issues, for the user to file, in a comment on the pull request.
-    Without a terminal to ask in, none are folded in."""
-
-    if reply is None:
-        if not sys.stdin.isatty():
-            return []
-        reply = input
-    driver.notify(ctx, "the review left follow-ups", "choose which to fold in, in the placido run terminal")
-    driver.show(ctx, status.YOU, "fold in follow-ups?")
-    print("\nThe review left these out of the change:")
-    for n, item in enumerate(items, 1):
-        print(f"  {n}. {item['title']}\n     {item.get('why') or item.get('description', '')}")
-    while True:
-        answer = reply("Fold which into this change? all, none, or numbers like 1,3 [none]: ").strip().lower()
-        if answer in ("", "none", "n"):
-            return []
-        if answer in ("all", "a"):
-            return list(range(len(items)))
-        try:
-            picks = sorted({int(part) - 1 for part in answer.replace(" ", ",").split(",") if part})
-        except ValueError:
-            picks = [-1]
-        if all(0 <= i < len(items) for i in picks):
-            ctx.run.event("review.fold_chosen", items=[items[i]["id"] for i in picks])
-            return picks
-        print(f"  Choose from 1 to {len(items)}.")
 
 
 def _summarize(ctx: driver.Context) -> None:
