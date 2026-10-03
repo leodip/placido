@@ -1947,3 +1947,9 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   (`tests/__init__.py` replaces the runner a `Herdr()` gets by default), so a
   test that reaches Herdr fails instead of acting on the user's session.
   475 tests pass.
+- Live: `placido spec` on #404 reopened its closed workspace. Herdr's
+  `worktree open` adopted the user's extra shell workspace already sitting in
+  that folder (wS) as #404's linked workspace, so the sidebar settled as one
+  repository with two issues. The last confusing line was the repository
+  header's subtitle, the git branch of its pane's folder (#440's), which reads
+  `main` again once that pane is back in the main checkout.
