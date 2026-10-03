@@ -86,6 +86,14 @@ not worth anyone's time, saying so in one line in `review.md`.
 **Blocking means broken now,** not "important". Do not inflate: every blocking or
 significant finding can cost another round, and a round must be earned.
 
+**A check that a future edit could get past is not broken now.** When the change
+adds a guard (a lint, a rule test, a script check) and the files it guards are
+correct today, a way to fool it with some later edit is `significant` at most, and
+`minor` when the edit is contrived. Report the gaps together as one finding about
+the guard's approach, not one finding per bypass, and say when a different approach
+would close them all; do not push a guard toward handling every case one round at a
+time.
+
 ## Later rounds: verify, do not search again
 
 In a later round you are the same session, resumed. Your prompt names the fix

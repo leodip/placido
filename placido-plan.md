@@ -1894,3 +1894,15 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   useful, but said "#439 has landed" and "Part 16 is done" while #464 was
   still open. The followups skill now says notes are posted before the merge,
   so they say what the pull request does.
+- `placido review` on #463, run again for the unverified fix: round 1 found
+  three more ways to fool the guard (1 blocking, 2 significant), while the
+  guarded files were all correct. I proposed a redesign and asked the user to
+  paste it into the fixer's tab mid-run; the fixer finished first. The user
+  rightly objected: runs are unattended, and a fix that needs the user to race
+  an agent is not one. The real cause was severity calibration, which drove a
+  spiral (each patch to the guard's shell reader met new bypasses). The review
+  skill now says a guard that only a future edit could get past is not broken
+  now (significant at most), and that bypasses are one finding about the
+  guard's approach, naming a better approach when there is one, never fixed one
+  case per round. Design concerns about a running issue become follow-ups or
+  retro material, not mid-run interventions.
