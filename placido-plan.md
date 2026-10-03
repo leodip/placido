@@ -1915,3 +1915,8 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   `.placido` config and implement notes say `--run` narrows every tier
   again. Checked on #463's stack: one core test ran only its 75 cases, a
   pattern matching nothing exited 1, lint with `--run` still passed.
+- The user merged #465 and closed #463 with the new `placido close`, its first
+  live run: teardown in 10 seconds, worktree and workspace removed, `main`
+  pulled (f1f890b → cb98676), and the branch deleted because #465 was merged.
+  A first attempt was refused, correctly, because it ran from a pane of #463's
+  own workspace that had been `cd`'d to the main checkout.
