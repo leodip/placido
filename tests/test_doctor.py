@@ -70,7 +70,7 @@ class HealthyMachineTest(unittest.TestCase):
                 "codex", "codex login",
                 "pi", "pi login",
                 "billing",
-                "claude integration", "codex integration", "pi integration",
+                "claude integration", "codex integration", "pi integration", "email",
             ],
         )
         self.assertEqual({c.status for c in checks.values()}, {OK})

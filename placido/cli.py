@@ -15,6 +15,18 @@ from placido import retro as retrospect
 from placido.herdr import Herdr, HerdrError
 
 
+def cmd_email_test(args: argparse.Namespace) -> int:
+    from placido import alerts
+
+    try:
+        outcome = alerts.test()
+    except config.ConfigError as error:
+        print(f"placido: {error}", file=sys.stderr)
+        return 1
+    print(outcome)
+    return 0 if outcome.startswith("sent") else 1
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     checks = doctor.run_checks()
     print(doctor.format_checks(checks, color=sys.stdout.isatty()))
@@ -309,6 +321,7 @@ def _review(ctx: driver.Context, reviewer: config.AgentSpec) -> int:
     print("\n" + review.summary(account, ctx.run.path))
     if account.outcome not in ("passed", "escalated"):
         driver.show(ctx, status.STOPPED, "review failed")
+        driver.notify(ctx, "the review failed", f"run placido run again to resume; see {ctx.run.path / 'review.md'}")
         _summarize(ctx)
         return 1
     if account.escalated:
@@ -328,6 +341,7 @@ def _deliver(ctx: driver.Context, outcome: str) -> int:
     except github.GitHubError as error:
         ctx.run.event("github.failed", error=str(error))
         driver.show(ctx, status.STOPPED, "GitHub failed")
+        driver.notify(ctx, "delivery to GitHub failed", f"{str(error)[:160]}; run placido run again to retry")
         _summarize(ctx)
         print(f"placido: {error}\nFix it, then run placido run again to retry.", file=sys.stderr)
         return 1
@@ -628,6 +642,8 @@ def build_parser() -> argparse.ArgumentParser:
     tally.add_argument("-n", "--limit", type=int, default=20, help="with --runs, the latest N (default 20)")
     tally.add_argument("--json", action="store_true", help="the same data as JSON")
     tally.set_defaults(func=cmd_report)
+    mail = commands.add_parser("email-test", help="send a test email with the current quota")
+    mail.set_defaults(func=cmd_email_test)
     glance = commands.add_parser("status", help="every issue in progress, across projects, with its status")
     glance.set_defaults(func=cmd_status)
     log = commands.add_parser("log", help="print a run's events, the latest run by default")

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from placido import config, fallback, implement, runlog, spec, status
+from placido import alerts, config, fallback, implement, runlog, spec, status
 from placido.herdr import Herdr, HerdrError
 from placido.step import Step
 
@@ -255,10 +255,7 @@ def notify(ctx: Context, title: str, body: str) -> None:
 
 
 def _notify(ctx: Context, title: str, body: str) -> None:
-    try:
-        ctx.herdr.notify(f"placido · {ctx.run.path.parent.name}: {title}", body, "request")
-    except HerdrError as error:
-        ctx.run.event("herdr.warning", error=str(error))
+    alerts.notify(ctx.run, ctx.herdr, title, body)
 
 
 class Lock:

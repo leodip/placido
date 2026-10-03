@@ -1964,3 +1964,23 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   with their filing commands; folding one in later is a new issue or a commit
   on the branch. Removed the question, the fold-in round, and their tests.
   469 tests pass.
+- Email alerts, at the user's request, decided one question at a time:
+  - Settings live in a new user-level file, `~/.config/placido/config.toml`
+    (or `$PLACIDO_USER_CONFIG`), in placido's config style: `[email]` with
+    `enabled` (default off), `to`, `from`, and `api_key_file`, a file holding
+    only the Resend key, read at send time and never copied or logged. Not the
+    project config: email is personal, across projects, and needs a secret.
+    I could not read the user's key folder (refused, rightly, as secrets), and
+    did not need to.
+  - Every Herdr notification placido sends (needs you, fallbacks, logouts,
+    quota waits, red checks, stops, the pull request ready) is also emailed;
+    the review failing and GitHub delivery failing now notify too. One
+    `alerts.notify` replaces the four notify helpers.
+  - The email is simple HTML: what happened, the issue and pull request links,
+    the status, the worktree and run folder, and the quota. Codex's comes from
+    its newest session file; Claude Code keeps its quota only in what it
+    passes the status line, so the user's `~/.claude/statusline.sh` now saves
+    it to `~/placido/claude-quota.json` (the user agreed).
+  - `placido doctor` checks the email settings; `placido email-test` sends one.
+    The test suite refuses to send email and never reads the user's config.
+  490 tests pass.

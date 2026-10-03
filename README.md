@@ -205,6 +205,43 @@ quota_wait     = "2h"  # wait this long for a quota reset before falling back
 ci_wait        = "1h"  # wait this long for CI on the pull request
 ```
 
+### Email alerts (your own settings)
+
+Placido can email you whenever a run needs you or ends: an agent asks a question, a
+dialog waits, an agent falls back or is logged out, a check or CI stays red, a run
+stops, the pull request is ready. Each email says what happened and what to do, links
+the issue and the pull request, and shows how much of your Claude and Codex quota is
+used. Email settings are yours, not the project's, so they live in
+`~/.config/placido/config.toml` (or `$PLACIDO_USER_CONFIG`), never in a repository:
+
+```toml
+[email]
+enabled      = true
+to           = "you@example.com"
+from         = "placido <placido@your-domain>"   # a sender your Resend account may use
+api_key_file = "~/secrets/resend"                # a file holding only the Resend API key
+```
+
+Placido reads the key when it sends and never copies or logs it. A failed email is
+logged in the run and never stops it. `placido email-test` sends a test email, and
+`placido doctor` checks the settings.
+
+The quota comes from Codex's own session files and, for Claude, from a file your
+Claude Code status line writes, since Claude Code keeps its quota nowhere else. Add
+this to the end of your status line script:
+
+```sh
+printf '%s' "$input" | python3 -c '
+import json, os, sys, time
+d = json.load(sys.stdin); r = d.get("rate_limits")
+if r:
+    p = os.path.expanduser("~/placido/claude-quota.json"); os.makedirs(os.path.dirname(p), exist_ok=True)
+    json.dump({"saved_at": int(time.time()), "rate_limits": r}, open(p + ".tmp", "w")); os.replace(p + ".tmp", p)
+' 2>/dev/null
+```
+
+where `$input` holds the JSON Claude Code passed the script on stdin.
+
 ## Use it
 
 Work from a Herdr pane in your project's checkout.
@@ -260,7 +297,8 @@ Placido reads why from the agent's own session file and responds by itself:
 
 | Command | What it does |
 |---|---|
-| `placido doctor` | Checks Herdr, the agents, their logins, and billing |
+| `placido doctor` | Checks Herdr, the agents, their logins, billing, and email |
+| `placido email-test` | Sends a test email with the current quota |
 | `placido start <issue>` | Starts an issue: branch, worktree, workspace, setup |
 | `placido spec` | The interview that seals the agreement |
 | `placido run` | Builds the slices, runs the final checks, reviews, opens the pull request; resumes |

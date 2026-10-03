@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from placido import config, decisions, fallback, implement, runlog, spec
+from placido import alerts, config, decisions, fallback, implement, runlog, spec
 from placido.herdr import Herdr, HerdrError
 from placido.step import Step
 
@@ -368,11 +368,9 @@ class Loop:
 
     def _notify(self, title: str, body: str) -> None:
         if self.herdr is None:
+            alerts.email(self.run, title, body)
             return
-        try:
-            self.herdr.notify(f"placido · {self.run.path.parent.name}: {title}", body, "request")
-        except HerdrError as error:
-            self.run.event("herdr.warning", error=str(error))
+        alerts.notify(self.run, self.herdr, title, body)
 
     def _review_round(
         self, round_: int, budget: int, agent: str, pane: str, fix_commits: str,

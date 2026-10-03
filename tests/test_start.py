@@ -301,7 +301,7 @@ class ReopenTest(StartTestCase):
 
 class EnvTest(StartTestCase):
     def test_setup_sees_the_run_variables(self):
-        repo = make_repo(self.tmp, setup="env | grep ^PLACIDO_ | sort > vars.txt")
+        repo = make_repo(self.tmp, setup="env | grep ^PLACIDO_ | grep -v ^PLACIDO_USER_CONFIG= | sort > vars.txt")
         (repo / ".gitignore").write_text("setup-ran\nvars.txt\n")
         sh(repo, "git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "ignore")
         run = self.start("01", repo)

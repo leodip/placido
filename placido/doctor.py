@@ -167,6 +167,25 @@ def check_integrations(run: Runner) -> list[Check]:
 LOGIN_CHECKS = {"claude": check_claude_login, "codex": check_codex_login, "pi": check_pi_login}
 
 
+def check_email() -> Check:
+    """The email alerts in the user's own config: off, or on with a readable key."""
+
+    from placido import config, quota
+
+    try:
+        settings = config.load_user()
+    except config.ConfigError as error:
+        return Check("email", FAIL, str(error))
+    if not settings.email.enabled:
+        return Check("email", OK, f"off ({config.user_config_path()})")
+    key = Path(os.path.expanduser(settings.email.api_key_file))
+    if not key.is_file() or not key.read_text(encoding="utf-8").strip():
+        return Check("email", FAIL, f"no Resend key in {settings.email.api_key_file}")
+    if quota.claude() is None:
+        return Check("email", WARN, f"on, to {settings.email.to}; Claude's quota is not saved yet (status line)")
+    return Check("email", OK, f"on, to {settings.email.to}")
+
+
 def run_checks(
     run: Runner = run_command,
     which: Callable[[str], str | None] = shutil.which,
@@ -188,6 +207,7 @@ def run_checks(
     checks.append(check_billing(env))
     if herdr.status == OK:
         checks.extend(check_integrations(run))
+    checks.append(check_email())
     return checks
 
 

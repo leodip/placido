@@ -1,7 +1,10 @@
-"""Read a project's .placido/config.toml over built-in defaults and resolve each role."""
+"""Read a project's .placido/config.toml over built-in defaults and resolve each role,
+and the user's own ~/.config/placido/config.toml (email alerts), which no project
+commits."""
 
 from __future__ import annotations
 
+import os
 import re
 import tomllib
 from dataclasses import dataclass
@@ -361,3 +364,53 @@ def describe(config: Config, start: Path) -> str:
     lines += ["", "[settings]"]
     lines.extend(f"{key.ljust(width)}  {value}" for key, value in settings.items())
     return "\n".join(lines)
+
+
+# ---- the user's own settings ---------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Email:
+    enabled: bool = False
+    to: str = ""
+    sender: str = ""  # the `from` key
+    api_key_file: str = ""  # a file holding only the Resend API key, read at send time
+
+
+@dataclass(frozen=True)
+class UserConfig:
+    email: Email
+    source: Path | None
+
+
+def user_config_path() -> Path:
+    """~/.config/placido/config.toml, or PLACIDO_USER_CONFIG."""
+
+    return Path(os.environ.get("PLACIDO_USER_CONFIG") or "~/.config/placido/config.toml").expanduser()
+
+
+def load_user(path: Path | None = None) -> UserConfig:
+    """The user's settings over their defaults: email off. Decided 2026-10-03: email
+    alerts are personal, across projects, and need a secret, so they live here and
+    never in a project's committed config."""
+
+    path = path or user_config_path()
+    if not path.is_file():
+        return UserConfig(Email(), None)
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ConfigError(f"{path}: {error}") from None
+    try:
+        _only(data, ("email",), "user config")
+        table = _table(data, "email", ("enabled", "to", "from", "api_key_file"))
+        enabled = _typed(table, "enabled", False, "email")
+        fields = {key: _typed(table, key, "", "email").strip() for key in ("to", "from", "api_key_file")}
+        if enabled:
+            missing = [key for key, value in fields.items() if not value]
+            if missing:
+                raise ConfigError(f"email: enabled needs {', '.join(missing)}")
+    except ConfigError as error:
+        raise ConfigError(f"{path}: {error}") from None
+    return UserConfig(Email(enabled, fields["to"], fields["from"], fields["api_key_file"]), path)

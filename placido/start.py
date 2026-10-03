@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import TextIO
 
-from placido import __version__, config, doctor, issues, runlog, spec, status
+from placido import __version__, alerts, config, doctor, issues, runlog, spec, status
 from placido.herdr import Herdr, HerdrError, Worktree
 from placido.proc import Runner, run_command
 
@@ -170,7 +170,7 @@ def start(
         code = run_setup(run, settings.setup, worktree.path, env)
         if code != 0:
             _status(herdr, run, worktree.workspace_id, status.text(status.STOPPED, "setup failed"))
-            _notify(herdr, run, f"placido · {issue}: setup failed", f"see {run.path / 'setup.log'}")
+            alerts.notify(run, herdr, "setup failed", f"see {run.path / 'setup.log'}")
             run.event("run.end", outcome="failed", reason="setup")
             raise StartError(
                 f"setup failed with exit {code}; see {run.path / 'setup.log'}. Fix it, then run"
@@ -336,8 +336,3 @@ def _status(herdr: Herdr, run: runlog.Run, workspace_id: str, text: str) -> None
     status.show(run.path, text)
 
 
-def _notify(herdr: Herdr, run: runlog.Run, title: str, body: str) -> None:
-    try:
-        herdr.notify(title, body, sound="request")
-    except HerdrError as error:
-        run.event("herdr.warning", error=str(error))

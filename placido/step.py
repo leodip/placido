@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import decisions, outcomes, runlog, status
+from placido import alerts, decisions, outcomes, runlog, status
 from placido.config import AgentSpec
 from placido.herdr import Herdr, HerdrError
 
@@ -564,10 +564,7 @@ class Step:
     def _notify(self, title: str, body: str) -> None:
         """Notify the user, naming the issue, since several can be in flight at once."""
 
-        try:
-            self.herdr.notify(f"placido · {self.run.path.parent.name}: {title}", body, "request")
-        except HerdrError as error:
-            self.run.event("herdr.warning", error=str(error))
+        alerts.notify(self.run, self.herdr, title, body)
 
     def close_agent(self, agent: str, pane: str, folder: Path, kind: str) -> None:
         """Stop an agent left running, such as one from an interrupted run, keeping its
