@@ -1906,3 +1906,12 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   guard's approach, naming a better approach when there is one, never fixed one
   case per round. Design concerns about a running issue become follow-ups or
   retro material, not mid-run interventions.
+- The second review of #463 passed in round 2 with all three fixes verified,
+  and CI went green; the feared spiral did not come. At the user's request
+  ("fix everything related in this PR"), once the run had ended, the drafted
+  follow-up was done on #465's branch itself (8305dfc5, after merging main):
+  `run-tests.sh` now applies `--run` to the module and setup legs too, and a
+  run whose pattern matched no test fails instead of passing empty; the
+  `.placido` config and implement notes say `--run` narrows every tier
+  again. Checked on #463's stack: one core test ran only its 75 cases, a
+  pattern matching nothing exited 1, lint with `--run` still passed.
