@@ -358,7 +358,7 @@ def _deliver(ctx: driver.Context, outcome: str) -> int:
     else:
         driver.show(ctx, status.DONE, f"pull request {pr.rsplit('/', 1)[-1]}" if pr else "review passed")
     if pr:
-        driver.notify(ctx, "the pull request is ready", f"{pr} · CI {ci}")
+        driver.notify(ctx, "the pull request is ready", f"{pr} · CI {ci}", times=True)
         print(f"\npull request: {pr} (CI {ci})")
     _summarize(ctx)
     return 0 if outcome == "passed" else 1

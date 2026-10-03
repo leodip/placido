@@ -11,6 +11,7 @@ often agents are refused or how many attempts slices take.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -189,6 +190,58 @@ def _slice_count(run_dir: Path) -> int:
 def _between(start: Any, end: Any) -> float | None:
     a, b = when(start), when(end)
     return (b - a).total_seconds() if a and b else None
+
+
+def stages(run_dir: Path) -> list[tuple[str, float | None]]:
+    """How long each stage of the run took, in order: the interview, each slice from
+    its first attempt to its commit (retries and gates included), the final gates,
+    each review round and its fixes, the follow-ups, and each wait for CI."""
+
+    out: list[tuple[str, float | None]] = []
+    open_steps: dict[str, dict[str, Any]] = {}
+    slice_start: dict[Any, Any] = {}
+    gates_start = ci_start = None
+    for event in runlog.read_events(run_dir):
+        kind, ts = event.get("event"), event.get("ts")
+        if kind == "step.start":
+            open_steps[str(event.get("step"))] = event
+        elif kind == "step.end":
+            start = open_steps.pop(str(event.get("step")), None)
+            if start is not None and start.get("role") != "implement":  # slices are timed whole
+                out.append((_stage(str(event.get("step"))), _between(start.get("ts"), ts)))
+        elif kind == "slice.start":
+            slice_start.setdefault(event.get("slice"), ts)
+        elif kind == "slice.committed":
+            out.append((f"Slice {event.get('slice')}", _between(slice_start.get(event.get("slice")), ts)))
+        elif kind == "gate.start" and not open_steps and gates_start is None:
+            gates_start = ts  # gates outside any step are the final gates
+        elif kind in ("final_gates.passed", "final_gates.failed") and gates_start is not None:
+            out.append(("Final gates", _between(gates_start, ts)))
+            gates_start = None
+        elif kind == "github.pushed":
+            ci_start = ts
+        elif kind == "ci.result" and ci_start is not None:
+            attempt = event.get("attempt") or 1
+            out.append(("CI" if attempt == 1 else f"CI, attempt {attempt}", _between(ci_start, ts)))
+            ci_start = None
+    return out
+
+
+def _stage(step: str) -> str:
+    name = re.sub(r"^\d+-", "", step)
+    if name == "spec":
+        return "Interview (with you)"
+    if found := re.fullmatch(r"review-(\d+)", name):
+        return f"Review round {found.group(1)}"
+    if found := re.fullmatch(r"fix-(\d+)", name):
+        return f"Fixes, round {found.group(1)}"
+    if found := re.fullmatch(r"fix-ci-(\d+)", name):
+        return f"Fixing CI, attempt {found.group(1)}"
+    if name.startswith("fix-final"):
+        return "Fixing the final gates"
+    if name == "followups":
+        return "Follow-ups"
+    return name
 
 
 # ---- text ---------------------------------------------------------------------------

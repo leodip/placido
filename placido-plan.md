@@ -1984,3 +1984,13 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   - `placido doctor` checks the email settings; `placido email-test` sends one.
     The test suite refuses to send email and never reads the user's config.
   490 tests pass.
+- The first emails arrived (#442's "the pull request is ready"). The user
+  asked to drop each quota reading's "(as of …)" and to have the figures as of
+  sending. Neither CLI reports quota on demand; a live figure would mean the
+  providers' undocumented usage endpoints and the CLIs' stored login tokens.
+  The user chose the latest recorded readings (seconds to minutes old during a
+  run), without the age. The "pull request is ready" email now has a "Time
+  spent" table from the event log (`report.stages`): the interview, each slice
+  from its first attempt to its commit with retries and gates, the final
+  gates, each review round and its fixes, the follow-ups, each CI wait, and the
+  total since the run started. 486 tests pass.

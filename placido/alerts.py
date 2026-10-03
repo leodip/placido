@@ -18,7 +18,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import config, quota, runlog, status
+from placido import config, quota, report, runlog, status
 from placido.herdr import Herdr, HerdrError
 
 RESEND_URL = "https://api.resend.com/emails"
@@ -41,17 +41,20 @@ def _post(key: str, payload: dict[str, Any]) -> None:
 SENDER: list[Sender] = [_post]  # what email() sends with; the test suite replaces it
 
 
-def notify(run: runlog.Run, herdr: Herdr, title: str, body: str) -> None:
-    """A Herdr notification naming the issue, and the same as an email."""
+def notify(run: runlog.Run, herdr: Herdr, title: str, body: str, times: bool = False) -> None:
+    """A Herdr notification naming the issue, and the same as an email; times adds how
+    long each stage of the run took."""
 
     try:
         herdr.notify(f"placido · {run.path.parent.name}: {title}", body, "request")
     except HerdrError as error:
         run.event("herdr.warning", error=str(error))
-    email(run, title, body)
+    email(run, title, body, times=times)
 
 
-def email(run: runlog.Run, title: str, body: str, settings: config.UserConfig | None = None) -> None:
+def email(
+    run: runlog.Run, title: str, body: str, settings: config.UserConfig | None = None, times: bool = False,
+) -> None:
     try:
         settings = settings or config.load_user()
     except config.ConfigError as error:
@@ -68,7 +71,7 @@ def email(run: runlog.Run, title: str, body: str, settings: config.UserConfig | 
             raise OSError(f"{settings.email.api_key_file} is empty")
         SENDER[0](key, {
             "from": settings.email.sender, "to": [settings.email.to], "subject": subject,
-            "html": render(run.path, title, body),
+            "html": render(run.path, title, body, times=times),
         })
     except OSError as error:
         run.event("email.failed", subject=subject, error=str(error)[:300])
@@ -91,8 +94,9 @@ CELL = "padding:4px 12px 4px 0;vertical-align:top;"
 LABEL = CELL + "color:#656d76;white-space:nowrap;"
 
 
-def render(run_dir: Path, title: str, body: str, now: float | None = None) -> str:
-    """The email's HTML: what happened, the run's facts, and the subscriptions' quota."""
+def render(run_dir: Path, title: str, body: str, now: float | None = None, times: bool = False) -> str:
+    """The email's HTML: what happened, the run's facts, how long each stage took when
+    times is set, and the subscriptions' quota."""
 
     now = time.time() if now is None else now
     record = _record(run_dir)
@@ -118,16 +122,36 @@ def render(run_dir: Path, title: str, body: str, now: float | None = None) -> st
     quota_rows = "".join(
         f'<tr><td style="{LABEL}">{r.agent}</td><td style="{CELL}">{_windows(r, now)}</td></tr>' for r in readings
     ) or f'<tr><td style="{CELL}">No reading yet.</td></tr>'
+    spent = _times(run_dir, events, now) if times else ""
     return (
         f'<div style="{STYLE}max-width:640px">'
         f'<h2 style="font-size:18px;margin:0 0 6px">{html.escape(title)}</h2>'
         f'<p style="margin:0 0 16px">{html.escape(body)}</p>'
         f'<table style="border-collapse:collapse;margin-bottom:16px">{table}</table>'
+        f'{spent}'
         f'<h3 style="font-size:15px;margin:0 0 4px">Quota</h3>'
         f'<table style="border-collapse:collapse;margin-bottom:16px">{quota_rows}</table>'
         f'<p style="color:#656d76;font-size:12px;margin:0">placido · '
         f'{time.strftime("%Y-%m-%d %H:%M", time.localtime(now))}</p></div>'
     )
+
+
+def _times(run_dir: Path, events: list[dict[str, Any]], now: float) -> str:
+    """The run's stages and their durations, then the total since the run started."""
+
+    rows = [(label, report.duration(seconds)) for label, seconds in report.stages(run_dir)]
+    started = report.when(events[0].get("ts")) if events else None
+    if started is not None:
+        rows.append(("<b>Total</b>", f"<b>{report.duration(now - started.timestamp())}</b>"))
+    if not rows:
+        return ""
+    body = "".join(
+        f'<tr><td style="{LABEL}">{label if label.startswith("<b>") else html.escape(label)}</td>'
+        f'<td style="{CELL}text-align:right">{spent}</td></tr>'
+        for label, spent in rows
+    )
+    return (f'<h3 style="font-size:15px;margin:0 0 4px">Time spent</h3>'
+            f'<table style="border-collapse:collapse;margin-bottom:16px">{body}</table>')
 
 
 def _windows(reading: quota.Reading, now: float) -> str:
@@ -137,8 +161,7 @@ def _windows(reading: quota.Reading, now: float) -> str:
         if window.resets_at:
             text += f", resets in {_span(window.resets_at - now)}"
         parts.append(text)
-    age = f' <span style="color:#656d76">(as of {_span(now - reading.as_of)} ago)</span>' if reading.as_of else ""
-    return " · ".join(parts) + age
+    return " · ".join(parts)
 
 
 def _span(seconds: float) -> str:

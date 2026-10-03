@@ -250,12 +250,12 @@ def _status(ctx: Context, text: str) -> None:
     status.show(ctx.run.path, text)
 
 
-def notify(ctx: Context, title: str, body: str) -> None:
-    _notify(ctx, title, body)
+def notify(ctx: Context, title: str, body: str, times: bool = False) -> None:
+    _notify(ctx, title, body, times)
 
 
-def _notify(ctx: Context, title: str, body: str) -> None:
-    alerts.notify(ctx.run, ctx.herdr, title, body)
+def _notify(ctx: Context, title: str, body: str, times: bool = False) -> None:
+    alerts.notify(ctx.run, ctx.herdr, title, body, times=times)
 
 
 class Lock:
