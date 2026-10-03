@@ -1920,3 +1920,13 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   pulled (f1f890b → cb98676), and the branch deleted because #465 was merged.
   A first attempt was refused, correctly, because it ran from a pane of #463's
   own workspace that had been `cd`'d to the main checkout.
+- The user found Herdr's sidebar confusing. Herdr labels a workspace after its
+  pane's folder, so the repository's workspace, which groups the issues, read
+  `placido-440-…` once its pane sat in #440's worktree, and #404 looked nested
+  inside #440. Clicking "new" also opened a shell in the focused issue's
+  worktree (`terminal.new_cwd = "follow"`), labeled like the issue. A `.placido`
+  setting cannot change "new", which is Herdr's alone and configurable only
+  globally; the user declined the global setting. Decided: `placido start`
+  renames the repository's workspace to the repository's name when its label
+  differs (`workspace.renamed`); a renamed label stays put. Checked against the
+  user's Herdr. 471 tests pass.

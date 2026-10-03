@@ -39,6 +39,7 @@ class FakeHerdr:
         self.calls: list[list[str]] = []
         self.fail: dict[str, Result] = {}
         self.statuses: list[str] = []  # each status placido kept for the run, in order
+        self.workspaces: list[dict] = []  # what `workspace list` answers
 
     def __call__(self, argv: list[str], timeout: float | None = None) -> Result:
         self.calls.append(argv)
@@ -66,6 +67,8 @@ class FakeHerdr:
             return Result(0, json.dumps({"result": {"type": "worktree_removed", "path": str(path)}}))
         if command in ("workspace report-metadata",):
             return Result(0, "")
+        if command == "workspace list":
+            return Result(0, json.dumps({"result": {"type": "workspace_list", "workspaces": self.workspaces}}))
         return Result(0, json.dumps({"result": {"type": "ok"}}))
 
     def tokens(self) -> list[str]:
@@ -224,6 +227,39 @@ class FocusTest(StartTestCase):
         run = self.start("01", repo)
         with mock.patch.object(start.spec, "sealed", return_value=True):
             self.assertTrue(start.next_steps(run).endswith("placido run\n"))
+
+
+class RepoLabelTest(StartTestCase):
+    """The repository's workspace groups the issues in the sidebar; placido keeps it
+    named after the repository, whatever folder its pane is in."""
+
+    def repo_workspace(self, repo: Path, label: str) -> None:
+        self.fake.workspaces = [
+            {"workspace_id": "w7", "label": label,
+             "worktree": {"checkout_path": str(repo), "is_linked_worktree": False}},
+            {"workspace_id": "w9", "label": "placido-01-shout-flag",
+             "worktree": {"checkout_path": str(repo / "elsewhere"), "is_linked_worktree": True}},
+        ]
+
+    def test_an_issue_label_on_the_repository_workspace_is_replaced(self):
+        repo = make_repo(self.tmp)
+        self.repo_workspace(repo, "placido-440-admin-console")
+        run = self.start("01", repo)
+        self.assertIn(["herdr", "workspace", "rename", "w7", "proj"], self.fake.calls)
+        renamed = runlog.last_event(run.path, "workspace.renamed")
+        self.assertEqual((renamed["label"], renamed["was"]), ("proj", "placido-440-admin-console"))
+
+    def test_a_right_label_is_left_alone(self):
+        repo = make_repo(self.tmp)
+        self.repo_workspace(repo, "proj")
+        self.start("01", repo)
+        self.assertFalse(any(argv[1:3] == ["workspace", "rename"] for argv in self.fake.calls))
+
+    def test_no_repository_workspace_is_fine(self):
+        repo = make_repo(self.tmp)
+        run = self.start("01", repo)
+        self.assertNotIn("workspace.renamed", self.events(run.path))
+        self.assertIn("run.ready", self.events(run.path))
 
 
 class EnvTest(StartTestCase):

@@ -163,6 +163,7 @@ def start(
     else:
         worktree = _reuse(run, retry, root, issue, found.source, settings.base)
 
+    _name_repo_workspace(herdr, run, root)
     if settings.setup:
         _status(herdr, run, worktree.workspace_id, status.text(status.WORKING, "setting up"))
         env = run_env(root.name, issue, found.number, worktree.path, run.path)
@@ -185,6 +186,21 @@ def start(
     except HerdrError as error:
         run.event("herdr.warning", error=str(error))
     return run
+
+
+def _name_repo_workspace(herdr: Herdr, run: runlog.Run, root: Path) -> None:
+    """Give the repository's workspace, which groups the issues in Herdr's sidebar, the
+    repository's name. Otherwise Herdr labels it after its pane's folder, and once that
+    pane is in an issue's worktree the group reads as that issue, with the others
+    seemingly inside it (2026-10-02). A renamed label stays put."""
+
+    try:
+        found = herdr.repo_workspace(root)
+        if found and found[1] != root.name:
+            herdr.rename_workspace(found[0], root.name)
+            run.event("workspace.renamed", workspace=found[0], label=root.name, was=found[1])
+    except HerdrError as error:
+        run.event("herdr.warning", error=str(error))
 
 
 def next_steps(run: runlog.Run) -> str:

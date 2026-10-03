@@ -120,6 +120,19 @@ class Herdr:
             raise HerdrError(f"herdr pane read: {result.out.strip()}")
         return result.out
 
+    def repo_workspace(self, repo: Path) -> tuple[str, str] | None:
+        """The (id, label) of the workspace on the repository's main checkout, under
+        which Herdr groups its worktrees; None when there is none."""
+
+        for workspace in self.call("workspace", "list").get("workspaces", []):
+            checkout = workspace.get("worktree") or {}
+            if checkout.get("checkout_path") == str(repo) and not checkout.get("is_linked_worktree"):
+                return str(workspace["workspace_id"]), str(workspace.get("label", ""))
+        return None
+
+    def rename_workspace(self, workspace_id: str, label: str) -> None:
+        self.call("workspace", "rename", workspace_id, label)
+
     def focus_workspace(self, workspace_id: str) -> None:
         self.call("workspace", "focus", workspace_id)
 
