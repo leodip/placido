@@ -137,12 +137,15 @@ def render(run_dir: Path, title: str, body: str, now: float | None = None, times
 
 
 def _times(run_dir: Path, events: list[dict[str, Any]], now: float) -> str:
-    """The run's stages and their durations, then the total since the run started."""
+    """The run's stages and their durations, then the unattended total: from the first
+    slice's start, after the interview and any pause before the run, until now. The
+    interview is the user's time, shown on its own line (the user's ask, 2026-10-04)."""
 
     rows = [(label, report.duration(seconds)) for label, seconds in report.stages(run_dir)]
-    started = report.when(events[0].get("ts")) if events else None
+    first = next((e for e in events if e.get("event") == "slice.start"), None)
+    started = report.when(first.get("ts")) if first else None
     if started is not None:
-        rows.append(("<b>Total</b>", f"<b>{report.duration(now - started.timestamp())}</b>"))
+        rows.append(("<b>Total, unattended</b>", f"<b>{report.duration(now - started.timestamp())}</b>"))
     if not rows:
         return ""
     body = "".join(

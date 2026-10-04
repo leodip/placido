@@ -2003,3 +2003,7 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   the user. Each slice still gets a fresh agent session, as the user checked;
   only placido's process continues, and the run gets the run's own agents, not
   the interview's `--agent`, `--model`, or `--effort`. 489 tests pass.
+- The "pull request is ready" email's total counted the interview, which is not
+  unattended time. It is now "Total, unattended": from the first slice's start
+  (after the interview and any pause before the run) to the email; the
+  interview keeps its own line.

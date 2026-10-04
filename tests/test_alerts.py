@@ -212,15 +212,18 @@ class TimesTest(EmailCase):
             ("Interview (with you)", 1200.0), ("Slice 1", 900.0), ("Final gates", 180.0),
             ("Review round 1", 540.0), ("Follow-ups", 120.0), ("CI", 420.0),
         ])
-        started = report.when(next(runlog.read_events(self.run.path))["ts"]).timestamp()
-        text = alerts.render(self.run.path, "the pull request is ready", "CI green", now=started + 3600, times=True)
+        run_start = report.when(next(runlog.read_events(self.run.path))["ts"]).timestamp()
+        text = alerts.render(self.run.path, "the pull request is ready", "CI green", now=run_start + 3600, times=True)
         self.assertIn("Time spent", text)
         self.assertIn('>Slice 1</td><td style="padding:4px 12px 4px 0;vertical-align:top;text-align:right">15m 00s<', text)
-        self.assertIn("<b>Total</b>", text)
-        self.assertIn("<b>1h 00m</b>", text)
+        # The total leaves out the 20-minute interview and the pause before the run:
+        # from the first slice's start at 10:21 to the email at 11:00.
+        self.assertIn("<b>Total, unattended</b>", text)
+        self.assertIn("<b>39m 00s</b>", text)
 
     def test_pr_ready_asks_for_the_times(self):
         self.run.event("run.start")
+        self.run.event("slice.start", slice=1)
         with mock.patch.object(config, "load_user", return_value=self.settings()):
             alerts.notify(self.run, Herdr(lambda argv, timeout=None: Result(0, "")), "the pull request is ready",
                           "CI green", times=True)
