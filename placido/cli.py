@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from typing import Callable
 import json
 import os
 import sys
@@ -168,7 +169,25 @@ def cmd_spec(args: argparse.Namespace) -> int:
     slices = spec.load_slices(folder)
     count = f"{len(slices)} slice{'s' if len(slices) != 1 else ''}"
     print(f"\nagreement sealed: {folder / 'agreement.md'} ({count})")
-    return 0
+    return _after_seal(args)
+
+
+def _after_seal(args: argparse.Namespace, run_command: Callable[[argparse.Namespace], int] | None = None) -> int:
+    """With [spec] then_run in the user's config, go on with `placido run` at once:
+    each slice still gets a fresh agent session; only this process goes on. The spec's
+    own --agent, --model, and --effort were for the interview, so the run gets none."""
+
+    try:
+        then_run = config.load_user().then_run
+    except config.ConfigError as error:
+        print(f"placido: {error}", file=sys.stderr)
+        return 0
+    if not then_run:
+        return 0
+    print("\n[spec] then_run is on: placido run\n")
+    return (run_command or cmd_run)(
+        argparse.Namespace(run=getattr(args, "run", None), agent=None, model=None, effort=None)
+    )
 
 
 def _slice_context(

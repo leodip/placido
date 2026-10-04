@@ -1994,3 +1994,12 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   from its first attempt to its commit with retries and gates, the final
   gates, each review round and its fixes, the follow-ups, each CI wait, and the
   total since the run started. 486 tests pass.
+
+### 2026-10-04
+
+- At the user's request, `placido spec` can go straight on with `placido run`
+  once the agreement is sealed: `[spec] then_run = true` in the user's own
+  config (the user's choice over the project config), off by default, on for
+  the user. Each slice still gets a fresh agent session, as the user checked;
+  only placido's process continues, and the run gets the run's own agents, not
+  the interview's `--agent`, `--model`, or `--effort`. 489 tests pass.

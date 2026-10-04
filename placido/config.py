@@ -381,6 +381,7 @@ class Email:
 class UserConfig:
     email: Email
     source: Path | None
+    then_run: bool = False  # [spec] then_run: go on with `placido run` once the agreement is sealed
 
 
 def user_config_path() -> Path:
@@ -403,7 +404,8 @@ def load_user(path: Path | None = None) -> UserConfig:
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise ConfigError(f"{path}: {error}") from None
     try:
-        _only(data, ("email",), "user config")
+        _only(data, ("email", "spec"), "user config")
+        then_run = _typed(_table(data, "spec", ("then_run",)), "then_run", False, "spec")
         table = _table(data, "email", ("enabled", "to", "from", "api_key_file"))
         enabled = _typed(table, "enabled", False, "email")
         fields = {key: _typed(table, key, "", "email").strip() for key in ("to", "from", "api_key_file")}
@@ -413,4 +415,4 @@ def load_user(path: Path | None = None) -> UserConfig:
                 raise ConfigError(f"email: enabled needs {', '.join(missing)}")
     except ConfigError as error:
         raise ConfigError(f"{path}: {error}") from None
-    return UserConfig(Email(enabled, fields["to"], fields["from"], fields["api_key_file"]), path)
+    return UserConfig(Email(enabled, fields["to"], fields["from"], fields["api_key_file"]), path, then_run)

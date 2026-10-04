@@ -1,3 +1,4 @@
+import argparse
 import io
 import json
 import os
@@ -188,3 +189,38 @@ class SpecCommandTest(SpecTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThenRunTest(unittest.TestCase):
+    """[spec] then_run in the user's config goes on with placido run once sealed."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.user = Path(tmp.name) / "user.toml"
+        env = mock.patch.dict(os.environ, {"PLACIDO_USER_CONFIG": str(self.user)})
+        env.start()
+        self.addCleanup(env.stop)
+        self.calls = []
+
+    def after(self, **spec_args) -> int:
+        args = argparse.Namespace(run=None, agent="codex", model="m", effort="low", **spec_args)
+        with redirect_stdout(io.StringIO()):
+            return cli._after_seal(args, lambda run_args: self.calls.append(run_args) or 7)
+
+    def test_off_by_default(self):
+        self.assertEqual(self.after(), 0)
+        self.assertEqual(self.calls, [])
+
+    def test_on_runs_with_the_run_s_own_agents(self):
+        self.user.write_text("[spec]\nthen_run = true\n")
+        self.assertEqual(self.after(), 7)  # the run's exit code
+        (run_args,) = self.calls
+        self.assertEqual((run_args.agent, run_args.model, run_args.effort), (None, None, None))
+
+    def test_a_typo_is_an_error_named(self):
+        self.user.write_text("[spec]\nthen_runs = true\n")
+        err = io.StringIO()
+        with mock.patch("sys.stderr", err):
+            self.assertEqual(self.after(), 0)
+        self.assertIn("spec.then_runs: unknown key", err.getvalue())

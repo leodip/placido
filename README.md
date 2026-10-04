@@ -205,6 +205,19 @@ quota_wait     = "2h"  # wait this long for a quota reset before falling back
 ci_wait        = "1h"  # wait this long for CI on the pull request
 ```
 
+### Your own settings
+
+Some settings are yours rather than a project's: they live in
+`~/.config/placido/config.toml` (or `$PLACIDO_USER_CONFIG`), never in a repository.
+
+```toml
+[spec]
+then_run = true   # once the agreement is sealed, go straight on with `placido run`
+```
+
+With `then_run`, `placido spec` continues into the run in the same terminal; every
+slice still gets a fresh agent session.
+
 ### Email alerts (your own settings)
 
 Placido can email you whenever a run needs you or ends: an agent asks a question, a
