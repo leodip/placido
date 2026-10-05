@@ -17,7 +17,8 @@ from typing import Any, Callable
 from placido import runlog
 from placido.config import AgentSpec, Config
 
-SWITCH = ("refusal", "quota")  # failures another agent may get past
+SWITCH = ("refusal", "quota", "unavailable")  # failures another agent may get past
+WHAT = {"refusal": "refused it", "quota": "is out of quota", "unavailable": "cannot run for this login"}
 
 # Whose quota each agent spends: claude and codex run on their subscriptions, and
 # pi always names OpenRouter.
@@ -51,8 +52,13 @@ class Chain:
         if kind not in SWITCH:
             return None
         here = SUBSCRIPTION.get(self.current.agent, self.current.agent)
+        same = (self.current.agent, self.current.model)
         for index in range(self.index + 1, len(self.entries)):
-            if kind == "refusal" or SUBSCRIPTION.get(self.entries[index].agent) != here:
+            entry = self.entries[index]
+            if kind == "quota":
+                if SUBSCRIPTION.get(entry.agent) != here:
+                    return index
+            elif (entry.agent, entry.model) != same:  # the same model would refuse or fail again
                 return index
         return None
 
@@ -64,7 +70,7 @@ class Chain:
         before = self.current
         if index is None:
             self.run.event("agent.chain_exhausted", role=self.role, kind=kind, message=message, step=step)
-            what = "refused it" if kind == "refusal" else "is out of quota"
+            what = WHAT[kind]
             self.notify(f"{self.role}: every agent {what}", message[:200])
             return False
         self.index = index
@@ -75,7 +81,7 @@ class Chain:
         )
         self.notify(
             f"{self.role} moves to {after.agent} ({after.model})",
-            f"{before.agent} {'refused' if kind == 'refusal' else 'is out of quota'}: {message[:160]}",
+            f"{before.agent} ({before.model}) {WHAT[kind]}: {message[:160]}",
         )
         return True
 

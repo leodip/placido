@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-KINDS = ("refusal", "quota", "transient", "auth", "context", "error")
+KINDS = ("refusal", "quota", "unavailable", "transient", "auth", "context", "error")
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,13 @@ class Failure:
 
 # Checked in this order: a message naming a limit and a 429 is a quota, not a blip.
 TEXT_SIGNALS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # The model cannot run for this login at all, as codex's gpt-daybreak-blue-latest
+    # once a ChatGPT account no longer could (2026-10-05): the next agent may.
+    ("unavailable", (
+        "is not supported when using", "model is not supported", "model_not_found", "model not found",
+        "does not exist or you do not have access", "unknown model", "invalid model",
+        "not available on your plan", "you do not have access to the model",
+    )),
     ("auth", (
         "/login", "log in to", "log into", "sign in again", "not authenticated", "not logged in",
         "no api key", "no credential", "unauthorized", "invalid api key", "invalid auth token",

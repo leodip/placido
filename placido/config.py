@@ -27,8 +27,10 @@ DEFAULTS: dict[str, Any] = {
         "implement": {"agent": "claude", "model": "opus", "effort": "high"},
         "review": {"agent": "codex", "model": "gpt-6.1-sol", "effort": "max", "tier": "fast"},
     },
+    # Tried in order when a role's agent refuses, runs out of quota, or cannot run. Codex's
+    # gpt-daybreak-blue-latest led this chain until ChatGPT logins lost it (2026-10-05).
     "fallback": [
-        {"agent": "codex", "model": "gpt-daybreak-blue-latest", "effort": "max"},
+        {"agent": "claude", "model": "opus", "effort": "max"},
         {"agent": "pi", "model": "deepseek/deepseek-v4.1-flash", "effort": "xhigh"},
     ],
     "implement": {"test_first": True, "mutations": 2},

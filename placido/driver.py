@@ -182,7 +182,7 @@ def after_failure(ctx: Context, number: int, outcome: str) -> str | None:
     if outcome in fallback.SWITCH:
         # The partial work was set aside: the next agent builds the slice afresh.
         if not implement_chain(ctx).switch(outcome, _failure_message(run.path), step=f"slice {number}"):
-            return "refused" if outcome == "refusal" else "out-of-quota"
+            return {"refusal": "refused", "quota": "out-of-quota"}.get(outcome, "unavailable")
         ctx.agent = ctx.chain.current
     elif outcome == "auth":
         _notify(ctx, f"{ctx.agent.agent} is logged out",
@@ -233,6 +233,7 @@ STOPPED = {
     "gave-up": "a slice gave up",
     "refused": "every agent refused",
     "out-of-quota": "out of quota",
+    "unavailable": "no agent can run",
     "logged-out": "agent logged out",
     "final-gates": "final gates fail",
 }

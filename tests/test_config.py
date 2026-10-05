@@ -26,11 +26,11 @@ class DefaultsTest(unittest.TestCase):
         self.assertEqual(roles["implement"].agent, AgentSpec("claude", "opus", "high"))
         self.assertEqual(roles["review"].agent, AgentSpec("codex", "gpt-6.1-sol", "max", "fast"))
 
-    def test_fallback_chain_is_daybreak_then_deepseek(self):
+    def test_fallback_chain_is_claude_then_deepseek(self):
         self.assertEqual(
             self.config.roles["review"].fallback,
             (
-                AgentSpec("codex", "gpt-daybreak-blue-latest", "max"),
+                AgentSpec("claude", "opus", "max"),
                 AgentSpec("pi", "deepseek/deepseek-v4.1-flash", "xhigh"),
             ),
         )

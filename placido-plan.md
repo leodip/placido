@@ -2007,3 +2007,19 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   unattended time. It is now "Total, unattended": from the first slice's start
   (after the interview and any pause before the run) to the email; the
   interview keeps its own line.
+
+### 2026-10-05
+
+- The first native codex refusal, on #402's review: gpt-6.1-sol worked 12
+  minutes, then OpenAI's safety system stopped it (`cyber_policy`, "flagged
+  for possible cybersecurity risk"). Placido classified it and fell back to
+  `gpt-daybreak-blue-latest` as designed, but OpenAI rejected that model
+  outright: "not supported when using Codex with a ChatGPT account", although
+  it had answered on the same login on 2026-10-02. Placido took that for a
+  generic error, so the review failed without trying pi.
+- Fixed: a new failure kind, `unavailable` (a model this login cannot use),
+  moves to the next agent like a refusal and costs no attempt; after a
+  refusal or an unavailable model, an entry with the same agent and model is
+  skipped. The user chose the new default chain: claude Opus 5.5 at max, then
+  pi with DeepSeek. Daybreak is gone. The two real messages are test samples.
+  493 tests pass.

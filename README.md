@@ -170,7 +170,7 @@ Each role has an agent, model, and effort, and a fallback chain:
 | `review` | codex, gpt-6.1-sol, max, fast tier |
 | `fix` | as `implement` |
 | `retro` | as `spec` |
-| fallback chain | codex gpt-daybreak-blue-latest, then pi with DeepSeek through OpenRouter |
+| fallback chain | claude Opus at max, then pi with DeepSeek through OpenRouter; an entry with the role's own model is skipped after a refusal |
 
 Change any of them per project:
 
@@ -301,6 +301,7 @@ Placido reads why from the agent's own session file and responds by itself:
 | Failure | What placido does |
 |---|---|
 | Refusal by a provider's safety system | Moves the role to the next agent in its fallback chain; the slice or fix starts again clean |
+| A model this login cannot use (such as one an account lost) | Moves to the next agent, as for a refusal |
 | Quota | Waits for the reset in the same session if it comes within `quota_wait`, otherwise falls back to an agent on another subscription |
 | Overloaded, 5xx, dropped connection | Tries again in the same session after 2, 5, and 10 minutes |
 | Context window full, despite auto-compact | Starts once more in a fresh session, then stops |

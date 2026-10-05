@@ -44,7 +44,7 @@ class FakeRunner:
         (self.worktree / f"slice{n}.txt").write_text(f"attempt {len(self.attempts)}\n")
         if behaviour == "fail":
             return StepResult("invalid", folder)
-        if behaviour in ("refusal", "quota", "auth", "context"):
+        if behaviour in ("refusal", "quota", "unavailable", "auth", "context"):
             self.run.event("agent.failed", step=folder.name, kind=behaviour, message=f"a {behaviour} message")
             return StepResult(behaviour, folder)
         if behaviour in ("ask", "ask-and-forget"):
@@ -246,41 +246,49 @@ if __name__ == "__main__":
 
 
 class FallbackTest(DriverTestCase):
-    """The implement chain by default: claude, then codex daybreak-blue, then pi."""
+    """The implement chain by default: claude opus, then claude opus at max, which a
+    refusal skips as the same model, then pi."""
 
     def test_a_refusal_moves_to_the_next_agent_and_restarts_the_slice(self):
         self.runner.script = ["build", "refusal", "build", "build"]
         self.assertEqual(driver.drive(self.ctx, SLICES), "done")
-        self.assertEqual(self.runner.agents, ["claude", "claude", "codex", "codex"])
+        self.assertEqual(self.runner.agents, ["claude", "claude", "pi", "pi"])
         self.assertIn("placido: slice 2 attempt failed (refusal", sh(self.repo, "git", "stash", "list"))
         (moved,) = self.events("agent.fallback")
         self.assertEqual((moved["role"], moved["reason"], moved["to"]),
-                         ("implement", "refusal", "codex gpt-daybreak-blue-latest max"))
-        self.assertIn("placido · 03-x: implement moves to codex (gpt-daybreak-blue-latest)", self.runner.herdr.notes)
+                         ("implement", "refusal", "pi deepseek/deepseek-v4.1-flash xhigh"))
+        self.assertIn("placido · 03-x: implement moves to pi (deepseek/deepseek-v4.1-flash)", self.runner.herdr.notes)
 
     def test_refusals_do_not_use_up_attempts(self):
         self.runner.script = ["refusal", "fail", "build", "build", "build"]  # stage_attempts is 2
         self.assertEqual(driver.drive(self.ctx, SLICES), "done")
 
     def test_every_agent_refusing_stops_the_run(self):
-        self.runner.script = ["refusal"] * 3
+        self.runner.script = ["refusal"] * 2
         self.assertEqual(driver.drive(self.ctx, SLICES), "refused")
-        self.assertEqual(self.runner.agents, ["claude", "codex", "pi"])
+        self.assertEqual(self.runner.agents, ["claude", "pi"])
         self.assertEqual(len(self.events("agent.chain_exhausted")), 1)
         self.assertIn("placido · 03-x: implement: every agent refused it", self.runner.herdr.notes)
 
     def test_a_quota_skips_entries_on_the_same_subscription(self):
-        self.ctx.agent = config.AgentSpec("codex", "gpt-6.1-sol", "high")  # then codex daybreak, then pi
+        self.ctx.agent = config.AgentSpec("codex", "gpt-6.1-sol", "high")  # then claude, then pi
         self.runner.script = ["quota", "build", "build", "build"]
         self.assertEqual(driver.drive(self.ctx, SLICES), "done")
-        self.assertEqual(self.runner.agents, ["codex", "pi", "pi", "pi"])
+        self.assertEqual(self.runner.agents, ["codex", "claude", "claude", "claude"])
 
     def test_a_resumed_run_stays_on_the_agent_it_moved_to(self):
         self.runner.script = ["refusal", "build"]
         self.assertEqual(driver.drive(self.ctx, SLICES[:1]), "done")
         self.ctx.chain, self.ctx.agent = None, config.AgentSpec("claude", "opus", "high")  # a new process
         self.assertEqual(driver.drive(self.ctx, SLICES[:2]), "done")
-        self.assertEqual(self.runner.agents, ["claude", "codex", "codex"])
+        self.assertEqual(self.runner.agents, ["claude", "pi", "pi"])
+
+    def test_a_model_that_cannot_run_moves_on_without_using_an_attempt(self):
+        self.ctx.agent = config.AgentSpec("codex", "gpt-6.1-sol", "high")
+        self.runner.script = ["unavailable", "fail", "build", "build", "build"]  # stage_attempts is 2
+        self.assertEqual(driver.drive(self.ctx, SLICES), "done")
+        self.assertEqual(self.runner.agents[:2], ["codex", "claude"])
+        self.assertEqual(self.events("agent.fallback")[0]["reason"], "unavailable")
 
     def test_a_logged_out_agent_stops_the_run(self):
         self.runner.script = ["auth"]
@@ -305,19 +313,19 @@ class ManualImplementTest(DriverTestCase):
 
     def test_continues_on_the_agent_the_run_moved_to(self):
         self.runner.script = ["refusal", "build"]
-        driver.drive(self.ctx, SLICES[:1])  # claude refused slice 1; codex built it
+        driver.drive(self.ctx, SLICES[:1])  # claude refused slice 1; pi built it
         fresh = driver.Context(
             self.run, self.runner, self.runner.herdr, self.settings,
             config.AgentSpec("claude", "opus", "high"), self.repo, {},
         )
-        self.assertEqual(driver.implement_chain(fresh).current.model, "gpt-daybreak-blue-latest")
+        self.assertEqual(driver.implement_chain(fresh).current.model, "deepseek/deepseek-v4.1-flash")
 
     def test_a_refusal_sets_the_work_aside_and_moves_the_run_on(self):
         self.runner.script = ["refusal"]
         self.assertEqual(driver.build_slice(self.ctx, SLICES[0]), "refusal")
         self.assertIsNone(driver.after_failure(self.ctx, 1, "refusal"))
         self.assertIn("placido: slice 1 attempt failed (refusal", sh(self.repo, "git", "stash", "list"))
-        self.assertEqual(self.ctx.agent.model, "gpt-daybreak-blue-latest")
+        self.assertEqual(self.ctx.agent.model, "deepseek/deepseek-v4.1-flash")
         self.assertEqual(len(self.events("agent.fallback")), 1)  # the next run starts there too
 
     def test_a_logged_out_agent_says_how_to_stop(self):

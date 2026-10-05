@@ -135,7 +135,7 @@ class StepResult:
     outcome: str  # success; no-result when the agent stopped without writing its result;
     # agent-exited when the agent quit, for example after a dialog was answered "no";
     # invalid when the result kept failing its check; or a failed turn's kind from
-    # outcomes.KINDS (refusal, quota, transient, auth, context, error)
+    # outcomes.KINDS (refusal, quota, unavailable, transient, auth, context, error)
     path: Path  # the step folder
     agent: str = ""  # the agent's Herdr name and pane, for resuming a kept-open agent
     pane: str = ""

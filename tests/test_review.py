@@ -329,14 +329,14 @@ class CheckTest(unittest.TestCase):
 
 
 class FallbackTest(LoopTestCase):
-    """The review chain by default: codex gpt-6.1-sol, then codex daybreak-blue, then pi."""
+    """The review chain by default: codex gpt-6.1-sol, then claude opus at max, then pi."""
 
     def test_a_refused_first_round_is_done_by_the_next_agent(self):
         self.runner.failures = ["refusal"]
         self.runner.reviews = [{"findings": []}]
         account = self.loop()
         self.assertEqual(account.outcome, "passed")
-        self.assertEqual(self.runner.models, [("review", "gpt-6.1-sol"), ("review", "gpt-daybreak-blue-latest")])
+        self.assertEqual(self.runner.models, [("review", "gpt-6.1-sol"), ("review", "opus")])
         self.assertIn("review-w1-p2", self.runner.closed)  # the refused reviewer's tab is closed
         moved = [e for e in runlog.read_events(self.run.path) if e["event"] == "agent.fallback"]
         self.assertEqual([(e["role"], e["reason"]) for e in moved], [("review", "refusal")])
@@ -352,7 +352,7 @@ class FallbackTest(LoopTestCase):
         self.assertEqual(account.outcome, "passed")
         self.assertEqual(self.runner.calls[2][0], "resume")
         self.assertEqual(self.runner.calls[3][:3], ("start", "review", "review-2"))
-        self.assertEqual(self.runner.models[-1], ("review", "gpt-daybreak-blue-latest"))
+        self.assertEqual(self.runner.models[-1], ("review", "opus"))
         handover = self.runner.tasks[-1]
         self.assertIn("You take over from an earlier reviewer", handover)
         self.assertIn("01-review-1", handover)
@@ -372,7 +372,7 @@ class FallbackTest(LoopTestCase):
         self.runner.failures = ["quota"]
         self.runner.reviews = [{"findings": []}]
         self.loop()
-        self.assertEqual(self.runner.models[-1], ("review", "deepseek/deepseek-v4.1-flash"))
+        self.assertEqual(self.runner.models[-1], ("review", "opus"))  # Anthropic, not ChatGPT
 
     def test_every_reviewer_refusing_fails_the_review(self):
         self.runner.failures = ["refusal"] * 3
@@ -394,9 +394,16 @@ class FallbackTest(LoopTestCase):
         self.runner.fixes = [{"answers": {"R1-1": "fixed"}, "change": "code"}]
         account = self.loop()
         self.assertEqual(account.outcome, "passed")
-        self.assertEqual(self.runner.models[1:3], [("fix", "opus"), ("fix", "gpt-daybreak-blue-latest")])
+        self.assertEqual(self.runner.models[1:3], [("fix", "opus"), ("fix", "deepseek/deepseek-v4.1-flash")])
         self.assertIn("review round 1 fix failed (refusal", sh(self.repo, "git", "stash", "list"))
         self.assertNotIn("half a fix", (self.repo / "greet.py").read_text())
+
+    def test_a_reviewer_model_that_cannot_run_moves_on(self):
+        # codex's gpt-daybreak-blue-latest, once a ChatGPT login could no longer use it
+        self.runner.failures = ["unavailable"]
+        self.runner.reviews = [{"findings": []}]
+        self.assertEqual(self.loop().outcome, "passed")
+        self.assertEqual(self.runner.models, [("review", "gpt-6.1-sol"), ("review", "opus")])
 
     def test_a_logged_out_reviewer_fails_the_review(self):
         self.runner.failures = ["auth"]

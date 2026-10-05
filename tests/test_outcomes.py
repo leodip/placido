@@ -70,6 +70,27 @@ class CodexTest(TranscriptCase):
         self.assertEqual(found.kind, "refusal")
         self.assertIn("cybersecurity", found.message)
 
+    def test_the_first_real_refusal(self):
+        # Goiabada #402's review, 2026-10-05: gpt-6.1-sol, after 12 minutes of work.
+        found = self.failure("codex", codex_end({
+            "message": "This content was flagged for possible cybersecurity risk. If this seems wrong, try "
+                       "rephrasing your request. Otherwise, confirm that the access_programs.cyber parameter "
+                       "is set to the appropriate tier, and note that some cybersecurity requests are still "
+                       "limited, even when Daybreak is on.",
+            "codex_error_info": "cyber_policy",
+        }))
+        self.assertEqual(found.kind, "refusal")
+
+    def test_a_model_this_login_cannot_use_is_unavailable(self):
+        # The same day: the fallback, gpt-daybreak-blue-latest, on a ChatGPT login.
+        found = self.failure("codex", codex_end({
+            "message": '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":'
+                       '"The \'gpt-daybreak-blue-latest\' model is not supported when using Codex with a '
+                       'ChatGPT account."}}',
+            "codex_error_info": "other",
+        }))
+        self.assertEqual(found.kind, "unavailable")
+
     def test_other_policies_are_refusals(self):
         for info in ("bio_policy", "misalignment_policy_violation", "invalid_prompt"):
             found = self.failure("codex", codex_end({"message": "Invalid request.", "codex_error_info": info}))
