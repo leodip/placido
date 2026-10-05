@@ -27,7 +27,10 @@ the ADRs for the area, and the role notes your prompt names. Then read the chang
 `git log <start>..HEAD` and `git diff <start>...HEAD`, and the code around it.
 
 Run the tests and any command in your prompt that helps you judge. Facts are yours
-to establish: run the code rather than guess what it does.
+to establish: run the code rather than guess what it does. Run them in the
+foreground and wait for them, however long they take: do not end your turn while a
+background command or monitor is running, since placido reads the end of your turn
+as the end of your review.
 
 ### 2. Two axes, kept apart
 

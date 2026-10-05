@@ -2023,3 +2023,7 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   skipped. The user chose the new default chain: claude Opus 5.5 at max, then
   pi with DeepSeek. Daybreak is gone. The two real messages are test samples.
   493 tests pass.
+- With Claude now a fallback reviewer, the review skill also asks for commands
+  in the foreground (Claude's reviewer on #402 ran the whole suite in the
+  background). Added during the run, at the user's request: the reviewer at
+  work had already read its skill, and a later round resumes that session.
