@@ -2027,3 +2027,15 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   in the foreground (Claude's reviewer on #402 ran the whole suite in the
   background). Added during the run, at the user's request: the reviewer at
   work had already read its skill, and a later round resumes that session.
+- To make cybersecurity refusals rarer (the user's request, after OpenAI
+  refused #402's review twice), the review's wording now says what the work is
+  and how to prove things: every review prompt opens by saying it is the
+  owner's defensive review of their own code, before merging, against the
+  issue's own isolated environment; the review skill says the same, asks for
+  security problems to be shown with a test (through the project's own test
+  commands on the issue's stack), never with exploit scripts or attack
+  payloads or traffic to outside services, starts from the tests at the seams
+  and explores further only where they leave a doubt, and words its severity
+  table defensively ("a security property the change fails to hold").
+  Goiabada's review notes say what Goiabada is and that its reviews are the
+  owner's. Measured by `placido report --runs`, which counts refusals.

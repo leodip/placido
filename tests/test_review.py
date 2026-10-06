@@ -449,6 +449,13 @@ class FollowUpTest(LoopTestCase):
         account = self.loop()
         self.assertEqual([f["id"] for f in account.followups], ["F1", "R1-1"])
 
+    def test_every_review_prompt_opens_with_what_the_work_is(self):
+        # Said plainly, in the hope that providers' safety systems refuse less often.
+        for args in ((1, 3), (2, 3)):
+            text = review.reviewer_prompt(self.run.path, self.repo, self.tmp / "f", *args, self.settings)
+            self.assertTrue(text.split("\n", 2)[2].startswith("This review is for the project's owner"), args)
+            self.assertIn("Show any problem with a test, not with an attack.", text)
+
     def test_the_first_round_prompt_lists_the_slices_results(self):
         self.run.event("slice.committed", slice=1)
         folder = self.run.step_dir(1, "implement-slice-1")

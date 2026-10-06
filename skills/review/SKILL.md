@@ -5,8 +5,11 @@ description: Review a finished change against its sealed agreement and the proje
 
 # Change to findings
 
-You review the change an unattended run built from a sealed agreement. You do not
-edit code: you find what is wrong and say how sure and how serious. Your prompt names
+You review the change an unattended run built from a sealed agreement, for the
+project's owner, before it is merged. It is defensive work on their own code: you
+verify that the change holds, against the issue's own isolated development
+environment. You do not edit code: you find what is wrong and say how sure and how
+serious. Your prompt names
 the agreement, the commit the change started from, the round and the round budget,
 the commands you may run, and where to write. Without a prompt, ask the user.
 
@@ -27,7 +30,9 @@ the ADRs for the area, and the role notes your prompt names. Then read the chang
 `git log <start>..HEAD` and `git diff <start>...HEAD`, and the code around it.
 
 Run the tests and any command in your prompt that helps you judge. Facts are yours
-to establish: run the code rather than guess what it does. Run them in the
+to establish: run the code rather than guess what it does. Start from the tests at
+the agreed seams and the project's own commands, and go further only where they
+leave a doubt. Run them in the
 foreground and wait for them, however long they take: do not end your turn while a
 background command or monitor is running, since placido reads the end of your turn
 as the end of your review.
@@ -59,8 +64,14 @@ split by reason to change; Speculative Generality → delete it; Message Chains 
 hide the walk; Middle Man → call the real target; Refused Bequest → composition.
 
 **Security** cuts across both: input that is trusted without checking, secrets in
-code or logs, authorization that can be skipped, injection, unsafe defaults. Mark
-these findings `"security": true`.
+code or logs, an authorization check that can be skipped, injection, unsafe
+defaults. Mark these findings `"security": true`.
+
+**Show a security problem with a test, not an attack.** The evidence is a test that
+fails today, or one you would add, through the project's own test commands on this
+issue's stack: a request the server must refuse and does not, a check a code path
+skips. Write no exploit scripts or attack payloads, and send nothing to any service
+outside this issue's environment. A test is what the fixer needs anyway.
 
 ### 3. Triage the slices' follow-ups
 
@@ -82,7 +93,7 @@ not worth anyone's time, saying so in one line in `review.md`.
 
 | Severity | Meaning |
 |---|---|
-| `blocking` | Broken now: behavior contrary to the agreement, a missing or failing test at a seam, a security hole, data loss |
+| `blocking` | Broken now: behavior contrary to the agreement, a missing or failing test at a seam, a security property the change fails to hold, data loss |
 | `significant` | A real problem not yet broken: fragile design, a likely future bug, an important standards breach |
 | `minor` | Small smells, naming, documentation |
 
@@ -93,7 +104,7 @@ significant finding can cost another round, and a round must be earned.
 adds a guard (a lint, a rule test, a script check) and the files it guards are
 correct today, a way to fool it with some later edit is `significant` at most, and
 `minor` when the edit is contrived. Report the gaps together as one finding about
-the guard's approach, not one finding per bypass, and say when a different approach
+the guard's approach, not one finding per gap, and say when a different approach
 would close them all; do not push a guard toward handling every case one round at a
 time.
 

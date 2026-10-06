@@ -155,6 +155,17 @@ def _paths(run_dir: Path, worktree: Path, role: str) -> list[str]:
     ]
 
 
+# Said first in every review prompt: what this work is. OpenAI's safety system refused
+# codex's reviews of Goiabada, an authorization server, as possible cybersecurity
+# risk; saying plainly that this is the owner's defensive review, proven with tests,
+# may make that rarer (2026-10-05).
+FRAMING = (
+    "This review is for the project's owner, before they merge the change: defensive work on"
+    " their own code, run against this issue's own isolated development environment. Show any"
+    " problem with a test, not with an attack."
+)
+
+
 def reviewer_prompt(
     run_dir: Path, worktree: Path, folder: Path, round_: int, budget: int, settings: config.Config,
     fix_commits: str = "", resolutions: Path | None = None, earlier: list[str] | None = None,
@@ -163,7 +174,7 @@ def reviewer_prompt(
     """handover lists the earlier rounds' folders when a later round starts in a fresh
     session, because the reviewer that wrote them was refused or overflowed."""
 
-    lines = [f"# Review, round {round_} of at most {budget}", ""]
+    lines = [f"# Review, round {round_} of at most {budget}", "", FRAMING, ""]
     if round_ > 1 and handover:
         lines += [
             f"Follow the placido review skill in {SKILLS / 'review' / 'SKILL.md'}, as a later round.",
