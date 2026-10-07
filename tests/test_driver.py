@@ -117,6 +117,10 @@ class DriveTest(DriverTestCase):
         self.assertEqual(implement.committed(self.run.path), {1, 2, 3})
         self.assertEqual(len(self.events("run.slices_done")), 1)
 
+    def test_each_slice_start_says_how_many_slices_there_are(self):
+        driver.drive(self.ctx, SLICES)
+        self.assertEqual([(e["slice"], e["of"]) for e in self.events("slice.start")], [(1, 3), (2, 3), (3, 3)])
+
     def test_a_failed_attempt_is_stashed_and_retried(self):
         self.runner.script = ["build", "fail", "build", "build"]
         self.assertEqual(driver.drive(self.ctx, SLICES), "done")

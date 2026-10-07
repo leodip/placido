@@ -21,7 +21,8 @@ placido close 439      after you merge: teardown, worktree removed, main pulled,
 1. **Start.** `placido start <issue>` creates the branch `placido/<issue>` in a git
    worktree, opens it as a Herdr workspace, and runs your project's setup command
    (for example, a Docker stack of its own for this issue). Then Herdr switches to
-   that workspace, and placido prints the `cd` and the next command.
+   that workspace, and placido types `placido spec` into its pane, which is in the
+   worktree.
 2. **Interview.** `placido spec` opens an agent that reads the issue and the code,
    then asks you one question at a time until no decision is left open. It also looks
    for adjacent work (problems next to the change, open issues on the same area) and
@@ -221,7 +222,8 @@ slice still gets a fresh agent session.
 ### Email alerts (your own settings)
 
 Placido can email you whenever a run needs you or ends: an agent asks a question, a
-dialog waits, an agent falls back or is logged out, a check or CI stays red, a run
+dialog waits (the interview's own questions only get Herdr's notification, since you
+started it), an agent falls back or is logged out, a check or CI stays red, a run
 stops, the pull request is ready. Each email says what happened and what to do, links
 the issue and the pull request, and shows how much of your Claude and Codex quota is
 used. Email settings are yours, not the project's, so they live in
@@ -262,7 +264,7 @@ Work from a Herdr pane in your project's checkout.
 ```sh
 placido doctor
 placido start 439          # or a URL, owner/repo#439, or a local issues/*.md file
-placido spec               # answer the interview in the tab it opens
+# placido spec starts by itself in the issue's workspace: answer there
 placido run                # unattended from here; Ctrl+C stops it cleanly
 ```
 
@@ -339,8 +341,7 @@ It has no GitHub remote, so runs there stop before the pull request.
 ```sh
 ~/code/placido/sandbox/reset.sh
 cd ~/code/placido-sandbox
-placido start 01
-placido spec
+placido start 01   # placido spec starts in the issue's workspace
 placido run
 ```
 

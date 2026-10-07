@@ -116,7 +116,8 @@ class StartTest(StartTestCase):
         self.assertEqual(run.path.parent, self.runs / "proj" / "01-shout-flag")
         self.assertEqual(
             self.events(run.path),
-            ["run.start", "worktree.created", "setup.start", "setup.end", "run.ready", "workspace.focused"],
+            ["run.start", "worktree.created", "setup.start", "setup.end", "run.ready", "workspace.focused",
+             "spec.launched"],
         )
         worktree = self.tmp / "worktrees" / "placido-01-shout-flag"
         self.assertTrue((worktree / "setup-ran").exists(), "setup runs inside the worktree")
@@ -197,7 +198,7 @@ class StartTest(StartTestCase):
     def test_no_setup_command_skips_setup(self):
         repo = make_repo(self.tmp, setup="")
         run = self.start("01", repo)
-        self.assertEqual(self.events(run.path), ["run.start", "worktree.created", "run.ready", "workspace.focused"])
+        self.assertEqual(self.events(run.path), ["run.start", "worktree.created", "run.ready", "workspace.focused", "spec.launched"])
         self.assertEqual(self.fake.tokens(), ["placido=ready · run placido spec"])
 
 
@@ -209,11 +210,35 @@ class FocusTest(StartTestCase):
         repo = make_repo(self.tmp)
         run = self.start("01", repo)
         calls = [argv[1:4] for argv in self.fake.calls]
-        self.assertEqual(calls[-1], ["workspace", "focus", "w2"])
+        self.assertEqual(calls[-2], ["workspace", "focus", "w2"])
         self.assertLess(self.events(run.path).index("run.ready"), self.events(run.path).index("workspace.focused"))
+
+    def test_the_interview_starts_in_the_issue_pane(self):
+        repo = make_repo(self.tmp)
+        run = self.start("01", repo)
+        self.assertEqual(self.fake.calls[-1][1:], ["pane", "run", "w2:p1", "placido spec"])
+        self.assertEqual(runlog.last_event(run.path, "spec.launched")["pane"], "w2:p1")
+        worktree = self.tmp / "worktrees" / "placido-01-shout-flag"
+        self.assertEqual(
+            start.next_steps(run),
+            f"Herdr has switched to the issue's workspace, placido spec is starting in the worktree ({worktree}).\n",
+        )
+
+    def test_when_the_interview_cannot_start_it_says_what_to_type(self):
+        repo = make_repo(self.tmp)
+        self.fake.fail["pane run"] = Result(1, '{"error":{"code":"pane_not_found","message":"gone"}}')
+        run = self.start("01", repo)
+        self.assertIn("herdr.warning", self.events(run.path))
+        self.assertNotIn("spec.launched", self.events(run.path))
         text = start.next_steps(run)
         self.assertIn("Herdr has switched to the issue's workspace", text)
         self.assertIn(f"  cd {self.tmp / 'worktrees' / 'placido-01-shout-flag'}\n  placido spec\n", text)
+
+    def test_a_failed_setup_starts_no_interview(self):
+        repo = make_repo(self.tmp, setup="exit 3")
+        with self.assertRaises(start.StartError):
+            self.start("01", repo)
+        self.assertNotIn(["pane", "run"], [argv[1:3] for argv in self.fake.calls])
 
     def test_a_failed_setup_does_not_move_the_user(self):
         repo = make_repo(self.tmp, setup="exit 3")
@@ -226,7 +251,10 @@ class FocusTest(StartTestCase):
         self.fake.fail["workspace focus"] = Result(1, '{"error":{"code":"workspace_not_found","message":"gone"}}')
         run = self.start("01", repo)
         self.assertIn("herdr.warning", self.events(run.path))
-        self.assertIn("The issue's workspace in Herdr has a pane in the worktree.", start.next_steps(run))
+        self.assertIn("In the issue's workspace in Herdr, placido spec is starting", start.next_steps(run))
+        self.fake.fail["pane run"] = Result(1, '{"error":{"code":"pane_not_found","message":"gone"}}')
+        unlaunched = self.start("02", repo)
+        self.assertIn("The issue's workspace in Herdr has a pane in the worktree.", start.next_steps(unlaunched))
 
     def test_a_sealed_agreement_means_run_next(self):
         repo = make_repo(self.tmp)
@@ -366,7 +394,8 @@ class SetupRetryTest(StartTestCase):
         self.assertEqual(sum(argv[1:3] == ["worktree", "create"] for argv in self.fake.calls), creates)
         self.assertEqual(
             self.events(run.path),
-            ["run.start", "worktree.created", "setup.start", "setup.end", "run.ready", "workspace.focused"],
+            ["run.start", "worktree.created", "setup.start", "setup.end", "run.ready", "workspace.focused",
+             "spec.launched"],
         )
         self.assertEqual(runlog.last_event(run.path, "run.start")["retry_of"], f"01-shout-flag/{self.failed.name}")
         created = runlog.last_event(run.path, "worktree.created")

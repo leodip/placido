@@ -2039,3 +2039,20 @@ work step by step over reaching a complete run early (decided on 2026-10-01).
   table defensively ("a security property the change fails to hold").
   Goiabada's review notes say what Goiabada is and that its reviews are the
   owner's. Measured by `placido report --runs`, which counts refusals.
+
+### 2026-10-07
+
+Three changes the user asked for, while #402's review and another issue's slices
+ran:
+
+- `placido start` goes straight on with the interview: once setup is done and
+  Herdr has switched to the issue's workspace, placido types `placido spec`
+  into that workspace's pane (`herdr pane run`), whose shell is already in the
+  worktree, and logs `spec.launched`. If Herdr cannot, start prints the `cd`
+  and the command as before. A failed setup starts nothing.
+- Each `slice.start` in the log now says how many slices there are
+  (`slice=5 of=7`), so the live view shows how far along the run is.
+- The interview's questions no longer send the "needs you" email, only
+  Herdr's notification: the user has just started it and is at hand. Every
+  other alert still emails, including an implementer's or reviewer's
+  question during an unattended run. 498 tests pass.

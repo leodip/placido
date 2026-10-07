@@ -185,7 +185,22 @@ def start(
         run.event("workspace.focused", workspace=worktree.workspace_id)
     except HerdrError as error:
         run.event("herdr.warning", error=str(error))
+    _launch_spec(herdr, run, worktree.pane_id)
     return run
+
+
+SPEC = "placido spec"
+
+
+def _launch_spec(herdr: Herdr, run: runlog.Run, pane: str) -> None:
+    """Go straight on with the interview in the issue's pane, whose shell is in the
+    worktree (the user's ask, 2026-10-07). If Herdr cannot, next_steps says what to type."""
+
+    try:
+        herdr.run_in_pane(pane, SPEC)
+        run.event("spec.launched", pane=pane)
+    except HerdrError as error:
+        run.event("herdr.warning", error=str(error))
 
 
 def ensure_workspace(run_dir: Path, herdr: Herdr) -> dict:
@@ -227,8 +242,11 @@ def next_steps(run: runlog.Run) -> str:
     """What to do after start: where the issue's worktree is, and the next command."""
 
     created = runlog.last_event(run.path, "worktree.created") or {}
-    following = "placido run" if spec.sealed(spec.issue_dir(run.path)) else "placido spec"
+    following = "placido run" if spec.sealed(spec.issue_dir(run.path)) else SPEC
     focused = runlog.last_event(run.path, "workspace.focused")
+    if following == SPEC and runlog.last_event(run.path, "spec.launched"):
+        place = "Herdr has switched to the issue's workspace" if focused else "In the issue's workspace in Herdr"
+        return f"{place}, {SPEC} is starting in the worktree ({created.get('path', '?')}).\n"
     where = ("Herdr has switched to the issue's workspace, whose pane is in the worktree."
              if focused else "The issue's workspace in Herdr has a pane in the worktree.")
     return f"{where} Next, there or here:\n  cd {created.get('path', '?')}\n  {following}\n"

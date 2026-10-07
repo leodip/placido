@@ -43,13 +43,14 @@ class Context:
     chain: fallback.Chain | None = None  # the implement role's agents; made by drive()
 
 
-def build_slice(ctx: Context, entry: dict[str, Any]) -> str:
+def build_slice(ctx: Context, entry: dict[str, Any], total: int | None = None) -> str:
     """One attempt at one slice: committed, or the step's failed outcome. A question
     for the user is answered in the agent's tab while the step waits."""
 
     run = ctx.run
     head = implement.git(ctx.worktree, "rev-parse", "HEAD")
-    run.event("slice.start", slice=entry["id"], title=entry["title"], head=head)
+    of = {"of": total} if total else {}  # how many slices in all, so the log shows how far along
+    run.event("slice.start", slice=entry["id"], **of, title=entry["title"], head=head)
     result = ctx.runner(
         "implement", ctx.agent, implement.prompt(run.path, ctx.worktree, entry, ctx.settings),
         name=f"implement-slice-{entry['id']}",
@@ -220,7 +221,7 @@ def drive(ctx: Context, slices: list[dict[str, Any]]) -> str:
                     "see the run log; `placido implement` can retry it by hand")
             return "gave-up"
         _status(ctx, status.text(status.WORKING, f"slice {number}/{len(slices)}"))
-        outcome = build_slice(ctx, entry)
+        outcome = build_slice(ctx, entry, len(slices))
         if outcome == "committed":
             continue
         stop = after_failure(ctx, number, outcome)

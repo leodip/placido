@@ -41,15 +41,18 @@ def _post(key: str, payload: dict[str, Any]) -> None:
 SENDER: list[Sender] = [_post]  # what email() sends with; the test suite replaces it
 
 
-def notify(run: runlog.Run, herdr: Herdr, title: str, body: str, times: bool = False) -> None:
-    """A Herdr notification naming the issue, and the same as an email; times adds how
-    long each stage of the run took."""
+def notify(
+    run: runlog.Run, herdr: Herdr, title: str, body: str, times: bool = False, mail: bool = True,
+) -> None:
+    """A Herdr notification naming the issue, and the same as an email unless mail is
+    False; times adds how long each stage of the run took."""
 
     try:
         herdr.notify(f"placido · {run.path.parent.name}: {title}", body, "request")
     except HerdrError as error:
         run.event("herdr.warning", error=str(error))
-    email(run, title, body, times=times)
+    if mail:
+        email(run, title, body, times=times)
 
 
 def email(

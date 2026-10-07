@@ -426,7 +426,9 @@ class Step:
                 continue
             self._status(status.text(status.YOU, f"answer in {status.label(folder.name)}"))
             if not told:
-                self._notify(f"{folder.name} needs you", f"answer in the {folder.name} tab")
+                # Only Herdr's notification: the user started this conversation and is
+                # at hand, so an email for every interview question is noise (2026-10-07).
+                self._notify(f"{folder.name} needs you", f"answer in the {folder.name} tab", mail=False)
                 self.run.event("agent.waiting", step=folder.name, name=agent)
                 told = True
             self._call(self.herdr.wait, agent, ("working", "blocked"))
@@ -561,10 +563,10 @@ class Step:
         tail = "\n".join(screen.splitlines()[-15:])
         return any(marker in tail for marker in DIALOG_MARKERS)
 
-    def _notify(self, title: str, body: str) -> None:
+    def _notify(self, title: str, body: str, mail: bool = True) -> None:
         """Notify the user, naming the issue, since several can be in flight at once."""
 
-        alerts.notify(self.run, self.herdr, title, body)
+        alerts.notify(self.run, self.herdr, title, body, mail=mail)
 
     def close_agent(self, agent: str, pane: str, folder: Path, kind: str) -> None:
         """Stop an agent left running, such as one from an interrupted run, keeping its

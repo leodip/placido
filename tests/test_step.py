@@ -668,7 +668,9 @@ class InteractiveTest(StepTestCase):
     def test_interview_waits_for_each_answer_until_the_result(self):
         self.fake.behaviours = ["interview"]
         self.fake.questions = 3
-        result = self.step(interactive=True)
+        with mock.patch.object(step.alerts, "email") as email:
+            result = self.step(interactive=True)
+        email.assert_not_called()  # the user started the interview: Herdr's notification will do
         self.assertEqual(result.outcome, "success")
         self.assertEqual(self.fake.questions, 0)
         self.assertNotIn("agent.nudge", self.events())

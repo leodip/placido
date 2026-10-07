@@ -230,7 +230,7 @@ def cmd_implement(args: argparse.Namespace) -> int:
             if entry["id"] in implement.committed(ctx.run.path):
                 return _report_slice(ctx, entry, "committed")  # salvaged by the recovery
             try:
-                outcome = driver.build_slice(ctx, entry)
+                outcome = driver.build_slice(ctx, entry, len(slices))
             except KeyboardInterrupt:
                 driver.stopping(ctx, slices)
                 raise
