@@ -23,10 +23,14 @@ class FakeGh:
         self.checks: list[list[dict]] = []  # successive answers of `gh pr checks`
         self.issues = 460
         self.bodies: dict[str, str] = {}
+        self.repo: Path | None = None  # the pull request's head is this checkout's HEAD
+        self.lag = 0  # after each push, how many polls GitHub still has the previous head
+        self.behind = 0
 
     def __call__(self, argv, timeout=None):
         self.calls.append(argv)
         if argv[0] == "git":
+            self.behind = self.lag
             return Result(0, "pushed")
         what = " ".join(argv[1:3])
         if what in ("pr create", "pr edit", "issue create", "issue comment", "pr comment"):
@@ -42,6 +46,11 @@ class FakeGh:
             return Result(0, f"https://github.com/leodip/goiabada/issues/{argv[3]}#issuecomment-9001\n")
         if what == "pr comment":
             return Result(0, f"https://github.com/leodip/goiabada/pull/{argv[3]}#issuecomment-9002\n")
+        if what == "pr view":
+            if self.behind:
+                self.behind -= 1
+                return Result(0, "0" * 40 + "\n")
+            return Result(0, sh(self.repo, "git", "rev-parse", "HEAD") + "\n")
         if what == "pr checks":
             answer = self.checks.pop(0) if self.checks else []
             return Result(0, json.dumps(answer)) if answer else Result(1, "no checks reported on the 'x' branch")
@@ -83,6 +92,7 @@ class DeliverCase(unittest.TestCase):
             {"id": "F1", "title": "Expose the limit in metrics", "description": "no gauge yet", "why": "separate feature"},
         ])
         self.gh = FakeGh()
+        self.gh.repo = self.repo
         self.hub = github.GitHub("leodip/goiabada", self.repo, self.gh)
         self.fixer = FakeFixer(self.run, self.repo)
         self.now = 0.0
@@ -140,6 +150,20 @@ class DeliverTest(DeliverCase):
         self.assertIn("Placido-Check-Fix: ci-1", sh(self.repo, "git", "log", "-1", "--format=%B"))
         self.assertEqual(len(self.events("github.pushed")), 2)
         self.assertEqual([e["outcome"] for e in self.events("ci.result")], ["red", "green"])
+
+    def test_checks_count_only_once_the_pull_request_is_on_the_pushed_commit(self):
+        # Meanwhile gh pr checks answers the previous commit's: after a fix, the old red.
+        self.gh.lag = 2
+        self.gh.checks = [[check("build", "fail")], [check("build", "pass")]]
+        self.assertEqual(self.deliver(), "green")
+        self.assertEqual([e["outcome"] for e in self.events("ci.result")], ["red", "green"])
+        self.assertEqual(self.gh.made("pr view"), 6)  # three polls after each push
+        self.assertEqual(self.gh.made("pr checks"), 2)
+
+    def test_a_pull_request_stuck_on_the_previous_commit_is_still_pending(self):
+        self.gh.lag = 10**6
+        self.assertEqual(self.deliver(), "pending")
+        self.assertEqual(self.gh.made("pr checks"), 0)
 
     def test_red_after_the_fixes(self):
         self.gh.checks = [[check("build", "fail")]] * 3

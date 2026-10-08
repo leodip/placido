@@ -68,6 +68,13 @@ class GitHub:
         found = re.search(r"https://github\.com/\S+/(?:issues|pull)/\d+#issuecomment-\d+", out)
         return found.group(0) if found else _url(out, "issues" if kind == "issue" else "pull")
 
+    def pr_head(self, number: int) -> str:
+        """The commit GitHub has as the pull request's head."""
+
+        return self._call(
+            "gh", "pr", "view", str(number), "-R", self.repo, "--json", "headRefOid", "--jq", ".headRefOid",
+        ).strip()
+
     def checks(self, number: int) -> list[dict[str, Any]]:
         """The pull request's checks; empty before CI has attached any."""
 
@@ -138,7 +145,8 @@ def deliver(
     outcome = "none"
     for attempt in range(checks.MAX_FIXES + 1):
         status.show(run.path, status.text(status.WAITING, f"CI on #{number}"))
-        outcome, failed = _await_ci(github, number, ctx.settings.ci_wait, sleep, clock)
+        head = implement.git(ctx.worktree, "rev-parse", "HEAD")
+        outcome, failed = _await_ci(github, number, head, ctx.settings.ci_wait, sleep, clock)
         run.event("ci.result", outcome=outcome, attempt=attempt + 1, failed=[c.get("name") for c in failed])
         if outcome != "red" or attempt == checks.MAX_FIXES:
             break
@@ -157,15 +165,24 @@ def _title(record: dict[str, Any], run_dir: Path) -> str:
 
 
 def _await_ci(
-    github: GitHub, number: int, limit: float, sleep: Callable[[float], None], clock: Callable[[], float],
+    github: GitHub, number: int, head: str, limit: float,
+    sleep: Callable[[float], None], clock: Callable[[], float],
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Wait for the checks to conclude: the outcome and the failed checks."""
+    """Wait for the checks on head, the commit just pushed, to conclude: the outcome
+    and the failed checks. Until GitHub has moved the pull request to head, its checks
+    are the previous commit's: #519 read a fixed failure as red again, one second
+    after pushing the fix (2026-10-07)."""
 
     began = clock()
+    moved = clock()
     while True:
-        found = github.checks(number)
+        if github.pr_head(number) != head:
+            found = []
+            moved = clock()
+        else:
+            found = github.checks(number)
         waited = clock() - began
-        if not found and waited >= ATTACH_SECONDS:
+        if not found and clock() - moved >= ATTACH_SECONDS:
             return "none", []
         if found and not any(c.get("bucket") == "pending" for c in found):
             failed = [c for c in found if c.get("bucket") in ("fail", "cancel")]

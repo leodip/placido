@@ -2056,3 +2056,15 @@ ran:
   Herdr's notification: the user has just started it and is at hand. Every
   other alert still emails, including an implementer's or reviewer's
   question during an unattended run. 498 tests pass.
+
+### 2026-10-08
+
+- #519's CI fix was judged by the old CI run. Placido pushed the fix
+  (fe7f7c85) and asked `gh pr checks` one second later, before GitHub had
+  moved the pull request to the new commit, so it got the previous commit's
+  finished, red checks: "red" again. A second fixer found nothing to fix (CI
+  on the fix was green), the check rejected its unchanged worktree, and it
+  asked the user. Fixed: the CI wait first asks `gh pr view` for the pull
+  request's head and reads the checks only once it is the commit just
+  pushed; until then it keeps waiting, within `ci_wait`, and the 3-minute
+  wait for checks to appear counts from that moment. 500 tests pass.
