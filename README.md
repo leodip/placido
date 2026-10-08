@@ -309,6 +309,13 @@ Placido reads why from the agent's own session file and responds by itself:
 | Context window full, despite auto-compact | Starts once more in a fresh session, then stops |
 | Logged out | Stops and tells you |
 
+Codex runs one shared daemon for all its sessions, from the folder of whichever
+session started it; once that folder is deleted, every new Codex session fails. So
+placido starts the daemon from your home folder before it launches Codex, and
+`placido close` restarts it from there when it runs from the worktree being removed.
+Restarting would cut off any Codex session running, so then placido only says how to
+do it later; `placido doctor` reports a daemon whose folder is gone.
+
 ## Commands
 
 | Command | What it does |

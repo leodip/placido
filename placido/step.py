@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import alerts, decisions, outcomes, runlog, status
+from placido import alerts, codexd, decisions, outcomes, runlog, status
 from placido.config import AgentSpec
 from placido.herdr import Herdr, HerdrError
 
@@ -236,6 +236,8 @@ class Step:
             effort=spec.effort, pane=pane, name=agent,
         )
         self._status(status.text(status.WORKING, status.label(folder.name)))
+        if spec.agent == "codex":
+            codexd.ensure(self.run)  # its shared daemon must not run from a worktree
         try:
             self.herdr.start_agent(agent, spec.agent, pane, launch_args(spec))
         except HerdrError as error:

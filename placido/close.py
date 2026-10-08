@@ -20,7 +20,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from placido import config, driver, implement, runlog, start, summary
+from placido import codexd, config, driver, implement, runlog, start, summary
 from placido.herdr import Herdr, HerdrError
 from placido.proc import Runner, run_command
 
@@ -150,6 +150,7 @@ def _close(
                     f"teardown failed with exit {code}; see {run.path / 'teardown.log'}. Fix it and"
                     " close again, or pass --force to remove the worktree anyway."
                 )
+        codexd.before_removing(run, worktree)
         _remove(run, herdr, worktree, workspace, force)
     else:
         run.event("worktree.missing", path=str(worktree))

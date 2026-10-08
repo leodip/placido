@@ -463,9 +463,33 @@ def cmd_close(args: argparse.Namespace) -> int:
         print(f"The branch {branch} is deleted: {deleted.get('reason')}.")
     elif kept:
         print(f"The branch {branch} stays: {kept.get('reason')}.")
+    for line in _codex_daemon_lines(path):
+        print(line)
     if inside:
         print(f"This shell's folder is gone with the worktree: cd {root}")
     return 0
+
+
+def _codex_daemon_lines(path: Path) -> list[str]:
+    """What closing did about Codex's daemon running from the worktree."""
+
+    events: list[dict] = []
+    for event in runlog.read_events(path):
+        if event.get("event") == "close.start":
+            events = []
+        events.append(event)
+    lines = []
+    for event in events:
+        if event.get("event") == "codex.daemon_restarted":
+            lines.append("Codex's daemon ran from the worktree; it is restarted from your home folder.")
+        elif event.get("event") in ("codex.daemon_kept", "codex.daemon_warning"):
+            why = (f"{event.get('sessions')} Codex session(s) still use it" if event.get("sessions")
+                   else f"restarting it failed: {event.get('error')}")
+            lines.append(
+                f"Codex's daemon runs from the removed worktree, so new Codex sessions will fail; {why}."
+                f" Once none runs: {event.get('fix')}"
+            )
+    return lines
 
 
 def _summarize(ctx: driver.Context) -> None:

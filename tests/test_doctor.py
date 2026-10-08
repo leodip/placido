@@ -67,7 +67,7 @@ class HealthyMachineTest(unittest.TestCase):
             [
                 "herdr", "herdr pane",
                 "claude", "claude login", "claude bypass", "claude compact",
-                "codex", "codex login",
+                "codex", "codex login", "codex daemon",
                 "pi", "pi login",
                 "billing",
                 "claude integration", "codex integration", "pi integration", "email",

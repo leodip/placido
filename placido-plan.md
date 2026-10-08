@@ -2068,3 +2068,16 @@ ran:
   request's head and reads the checks only once it is the commit just
   pushed; until then it keeps waiting, within `ci_wait`, and the 3-minute
   wait for checks to appear counts from that moment. 500 tests pass.
+- Codex's shared daemon broke after `placido close 500`. A hand-started Codex
+  session in #500's worktree (2026-10-07 14:20) was the first one, so the
+  daemon ran from that worktree; closing #500 deleted it, and every new Codex
+  session then failed with "Experimental feature request failed"
+  (openai/codex#50619). Placido now guards against it (`placido/codexd.py`):
+  before launching Codex it runs `codex app-server daemon start` from the home
+  folder (a no-op when one runs), restarting one whose folder is gone;
+  `placido close` restarts a daemon running from the worktree it is about to
+  remove; `placido doctor` reports a daemon whose folder is gone. A restart
+  cuts off the Codex sessions on the daemon, so with any running placido only
+  logs `codex.daemon_kept` and says to run
+  `cd ~ && codex app-server daemon restart` later. Processes are read from
+  /proc (Linux only). 513 tests pass.

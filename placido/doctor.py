@@ -167,6 +167,21 @@ def check_integrations(run: Runner) -> list[Check]:
 LOGIN_CHECKS = {"claude": check_claude_login, "codex": check_codex_login, "pi": check_pi_login}
 
 
+def check_codex_daemon() -> Check:
+    """Codex's shared daemon, which breaks every new session once the folder it runs
+    from is deleted, such as a closed issue's worktree."""
+
+    from placido import codexd
+
+    found = codexd.daemons()
+    if not found:
+        return Check("codex daemon", OK, "not running; placido starts it from your home folder")
+    trouble = codexd.problem()
+    if trouble:
+        return Check("codex daemon", FAIL, trouble)
+    return Check("codex daemon", OK, f"runs from {found[0].folder}")
+
+
 def check_email() -> Check:
     """The email alerts in the user's own config: off, or on with a readable key."""
 
@@ -201,6 +216,8 @@ def run_checks(
         checks.append(installed)
         if installed.status == OK:
             checks.append(LOGIN_CHECKS[agent](run))
+            if agent == "codex":
+                checks.append(check_codex_daemon())
             if agent == "claude":
                 checks.append(check_claude_bypass(home))
                 checks.append(check_claude_compact(home, env))

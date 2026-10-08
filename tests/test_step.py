@@ -267,6 +267,15 @@ class StepTestCase(unittest.TestCase):
 
 
 class StepTest(StepTestCase):
+    def test_codex_gets_its_daemon_started_from_home_first(self):
+        with mock.patch.object(step.codexd, "ensure") as ensure:
+            self.step()
+            ensure.assert_not_called()
+            runner = step.Step(self.run, self.fake, "w8", self.tmp / "wt", home=self.home, sleep=self.fake.sleep,
+                               wall=lambda: self.now)
+            runner("implement", AgentSpec("codex", "gpt-6.1-sol", "high"), "Summarize the issue.")
+            ensure.assert_called_once_with(self.run)
+
     def test_success_records_everything(self):
         result = self.step()
         self.assertEqual(result.outcome, "success")
