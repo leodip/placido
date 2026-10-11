@@ -1,3 +1,4 @@
+import io
 import json
 import subprocess
 import tempfile
@@ -178,6 +179,24 @@ class DeliverTest(DeliverCase):
     def test_ci_still_running_when_the_wait_ends(self):
         self.gh.checks = [[check("build", "pending")]] * 500
         self.assertEqual(self.deliver(), "pending")
+
+    def test_the_wait_is_logged_and_the_live_view_says_what_ci_is_still_running(self):
+        self.run.echo = io.StringIO()
+        self.gh.lag = 3  # polls at 0:00, 0:30 and 1:00 still see the previous head
+        running = [check("build", "pass"), check("lint", "fail"), check("unit", "pending"),
+                   check("e2e", "pending"), check("race", "pending"), check("docs", "pending")]
+        self.gh.checks = [[], [], running, running, [check("build", "pass")]]
+        self.assertEqual(self.deliver(), "green")
+        wait = self.events("ci.wait")[0]
+        self.assertEqual((wait["pr"], wait["limit"]), (450, "1h"))
+        self.assertEqual(wait["commit"], sh(self.repo, "git", "rev-parse", "HEAD")[:12])
+        lines = [line for line in self.run.echo.getvalue().splitlines() if "…" in line]
+        self.assertIn("CI on #450 · waiting for GitHub to move the pull request to ", lines[0])
+        self.assertIn("(1:00)", lines[0])
+        self.assertIn("CI on #450 · waiting for the checks to start (2:00)", lines[1])
+        self.assertIn("CI on #450 · 2 of 6 checks done; running unit, e2e, race, +1 more;"
+                      " failed so far: lint (3:00)", lines[2])
+        self.assertEqual(len(lines), 3)
 
     def test_a_resumed_delivery_reuses_the_pull_request_and_issues(self):
         self.gh.checks = [[check("build", "pass")]] * 2

@@ -23,11 +23,12 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import checks, followups, implement, prbody, runlog, spec, start, status, summary
+from placido import checks, config, followups, implement, prbody, runlog, spec, start, status, summary
 from placido.proc import Runner, run_command
 
 ATTACH_SECONDS = 180  # how long CI may take to show its first check after a push
 POLL_SECONDS = 30
+PROGRESS_SECONDS = 60  # how often the live view says what CI is still running
 LOG_LINES = 400  # the tail of each failed job's log handed to the fixer
 JOB = re.compile(r"/actions/runs/(\d+)/job/(\d+)")
 
@@ -146,7 +147,10 @@ def deliver(
     for attempt in range(checks.MAX_FIXES + 1):
         status.show(run.path, status.text(status.WAITING, f"CI on #{number}"))
         head = implement.git(ctx.worktree, "rev-parse", "HEAD")
-        outcome, failed = _await_ci(github, number, head, ctx.settings.ci_wait, sleep, clock)
+        run.event("ci.wait", pr=number, commit=head[:12], limit=config.format_duration(ctx.settings.ci_wait))
+        outcome, failed = _await_ci(
+            github, number, head, ctx.settings.ci_wait, sleep, clock, _progress(run, f"CI on #{number}"),
+        )
         run.event("ci.result", outcome=outcome, attempt=attempt + 1, failed=[c.get("name") for c in failed])
         if outcome != "red" or attempt == checks.MAX_FIXES:
             break
@@ -167,20 +171,24 @@ def _title(record: dict[str, Any], run_dir: Path) -> str:
 def _await_ci(
     github: GitHub, number: int, head: str, limit: float,
     sleep: Callable[[float], None], clock: Callable[[], float],
+    progress: Callable[[str, float], None] = lambda text, seconds: None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Wait for the checks on head, the commit just pushed, to conclude: the outcome
     and the failed checks. Until GitHub has moved the pull request to head, its checks
     are the previous commit's: #519 read a fixed failure as red again, one second
-    after pushing the fix (2026-10-07)."""
+    after pushing the fix (2026-10-07). Every PROGRESS_SECONDS it says what it is
+    still waiting for, so a long CI run is not mistaken for a hung placido."""
 
     began = clock()
     moved = clock()
+    told = clock()
     while True:
-        if github.pr_head(number) != head:
+        on_head = github.pr_head(number) == head
+        if on_head:
+            found = github.checks(number)
+        else:
             found = []
             moved = clock()
-        else:
-            found = github.checks(number)
         waited = clock() - began
         if not found and clock() - moved >= ATTACH_SECONDS:
             return "none", []
@@ -189,7 +197,41 @@ def _await_ci(
             return ("red" if failed else "green"), failed
         if waited >= limit:
             return "pending", []
+        if clock() - told >= PROGRESS_SECONDS:
+            progress(_waiting_on(found, on_head, head), waited)
+            told = clock()
         sleep(POLL_SECONDS)
+
+
+def _waiting_on(found: list[dict[str, Any]], on_head: bool, head: str) -> str:
+    """What the CI wait is still waiting for, in a few words."""
+
+    if not on_head:
+        return f"waiting for GitHub to move the pull request to {head[:12]}"
+    if not found:
+        return "waiting for the checks to start"
+    running = [str(c.get("name") or "?") for c in found if c.get("bucket") == "pending"]
+    failed = [str(c.get("name") or "?") for c in found if c.get("bucket") in ("fail", "cancel")]
+    text = f"{len(found) - len(running)} of {len(found)} checks done; running {_names(running)}"
+    return text + (f"; failed so far: {_names(failed)}" if failed else "")
+
+
+def _names(names: list[str], shown: int = 3) -> str:
+    rest = len(names) - shown
+    return ", ".join(names[:shown]) + (f", +{rest} more" if rest > 0 else "")
+
+
+def _progress(run: runlog.Run, label: str) -> Callable[[str, float], None]:
+    """A live-view line only, not an event, as the agents' "working" lines (step.py)."""
+
+    def say(text: str, seconds: float) -> None:
+        if run.echo is None:
+            return
+        minutes, secs = divmod(int(seconds), 60)
+        stamp = time.strftime("%H:%M:%S")
+        print(f"{stamp}  …             {label} · {text} ({minutes}:{secs:02d})", file=run.echo, flush=True)
+
+    return say
 
 
 def _save_logs(github: GitHub, folder: Path, failed: list[dict[str, Any]]) -> list[Path]:
