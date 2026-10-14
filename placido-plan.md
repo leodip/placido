@@ -2099,3 +2099,10 @@ ran:
   `.placido/notes/fix.md`, as the review's fixer already was. Until now a
   project's fix notes, such as Goiabada's on reproducing a red CI run on the
   engine that failed, never reached it.
+- Gates ran twice on a verified fix. After a fixer's fix passed its check, which
+  runs the failing gates on the worktree placido then commits, the gate loop
+  started a second attempt and ran the same gates on the same tree again: #580's
+  e2e gate rebuilt its VPS environment for ten more minutes after a pass. Now a
+  fix that passes its check ends the gates as passed (`*_gates.passed` with
+  `by=fix`); there is one fixer step per failure, whose check retries within the
+  step, and MAX_FIXES applies to CI only.

@@ -3,10 +3,12 @@ every slice is committed and before the review; its last gates, run once the rev
 is done and before the push, for checks too slow or costly to repeat; and CI on the
 pull request (step 13).
 
-When a check fails, a fixer agent gets its output, fixes the cause, and placido runs
-the checks again and commits, up to MAX_FIXES times. After that a failing final gate
-stops the run; failing last gates or CI leave the pull request flagged. A fix never
-commits by itself, and never weakens a check (skills/checks/SKILL.md).
+When a check fails, a fixer agent gets its output and fixes the cause. Placido runs
+the checks again on the fix before it commits it: for gates, that run is the proof,
+and they do not run a third time; CI gets up to MAX_FIXES fixes. When a fix cannot
+pass, a failing final gate stops the run; failing last gates or CI leave the pull
+request flagged. A fix never commits by itself, and never weakens a check
+(skills/checks/SKILL.md).
 """
 
 from __future__ import annotations
@@ -48,22 +50,22 @@ def _gates(ctx: "driver.Context", fixer: "config.AgentSpec", kind: str, names: l
     run = ctx.run
     if not names:
         return "none"
-    failed: list[str] = []
-    for attempt in range(MAX_FIXES + 1):
-        folder = run.path / f"{kind}-gates" / str(attempt + 1)
-        folder.mkdir(parents=True, exist_ok=True)
-        status.show(run.path, status.text(status.WORKING, f"{kind} gates"))
-        problems = implement.run_gates(names, ctx.settings, ctx.worktree, folder, ctx.env, run)
-        if not problems:
-            run.event(f"{kind}_gates.passed", attempt=attempt + 1)
-            return "passed"
-        failed = [n for n in names if any(p.startswith(f"gate {n} ") for p in problems)]
-        run.event(f"{kind}_gates.failed", attempt=attempt + 1, problems=problems)
-        if attempt == MAX_FIXES:
-            break
-        logs = sorted((folder / "gates").glob("*.log"))
-        if not fix(ctx, fixer, f"the {kind} gates", logs, names, f"{kind}-gates-{attempt + 1}"):
-            break
+    folder = run.path / f"{kind}-gates" / "1"
+    folder.mkdir(parents=True, exist_ok=True)
+    status.show(run.path, status.text(status.WORKING, f"{kind} gates"))
+    problems = implement.run_gates(names, ctx.settings, ctx.worktree, folder, ctx.env, run)
+    if not problems:
+        run.event(f"{kind}_gates.passed", attempt=1)
+        return "passed"
+    run.event(f"{kind}_gates.failed", attempt=1, problems=problems)
+    logs = sorted((folder / "gates").glob("*.log"))
+    if fix(ctx, fixer, f"the {kind} gates", logs, names, f"{kind}-gates-1"):
+        # The fix's check ran these same gates on the tree placido then committed, and
+        # they passed: running them again would repeat it, and a slow gate (a suite
+        # against a deployment) took ten more minutes for nothing (#580, 2026-10-14).
+        run.event(f"{kind}_gates.passed", attempt=2, by="fix")
+        return "passed"
+    failed = [n for n in names if any(p.startswith(f"gate {n} ") for p in problems)]
     run.event(f"{kind}_gates.gave_up", gates=failed)
     return "failed"
 

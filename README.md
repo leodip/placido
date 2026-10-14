@@ -138,8 +138,9 @@ last  = []                           # once the review is done, before the push
 ```
 
 The last gates are for a check too slow or costly to run more than once. A failing
-gate goes to a fixer, up to two times, as with the final gates; when it still fails,
-the pull request opens anyway, with the failure at the top of its description.
+gate goes to a fixer, as with the final gates, and placido runs the gates again on
+its fix before committing it, and not after; when the fix cannot pass, the pull
+request opens anyway, with the failure at the top of its description.
 
 Setup, teardown, the gates, and every agent's tab get these variables, so your own
 scripts can find the run's resources:

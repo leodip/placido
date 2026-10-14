@@ -78,6 +78,7 @@ class FinalGatesTest(unittest.TestCase):
         self.assertIn("Placido-Check-Fix: final-gates-1", body)
         self.assertEqual(self.events().count("final_gates.failed"), 1)
         self.assertIn("final_gates.passed", self.events())
+        self.assertEqual(self.events().count("gate.start"), 2)  # the failure, and the fix's check; not again
 
     def test_gives_up_after_the_fixes(self):
         self.fixer.repairs = [False, False]
@@ -102,6 +103,7 @@ class FinalGatesTest(unittest.TestCase):
         self.assertIn("last-gates/1/gates/full.log", self.fixer.prompts[0])
         self.assertIn("Placido-Check-Fix: last-gates-1", sh(self.repo, "git", "log", "-1", "--format=%B"))
         self.assertIn("last_gates.passed", self.events())
+        self.assertEqual(self.events().count("gate.start"), 2)
 
     def test_last_gates_that_still_fail_are_not_run_again(self):
         self.fixer.repairs = [False, False]
