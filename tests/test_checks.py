@@ -47,11 +47,12 @@ class FinalGatesTest(unittest.TestCase):
         self.run = runlog.Run.create(self.tmp / "runs", "repo", "03-x", {})
         self.fixer = FakeFixer(self.run, self.repo)
 
-    def ctx(self, final: str = "full") -> driver.Context:
+    def ctx(self, final: str = "full", last: str = "") -> driver.Context:
         cfg = self.tmp / "config.toml"
         cfg.write_text(
             '[commands.full]\nrun = "test -f ok.txt"\n'
             f'[gates]\nfinal = [{f"{chr(34)}{final}{chr(34)}" if final else ""}]\n'
+            f'last = [{f"{chr(34)}{last}{chr(34)}" if last else ""}]\n'
         )
         return driver.Context(self.run, self.fixer, None, config.load(cfg),
                               config.AgentSpec("claude", "opus", "high"), self.repo, {})
@@ -90,3 +91,33 @@ class FinalGatesTest(unittest.TestCase):
         self.run.event("final_gates.passed", attempt=1)
         self.assertEqual(checks.final_gates(self.ctx(), config.AgentSpec("claude", "opus", "high")), "passed")
         self.assertNotIn("gate.start", self.events())
+
+    def test_no_last_gates(self):
+        self.assertEqual(checks.last_gates(self.ctx(), config.AgentSpec("claude", "opus", "high")), "none")
+
+    def test_a_failing_last_gate_is_fixed_and_committed(self):
+        outcome = checks.last_gates(self.ctx(final="", last="full"), config.AgentSpec("claude", "opus", "high"))
+        self.assertEqual(outcome, "passed")
+        self.assertIn("Fix the last gates", self.fixer.prompts[0])
+        self.assertIn("last-gates/1/gates/full.log", self.fixer.prompts[0])
+        self.assertIn("Placido-Check-Fix: last-gates-1", sh(self.repo, "git", "log", "-1", "--format=%B"))
+        self.assertIn("last_gates.passed", self.events())
+
+    def test_last_gates_that_still_fail_are_not_run_again(self):
+        self.fixer.repairs = [False, False]
+        ctx = self.ctx(final="", last="full")
+        self.assertEqual(checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high")), "failed")
+        gave_up = [e for e in runlog.read_events(self.run.path) if e["event"] == "last_gates.gave_up"]
+        self.assertEqual(gave_up[0]["gates"], ["full"])
+        runs = self.events().count("gate.start")
+        self.assertEqual(checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high")), "failed")
+        self.assertEqual(self.events().count("gate.start"), runs)  # a resumed delivery keeps the outcome
+
+    def test_the_fixer_is_given_the_projects_fix_notes(self):
+        notes = self.repo / ".placido" / "notes" / "fix.md"
+        notes.parent.mkdir(parents=True)
+        notes.write_text("# Fixing\n")
+        sh(self.repo, "git", "add", "-A")
+        sh(self.repo, "git", "commit", "-qm", "notes")
+        checks.final_gates(self.ctx(), config.AgentSpec("claude", "opus", "high"))
+        self.assertIn(f"- **Project notes for this role:** {notes}", self.fixer.prompts[0])

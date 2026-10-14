@@ -350,10 +350,12 @@ def _review(ctx: driver.Context, reviewer: config.AgentSpec) -> int:
 
 
 def _deliver(ctx: driver.Context, outcome: str) -> int:
-    """Hand the reviewed change over: push it and open the pull request, wait for CI,
-    then end the run. Its work is done once CI is green, or there is no CI or GitHub;
-    what is left (trying the branch, merging, escalations) is the user's."""
+    """Hand the reviewed change over: run the last gates, push it and open the pull
+    request, wait for CI, then end the run. Its work is done once CI is green, or there
+    is no CI or GitHub; what is left (trying the branch, merging, escalations, last
+    gates that still fail) is the user's."""
 
+    last = checks.last_gates(ctx, ctx.settings.roles["fix"].agent)
     followups.draft(ctx, ctx.settings.roles["fix"].agent)
     try:
         ci = github.deliver(ctx, ctx.settings.roles["fix"].agent)
@@ -371,16 +373,23 @@ def _deliver(ctx: driver.Context, outcome: str) -> int:
         _summarize(ctx)
         print(f"\nplacido: CI is {ci} on {pr}; run placido run again once it is sorted.", file=sys.stderr)
         return 1
-    ctx.run.event("run.end", outcome=outcome, ci=ci, pr=pr or None)
+    failing = last == "failed"
+    ctx.run.event("run.end", outcome=outcome, ci=ci, pr=pr or None, **({"last_gates": last} if failing else {}))
     if outcome == "escalated":
         driver.show(ctx, status.YOU, "review needs your decisions")
+    elif failing:
+        driver.show(ctx, status.YOU, "the last gates fail" + (f" on pull request {pr.rsplit('/', 1)[-1]}" if pr else ""))
     else:
         driver.show(ctx, status.DONE, f"pull request {pr.rsplit('/', 1)[-1]}" if pr else "review passed")
     if pr:
-        driver.notify(ctx, "the pull request is ready", f"{pr} · CI {ci}", times=True)
+        title = "the pull request is ready, but the last gates fail" if failing else "the pull request is ready"
+        driver.notify(ctx, title, f"{pr} · CI {ci}", times=True)
         print(f"\npull request: {pr} (CI {ci})")
+    if failing:
+        print(f"placido: the last gates still fail after the fixes; see {ctx.run.path / 'last-gates'}.",
+              file=sys.stderr)
     _summarize(ctx)
-    return 0 if outcome == "passed" else 1
+    return 0 if outcome == "passed" and not failing else 1
 
 
 def cmd_retro(args: argparse.Namespace) -> int:

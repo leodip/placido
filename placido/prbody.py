@@ -18,6 +18,7 @@ CI_WORDS = {
     "red": "CI is red after placido's fixes",
     "pending": "CI was still running when placido stopped waiting",
 }
+LAST_GATES_FAIL = "The last gates fail after placido's fixes"
 LEAD = re.compile(r"^\d+\.\s+\*\*(.+?)\*\*", re.MULTILINE | re.DOTALL)
 FINDING = re.compile(r"^- \*\*(?P<id>[^*]+)\*\* (?P<severity>\w+) · (?P<rest>.*)$")
 REVIEW_KEPT = ("Needs your decision", "Fixed, not verified by a later round")
@@ -36,6 +37,10 @@ def build(run_dir: Path, folded: list[int]) -> str:
     if ci and ci.get("outcome") in CI_WORDS:
         failed = f" ({', '.join(ci.get('failed') or [])})" if ci.get("failed") else ""
         lines += [f"> **{CI_WORDS[ci['outcome']]}{failed}.**", ""]
+    last = next((e for e in reversed(events) if e.get("event") == "last_gates.gave_up"), None)
+    if last:
+        failed = f" ({', '.join(last.get('gates') or [])})" if last.get("gates") else ""
+        lines += [f"> **{LAST_GATES_FAIL}{failed}.**", ""]
     solution = section(agreement, "Solution")
     if solution:
         lines += ["## What this changes", "", solution, ""]

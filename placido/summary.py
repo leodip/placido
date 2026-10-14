@@ -71,6 +71,10 @@ def _facts(
     if ci:
         failed = f" ({', '.join(ci.get('failed') or [])})" if ci.get("failed") else ""
         facts.append(f"- **CI:** {CI_WORDS.get(ci.get('outcome'), ci.get('outcome'))}{failed}")
+    last = next((e for e in reversed(events) if e.get("event") == "last_gates.gave_up"), None)
+    if last:
+        failed = f" ({', '.join(last.get('gates') or [])})" if last.get("gates") else ""
+        facts.append(f"- **Last gates:** fail after placido's fixes{failed}; logs in {run_dir / 'last-gates'}")
     if events:
         took = _seconds(events[0].get("ts"), events[-1].get("ts"))
         facts.append(f"- **Time:** {str(events[0].get('ts', ''))[:16].replace('T', ' ')}"

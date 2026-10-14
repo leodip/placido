@@ -1,9 +1,12 @@
 """Checks on the whole change, and fixing them: the project's final gates, run once
-every slice is committed and before the review, and CI on the pull request (step 13).
+every slice is committed and before the review; its last gates, run once the review
+is done and before the push, for checks too slow or costly to repeat; and CI on the
+pull request (step 13).
 
 When a check fails, a fixer agent gets its output, fixes the cause, and placido runs
-the checks again and commits, up to MAX_FIXES times; the run stops after that. A fix
-never commits by itself, and never weakens a check (skills/checks/SKILL.md).
+the checks again and commits, up to MAX_FIXES times. After that a failing final gate
+stops the run; failing last gates or CI leave the pull request flagged. A fix never
+commits by itself, and never weakens a check (skills/checks/SKILL.md).
 """
 
 from __future__ import annotations
@@ -17,31 +20,51 @@ from placido.step import Step
 
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "checks" / "SKILL.md"
 MAX_FIXES = 2
+NOTES = Path(".placido") / "notes" / "fix.md"
 
 
 def final_gates(ctx: "driver.Context", fixer: "config.AgentSpec") -> str:  # noqa: F821
     """Run the final gates once, fixing failures; "passed", "none", or "failed".
     A run that passed them already, before an interruption, does not run them again."""
 
-    run, names = ctx.run, list(ctx.settings.final_gates)
+    if runlog.last_event(ctx.run.path, "final_gates.passed"):
+        return "passed"
+    return _gates(ctx, fixer, "final", list(ctx.settings.final_gates))
+
+
+def last_gates(ctx: "driver.Context", fixer: "config.AgentSpec") -> str:  # noqa: F821
+    """Run the last gates once, fixing failures; "passed", "none", or "failed". A run
+    that has their outcome already, before an interruption, does not run them again:
+    a failure is not retried, since the pull request opens flagged with it."""
+
+    if runlog.last_event(ctx.run.path, "last_gates.passed"):
+        return "passed"
+    if runlog.last_event(ctx.run.path, "last_gates.gave_up"):
+        return "failed"
+    return _gates(ctx, fixer, "last", list(ctx.settings.last_gates))
+
+
+def _gates(ctx: "driver.Context", fixer: "config.AgentSpec", kind: str, names: list[str]) -> str:  # noqa: F821
+    run = ctx.run
     if not names:
         return "none"
-    if runlog.last_event(run.path, "final_gates.passed"):
-        return "passed"
+    failed: list[str] = []
     for attempt in range(MAX_FIXES + 1):
-        folder = run.path / "final-gates" / str(attempt + 1)
+        folder = run.path / f"{kind}-gates" / str(attempt + 1)
         folder.mkdir(parents=True, exist_ok=True)
-        status.show(run.path, status.text(status.WORKING, "final gates"))
+        status.show(run.path, status.text(status.WORKING, f"{kind} gates"))
         problems = implement.run_gates(names, ctx.settings, ctx.worktree, folder, ctx.env, run)
         if not problems:
-            run.event("final_gates.passed", attempt=attempt + 1)
+            run.event(f"{kind}_gates.passed", attempt=attempt + 1)
             return "passed"
-        run.event("final_gates.failed", attempt=attempt + 1, problems=problems)
+        failed = [n for n in names if any(p.startswith(f"gate {n} ") for p in problems)]
+        run.event(f"{kind}_gates.failed", attempt=attempt + 1, problems=problems)
         if attempt == MAX_FIXES:
             break
         logs = sorted((folder / "gates").glob("*.log"))
-        if not fix(ctx, fixer, "the final gates", logs, names, f"final-gates-{attempt + 1}"):
+        if not fix(ctx, fixer, f"the {kind} gates", logs, names, f"{kind}-gates-{attempt + 1}"):
             break
+    run.event(f"{kind}_gates.gave_up", gates=failed)
     return "failed"
 
 
@@ -69,6 +92,7 @@ def fix(
 
 def prompt(ctx: "driver.Context", what: str, logs: list[Path], gates: list[str]) -> str:  # noqa: F821
     issue = spec.issue_dir(ctx.run.path)
+    notes = ctx.worktree / NOTES
     lines = [
         f"# Fix {what}",
         "",
@@ -80,6 +104,7 @@ def prompt(ctx: "driver.Context", what: str, logs: list[Path], gates: list[str])
         decisions.prompt_line(ctx.run.path),
         f"- **Code:** the worktree you are in, {ctx.worktree}. Change it; do not commit.",
         f"- **Checks placido runs after you:** {', '.join(gates) or 'none'}.",
+        f"- **Project notes for this role:** {notes if notes.is_file() else 'none'}",
     ]
     from placido import config
 

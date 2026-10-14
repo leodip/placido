@@ -77,6 +77,11 @@ class BodyTest(unittest.TestCase):
         body = prbody.build(self.run.path, [])
         self.assertTrue(body.startswith("Closes #331\n\n> **CI is red after placido's fixes (mysql).**"))
 
+    def test_last_gates_that_fail_are_said_first(self):
+        self.run.event("last_gates.gave_up", gates=["slow"])
+        body = prbody.build(self.run.path, [])
+        self.assertTrue(body.startswith("Closes #331\n\n> **The last gates fail after placido's fixes (slow).**"))
+
     def test_no_review_yet(self):
         body = prbody.build(self.run.path, [])
         self.assertNotIn("## Review", body)

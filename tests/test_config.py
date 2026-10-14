@@ -38,7 +38,7 @@ class DefaultsTest(unittest.TestCase):
     def test_settings(self):
         c = self.config
         self.assertEqual((c.base, c.setup, c.teardown), ("main", "", ""))
-        self.assertEqual((c.commands, c.slice_gates, c.final_gates), ({}, (), ()))
+        self.assertEqual((c.commands, c.slice_gates, c.final_gates, c.last_gates), ({}, (), (), ()))
         self.assertEqual((c.test_first, c.plan_rounds, c.final_rounds), (True, 0, 3))
         self.assertEqual((c.stage_attempts, c.quota_wait), (3, 7200))
         self.assertIsNone(c.source)
@@ -93,6 +93,7 @@ class OverrideTest(unittest.TestCase):
             [gates]
             slice = ["unit"]
             final = ["unit", "data"]
+            last  = ["data"]
 
             [roles.implement]
             model  = "sonnet"
@@ -118,7 +119,7 @@ class OverrideTest(unittest.TestCase):
                 "data": config.Command("data", "make test-data"),
             },
         )
-        self.assertEqual((c.slice_gates, c.final_gates), (("unit",), ("unit", "data")))
+        self.assertEqual((c.slice_gates, c.final_gates, c.last_gates), (("unit",), ("unit", "data"), ("data",)))
         self.assertEqual(c.roles["implement"].agent, AgentSpec("claude", "sonnet", "medium"))
         self.assertEqual(c.roles["spec"].agent, AgentSpec("claude", "opus", "xhigh"))
         self.assertEqual((c.plan_rounds, c.final_rounds, c.test_first), (1, 2, False))

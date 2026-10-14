@@ -1,18 +1,20 @@
 ---
 name: placido-checks
-description: Fix the cause of failing checks on a finished placido change, such as the project's final gates or its CI on the pull request, and leave the fix uncommitted with a result that carries the commit message. Use when placido hands over failing check output.
+description: Fix the cause of failing checks on a finished placido change, such as the project's final or last gates or its CI on the pull request, and leave the fix uncommitted with a result that carries the commit message. Use when placido hands over failing check output.
 ---
 
 # Failing checks to a fix
 
-The change is built and reviewed, and a check on the whole of it failed: the
-project's final gates, or its CI. Your prompt names what failed, where its output
-is, the agreement and the decisions, and which checks placido runs after you.
+The change is built, and a check on the whole of it failed: the project's final
+gates, before the review; its last gates, after it; or its CI. Your prompt names what
+failed, where its output is, the agreement and the decisions, the project notes, and
+which checks placido runs after you.
 
 ## 1. Read
 
 Read the failing output first, all of it: the first error is usually the cause and
-the rest its echo. Then read the code it points at, and the agreement and decisions
+the rest its echo. Then read the project notes your prompt names, which say how this
+project's checks run, the code the output points at, and the agreement and decisions
 where the failure touches what they decided.
 
 ## 2. Fix the cause

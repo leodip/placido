@@ -192,10 +192,16 @@ def _between(start: Any, end: Any) -> float | None:
     return (b - a).total_seconds() if a and b else None
 
 
+GATE_ENDS = {
+    "final_gates.passed": "Final gates", "final_gates.failed": "Final gates",
+    "last_gates.passed": "Last gates", "last_gates.failed": "Last gates",
+}
+
+
 def stages(run_dir: Path) -> list[tuple[str, float | None]]:
     """How long each stage of the run took, in order: the interview, each slice from
     its first attempt to its commit (retries and gates included), the final gates,
-    each review round and its fixes, the follow-ups, and each wait for CI."""
+    each review round and its fixes, the last gates, the follow-ups, and each wait for CI."""
 
     out: list[tuple[str, float | None]] = []
     open_steps: dict[str, dict[str, Any]] = {}
@@ -214,9 +220,9 @@ def stages(run_dir: Path) -> list[tuple[str, float | None]]:
         elif kind == "slice.committed":
             out.append((f"Slice {event.get('slice')}", _between(slice_start.get(event.get("slice")), ts)))
         elif kind == "gate.start" and not open_steps and gates_start is None:
-            gates_start = ts  # gates outside any step are the final gates
-        elif kind in ("final_gates.passed", "final_gates.failed") and gates_start is not None:
-            out.append(("Final gates", _between(gates_start, ts)))
+            gates_start = ts  # gates outside any step are the final or the last gates
+        elif kind in GATE_ENDS and gates_start is not None:
+            out.append((GATE_ENDS[kind], _between(gates_start, ts)))
             gates_start = None
         elif kind == "github.pushed":
             ci_start = ts
@@ -239,6 +245,8 @@ def _stage(step: str) -> str:
         return f"Fixing CI, attempt {found.group(1)}"
     if name.startswith("fix-final"):
         return "Fixing the final gates"
+    if name.startswith("fix-last"):
+        return "Fixing the last gates"
     if name == "followups":
         return "Follow-ups"
     return name

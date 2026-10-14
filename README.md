@@ -40,7 +40,8 @@ placido close 439      after you merge: teardown, worktree removed, main pulled,
    reviewer, resumed with its context, verifies the fixes, for up to three rounds.
    Work that belongs to the issue is folded in; out-of-scope work becomes a follow-up,
    without stopping to ask.
-6. **Pull request.** Placido pushes the branch once, opens the pull request ready for
+6. **Pull request.** Placido runs your project's last gates, if it has any, on the
+   reviewed change, then pushes the branch once, opens the pull request ready for
    review (`Closes #N`, then a summary of everything the run did and decided), and
    waits for CI. A red run's failed logs go to a fixer agent, up to twice. The body
    says what the change does, its decisions, and what the review found. The
@@ -133,7 +134,12 @@ about = "The linters CI runs."
 [gates]
 slice = ["unit"]                     # after each slice, before its commit
 final = ["lint", "integration"]      # once every slice is in, before the review
+last  = []                           # once the review is done, before the push
 ```
+
+The last gates are for a check too slow or costly to run more than once. A failing
+gate goes to a fixer, up to two times, as with the final gates; when it still fails,
+the pull request opens anyway, with the failure at the top of its description.
 
 Setup, teardown, the gates, and every agent's tab get these variables, so your own
 scripts can find the run's resources:

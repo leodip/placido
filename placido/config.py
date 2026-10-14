@@ -21,7 +21,7 @@ DEFAULT_MODELS = {"claude": "opus", "codex": "gpt-6.1-sol", "pi": "deepseek/deep
 DEFAULTS: dict[str, Any] = {
     "project": {"base": "main", "setup": "", "teardown": ""},
     "commands": {},
-    "gates": {"slice": [], "final": []},
+    "gates": {"slice": [], "final": [], "last": []},
     "roles": {
         "spec": {"agent": "claude", "model": "opus", "effort": "xhigh"},
         "implement": {"agent": "claude", "model": "opus", "effort": "high"},
@@ -98,6 +98,7 @@ class Config:
     commands: dict[str, Command]
     slice_gates: tuple[str, ...]  # command names run after each slice, before its commit
     final_gates: tuple[str, ...]  # command names run before the final review
+    last_gates: tuple[str, ...]  # command names run after the review, before the push
     roles: dict[str, Role]
     test_first: bool
     mutations: int  # killed mutations each slice needs; 0 turns mutation checks off
@@ -302,6 +303,7 @@ def _resolve(data: dict[str, Any], source: Path | None) -> Config:
         commands=commands,
         slice_gates=gates["slice"],
         final_gates=gates["final"],
+        last_gates=gates["last"],
         **lifecycle,
     )
 
@@ -347,6 +349,7 @@ def describe(config: Config, start: Path) -> str:
         "[gates]",
         f"slice  {', '.join(config.slice_gates) or '-'}",
         f"final  {', '.join(config.final_gates) or '-'}",
+        f"last   {', '.join(config.last_gates) or '-'}",
         "",
         "[roles]",
     ]

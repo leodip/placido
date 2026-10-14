@@ -2081,3 +2081,21 @@ ran:
   logs `codex.daemon_kept` and says to run
   `cd ~ && codex app-server daemon restart` later. Processes are read from
   /proc (Linux only). 513 tests pass.
+
+### 2026-10-14
+
+- Last gates. A project can now name commands in `[gates] last`, run once the
+  review is done and before the push: for a check too slow or costly to run more
+  than once. A failure goes to the checks fixer, up to twice, as with the final
+  gates (`last-gates/<attempt>/`, `last_gates.passed`, `.failed`, `.gave_up`).
+  Unlike them, gates that still fail do not stop the run: the pull request opens
+  with "The last gates fail after placido's fixes (<gates>)" at the top of its
+  body, the summary says so, the alert's title says so, and `placido run` exits 1.
+  A resumed delivery does not run them again. The user wanted Goiabada's browser
+  suite, which rebuilds a shared VPS environment from the branch, to run on the
+  reviewed change; its command and notes live in Goiabada's `.placido/`, and
+  placido stays generic. 519 tests pass.
+- The checks fixer (final gates, last gates, CI) is now given
+  `.placido/notes/fix.md`, as the review's fixer already was. Until now a
+  project's fix notes, such as Goiabada's on reproducing a red CI run on the
+  engine that failed, never reached it.

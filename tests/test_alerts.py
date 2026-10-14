@@ -204,13 +204,15 @@ class TimesTest(EmailCase):
         at(40, "final_gates.passed", attempt=1)
         at(40, "step.start", step="04-review-1", role="review")
         at(49, "step.end", step="04-review-1")
+        at(49, "gate.start", gate="slow")  # the last gates, outside any step
+        at(50, "last_gates.passed", attempt=1)
         at(50, "step.start", step="05-followups", role="fix")
         at(52, "step.end", step="05-followups")
         at(52, "github.pushed")
         at(59, "ci.result", outcome="green", attempt=1)
         self.assertEqual(report.stages(self.run.path), [
             ("Interview (with you)", 1200.0), ("Slice 1", 900.0), ("Final gates", 180.0),
-            ("Review round 1", 540.0), ("Follow-ups", 120.0), ("CI", 420.0),
+            ("Review round 1", 540.0), ("Last gates", 60.0), ("Follow-ups", 120.0), ("CI", 420.0),
         ])
         run_start = report.when(next(runlog.read_events(self.run.path))["ts"]).timestamp()
         text = alerts.render(self.run.path, "the pull request is ready", "CI green", now=run_start + 3600, times=True)
