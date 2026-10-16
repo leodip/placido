@@ -1,4 +1,6 @@
+import io
 import json
+from contextlib import redirect_stdout
 from unittest import mock
 
 from placido import pr, pragents, prgh, prmenu, runlog
@@ -88,12 +90,24 @@ class OptionsTest(MenuTestCase):
 class PostTest(MenuTestCase):
     def test_a_request_for_changes_is_posted_as_one_with_placidos_marker(self):
         rnd = self.review(verdict="request-changes", routing={"share": 0.7, "estimate": "x", "route": "contributor"})
+        self.confirms = [True]
         self.act("post", rnd)
+        self.assertEqual(self.confirmed, ["Post this on #7 as a review requesting changes?"])
         kind, body = self.hub.calls[-1][1:]
         self.assertEqual(kind, "request-changes")
         self.assertTrue(body.startswith("Thanks for this.\n\n1. Fix greet.py."))
         self.assertIn(prgh.marker(1, self.head), body)
         self.assertNotIn("post", self.keys(rnd))
+
+    def test_the_comment_is_shown_as_it_will_be_posted(self):
+        rnd = self.review(verdict="request-changes", routing={"share": 0.7, "estimate": "x", "route": "contributor"})
+        (rnd.folder / "comment.md").write_text("Thanks.\n\n1. Changed after the summary.\n")
+        shown = io.StringIO()
+        with redirect_stdout(shown):
+            self.act("post", rnd)  # declined
+        self.assertIn("---- the comment to the contributor ----\nThanks.\n\n1. Changed after the summary.\n",
+                      shown.getvalue())
+        self.assertEqual(self.hub.calls, [])
 
     def test_a_fix_here_comment_before_the_push_asks_first(self):
         rnd = self.review()
@@ -201,7 +215,11 @@ class CloseAndCITest(MenuTestCase):
     def test_close_posts_the_comment_then_closes(self):
         rnd = self.review(verdict="close", routing={"share": 1, "estimate": "x", "route": "none"})
         self.confirms = [True]
-        self.act("close", rnd)
+        shown = io.StringIO()
+        with redirect_stdout(shown):
+            self.act("close", rnd)
+        self.assertIn("---- the comment to the contributor ----\nThanks for this.", shown.getvalue())
+        self.assertEqual(self.confirmed, ["Close #7, posting this comment?"])
         self.assertEqual([c[0] for c in self.hub.calls], ["comment", "close"])
         self.assertIn(prgh.marker(1, self.head), self.hub.calls[0][1])
 
@@ -228,6 +246,7 @@ class MenuLoopTest(MenuTestCase):
         listed, _ = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
         numbers = {key: str(n) for n, (key, _) in enumerate(listed, 1)}
         answers = iter([f"{numbers['ci']} {numbers['post']}", ""])
+        self.confirms = [True]
         prmenu.menu(self.ctx, rnd, lambda prompt: next(answers), self.confirm)
         self.assertEqual([c[0] for c in self.hub.calls], ["review", "approve"])
 
@@ -327,6 +346,45 @@ class VerifyTest(MenuTestCase):
         verdicts = [e["passed"] for e in runlog.read_events(self.run.path) if e["event"] == "pr.verified"]
         self.assertEqual(verdicts, [False, True])
         self.assertIn("checked", dict(prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0])["push"])
+
+    def kept_fixer(self, step: str) -> str:
+        return next(e["name"] for e in runlog.read_events(self.run.path)
+                    if e["event"] == "pr.kept_open" and e.get("role") == "fix" and e["step"].endswith(step))
+
+    def test_the_fixer_is_resumed_for_what_the_check_of_its_work_left_open(self):
+        rnd = self.review()
+        self.runner.verify = [self.failing()]
+        self.act("fix", rnd)
+        fixes = [c for c in self.runner.calls if c["name"].startswith("r1-fix")]
+        self.assertEqual([(c["how"], c["name"]) for c in fixes], [("start", "r1-fix-1"), ("resume", "r1-fix-2")])
+        fixer = self.kept_fixer("r1-fix-1")
+        self.assertEqual((fixes[0]["keep_open"], fixes[1]["agent"], fixes[1]["keep_open"]), (True, fixer, True))
+        self.assertTrue(fixes[1]["task"].startswith("# The check of your fix to pull request #7 left items open"))
+        self.assertIn("fix-findings-2.json", fixes[1]["task"])
+        checks = [c["how"] for c in self.runner.calls if c["name"].startswith("r1-verify")]
+        self.assertEqual(checks, ["start", "start"])  # each check a fresh session
+        self.assertEqual(self.runner.closed.count(fixer), 1)  # once, when the fix is done
+        self.assertEqual(pr.open_agents(self.run.path), [])
+
+    def test_a_fixer_that_cannot_be_resumed_gives_way_to_a_fresh_one(self):
+        rnd = self.review()
+        self.runner.verify = [self.failing()]
+        self.runner.failures["r1-fix-2"] = ["agent-exited"]
+        self.act("fix", rnd)
+        fixes = [(c["how"], c["name"]) for c in self.runner.calls if c["name"].startswith("r1-fix")]
+        self.assertEqual(fixes, [("start", "r1-fix-1"), ("resume", "r1-fix-2"), ("start", "r1-fix-2")])
+        self.assertNotEqual(self.kept_fixer("r1-fix-2"), self.kept_fixer("r1-fix-1"))
+        self.assertIn(self.kept_fixer("r1-fix-1"), self.runner.closed)
+        self.assertIn(self.kept_fixer("r1-fix-2"), self.runner.closed)
+        self.assertEqual(pr.open_agents(self.run.path), [])
+
+    def test_the_fixer_is_closed_when_its_check_stops_the_fix(self):
+        rnd = self.review()
+        self.runner.failures["r1-verify-1"] = ["invalid"]
+        with self.assertRaisesRegex(pr.PRStop, "the check of fix 1 did not finish"):
+            self.act("fix", rnd)
+        self.assertIn(self.kept_fixer("r1-fix-1"), self.runner.closed)
+        self.assertEqual(pr.open_agents(self.run.path), [])
 
     def test_a_minor_new_problem_does_not_send_the_fix_back(self):
         rnd = self.review()

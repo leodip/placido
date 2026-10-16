@@ -704,7 +704,9 @@ them are the risk, not only the change's quality.
 - **Fixes are checked before they are pushed.** A fix made here goes to the `verify`
   role, by default another vendor than the fixer's, which judges each finding's fix and
   reads the fixes for new problems; what it leaves open goes back to the fixer, up to
-  `[pr] fix_rounds` times, and the push says whether the fixes passed.
+  `[pr] fix_rounds` times, and the push says whether the fixes passed. The fixer is kept
+  open and resumed for those rounds, since what is left open is its own work; every
+  check is a fresh session, whose value is fresh eyes.
 - **Fixes land on the base as it is now.** When the base has moved past the branch, the
   fix first merges it in, as a commit of its own, so the fixes are made, gated, and
   checked on what the squash merge will land. The `fix` role resolves the conflicts and
@@ -2234,3 +2236,14 @@ ran:
   were resolved to, and the push counts first-parent commits. Lane B's stack, five
   containers, had sat idle from the cross-checks until close; it now goes down then.
   Twenty-six mutations of the new guards were each caught. 637 tests pass.
+- #592's fix ran with the merge step: the merge resolved the one-line conflict in 75s,
+  fix 1 took 8.4 minutes (gates included), Codex's check 6.5, and found V1: the new
+  `redirect_uri` assertions used short ASCII URIs, so removing `FieldForLog` survived.
+  Fix 2 added the long and non-ASCII cases in 5.7 minutes, and the second check passed in
+  2. Fix 2 was a fresh session that re-read everything to fix the first one's tests, so
+  the fixer is now kept open and resumed for later rounds, falling back to a fresh one
+  when it cannot be; the check stays fresh. The comment also went out unseen: the menu
+  showed it once, before the fix changed what it should say, so posting and closing now
+  print it in full and ask. Every one of eleven mutations of the new guards was caught;
+  a twelfth, a round filter on the kept fixer, survived because a new round closes every
+  kept agent, so the filter was dead and went. 641 tests pass.

@@ -387,12 +387,14 @@ stack), unattended until it has something to show you:
 Then placido prints the review and a menu. Nothing happens that you do not pick, and
 pushing, merging, and closing ask again: edit the comment or the squash message, fix
 the findings here on the contributor's branch, push them (never forced, and only when
-the contributor allows maintainers to), post the comment, approve CI runs GitHub holds
+the contributor allows maintainers to), post the comment (shown in full first, as it
+will go out), approve CI runs GitHub holds
 for first-time contributors, squash-merge pinned to the commit the review covered, or
 close. A fix is the `fix` role's, committed locally once the gates pass, then checked
 by the `verify` role, another vendor by default: each finding's fix with a test that
 fails without it, and the fixes for new problems. What the check leaves open goes back
-to the fixer, up to `fix_rounds` times, and the push says whether the fixes passed.
+to the fixer, up to `fix_rounds` times: the same session, resumed, which knows what it
+did, while each check is a fresh one. The push says whether the fixes passed.
 When the base branch has moved on, the fix first merges it into the branch, as a commit
 of its own, so the fixes are made and gated on what will land; the `fix` role resolves
 any conflict, and only the conflicts. A merge, not a rebase, since the push is never

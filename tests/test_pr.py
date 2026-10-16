@@ -119,7 +119,7 @@ class FakeRunner:
 
     def resume(self, role, kind, agent, pane, task, name=None, check=None, keep_open=False, ask=None, folder=None):
         self.calls.append({"how": "resume", "role": role, "agent": agent, "name": name, "task": task,
-                           "cwd": self.worktree})
+                           "cwd": self.worktree, "keep_open": keep_open})
         return self._play(name, check, folder)
 
     def close_agent(self, agent, pane, folder, kind):
