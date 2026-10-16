@@ -14,7 +14,7 @@ from typing import Any
 AGENTS = ("claude", "codex", "pi")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TIERS = ("fast", "default")
-ROLES = ("spec", "implement", "review", "fix", "retro", "scan", "judge", "verify")
+ROLES = ("spec", "implement", "review", "fix", "retro", "scan", "judge", "verify", "decide")
 
 DEFAULT_MODELS = {"claude": "opus", "codex": "gpt-6.1-sol", "pi": "deepseek/deepseek-v4.1-flash"}
 
@@ -30,7 +30,8 @@ DEFAULTS: dict[str, Any] = {
         # its code runs, confined; the judge settles the reviews into the final one, at high
         # rather than xhigh since #588's judge spent nine minutes re-checking what both
         # reviewers had confirmed (2026-10-16). `verify`, which checks the fixes made to a
-        # pull request, follows `review`: another vendor than the fixer's.
+        # pull request, follows `review`: another vendor than the fixer's; `decide`, which
+        # takes the user through the judge's open questions, follows `judge`.
         "scan": {"agent": "claude", "model": "opus", "effort": "high"},
         "judge": {"agent": "claude", "model": "opus", "effort": "high"},
     },
@@ -371,6 +372,9 @@ def _resolve(data: dict[str, Any], source: Path | None) -> Config:
         if name == "verify":  # checking fixes is a review, by another vendor than the fixer's
             reviewer = roles["review"]
             base, chain = vars(reviewer.agent), reviewer.fallback
+        if name == "decide":  # taking the user through the judge's open questions
+            judge = roles["judge"]
+            base, chain = vars(judge.agent), judge.fallback
         spec = _agent(entry, base, where, extra=("fallback",))
         if "fallback" in entry:
             chain = _chain(entry["fallback"], f"{where}.fallback")

@@ -291,6 +291,7 @@ class PRSettingsTest(unittest.TestCase):
         self.assertEqual(c.roles["scan"].agent, AgentSpec("claude", "opus", "high"))
         self.assertEqual(c.roles["judge"].agent, AgentSpec("claude", "opus", "high"))
         self.assertEqual(c.roles["verify"].agent, c.roles["review"].agent)  # another vendor than the fixer's
+        self.assertEqual(c.roles["decide"].agent, c.roles["judge"].agent)
         self.assertEqual((c.pr.parallel, c.pr.fix_rounds), (True, 2))
 
     def test_gates_default_to_the_slice_and_final_gates(self):
@@ -312,6 +313,7 @@ class PRSettingsTest(unittest.TestCase):
         self.assertEqual(c.pr.reviewers[0].fallback, ())
         self.assertEqual((c.pr.gates, c.pr.host_paths, c.pr.contributor_share), (("unit",), ("scripts", ".placido"), 1.0))
         self.assertEqual(c.roles["judge"].agent.agent, "codex")
+        self.assertEqual(c.roles["decide"].agent.agent, "codex")  # follows the judge unless set itself
 
     def test_refusals(self):
         cases = {

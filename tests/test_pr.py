@@ -103,6 +103,8 @@ class FakeRunner:
         self.fix_change = True
         self.resolution: str | None = "print('hi there, all')\n"  # what a conflict resolves to; None: left as is
         self.verify: list[dict] = []  # per check of a fix: its verify.json; none left: all resolved
+        self.decided: dict | None = None  # the user's decisions.json; None: every one as recommended
+        self.drafts: dict[str, str] = {}  # what the decide step writes over its copies of the drafts
         self.env: dict[str, str] = {}
 
     def lane(self, worktree: Path, env: dict[str, str]) -> "FakeRunner":
@@ -112,9 +114,11 @@ class FakeRunner:
         clone.worktree, clone.env = worktree, env
         return clone
 
-    def __call__(self, role, spec, task, name=None, check=None, keep_open=False, ask=None, confined=None, folder=None):
+    def __call__(self, role, spec, task, name=None, interactive=False, check=None, keep_open=False, ask=None,
+                 confined=None, folder=None):
         self.calls.append({"how": "start", "role": role, "spec": spec, "name": name, "keep_open": keep_open,
-                           "confined": confined, "task": task, "cwd": self.worktree, "env": self.env})
+                           "confined": confined, "task": task, "cwd": self.worktree, "env": self.env,
+                           "interactive": interactive})
         return self._play(name, check, folder)
 
     def resume(self, role, kind, agent, pane, task, name=None, check=None, keep_open=False, ask=None, folder=None):
@@ -188,6 +192,18 @@ class FakeRunner:
             "decisions": [], "preexisting": [{"title": "old bug", "location": "x.py", "description": "d", "security": True}],
             "earlier": [{"item": i, "status": "addressed", "note": "fixed"} for i in self.earlier],
         }
+
+    def _decide(self, folder: Path, kind: str) -> None:
+        latest = max((self.run.path / "rounds").iterdir(), key=lambda p: int(p.name))
+        final = json.loads((latest / "final.json").read_text())
+        data = self.decided or {
+            "answers": [{"question": f"question {n}", "decision": d["recommendation"], "why": "as the review says",
+                         "as_recommended": True} for n, d in enumerate(final["decisions"], 1)],
+            "verdict": final["verdict"],
+        }
+        (folder / "decided.json").write_text(json.dumps(data))
+        for name, text in self.drafts.items():
+            (folder / name).write_text(text)
 
     def _verify(self, folder: Path, kind: str) -> None:
         listed = sorted((self.run.path / "rounds").glob("*/fix-findings-*.json"), key=lambda p: p.stat().st_mtime)

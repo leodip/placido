@@ -3,7 +3,7 @@ import json
 from contextlib import redirect_stdout
 from unittest import mock
 
-from placido import pr, pragents, prgh, prmenu, runlog
+from placido import decisions, pr, pragents, prcheck, prgh, prmenu, runlog
 from tests.test_pr import CONFIG, PRTestCase, git_commit, sh
 
 
@@ -714,3 +714,188 @@ final = ["lint"]
 [pr]
 fix_rounds = {rounds}
 """
+
+
+TWO = [
+    {"question": "Is the first option enough?", "recommendation": "Accept it."},
+    {"question": "Widen the guard, or narrow its promise?", "recommendation": "Widen it."},
+]
+
+
+def answer(n: int, **overrides) -> dict:
+    return {"question": f"question {n}", "decision": "narrow it", "why": "less code", "as_recommended": False,
+            **overrides}
+
+
+class DecisionsTest(MenuTestCase):
+    """The judge's open questions, which the user decides before the menu, every one."""
+
+    def final(self, rnd: pr.Round) -> dict:
+        return json.loads((rnd.folder / "final.json").read_text())
+
+    def notes(self) -> list[tuple[str, str]]:
+        return [(argv[3], argv[5]) for argv in self.fake.calls if argv[1:3] == ["notification", "show"]]
+
+    def test_every_open_question_is_put_to_the_user_before_the_menu(self):
+        rnd = self.review(decisions=TWO)
+        self.assertEqual(self.runner.problems, [])
+        self.assertEqual(self.runner.names()[-2:], ["r1-judge", "r1-decide"])
+        call = self.runner.calls[-1]
+        self.assertTrue(call["interactive"])
+        self.assertEqual(call["spec"], self.settings.roles["decide"].agent)
+        self.assertIn("pr-decide", call["task"])
+        self.assertIn("its 2 decision(s) for the maintainer", call["task"])
+        self.assertIn("decided.json", call["task"])
+        self.assertEqual([k for k in self.kinds() if k.startswith("pr.")][-3:], ["pr.judged", "pr.ready", "pr.decided"])
+        step = runlog.last_event(self.run.path, "pr.decided")["step"]
+        self.assertEqual(decisions.entries(self.run.path), [(1, step), (2, step)])
+        self.assertTrue(all(d["decided"]["as_recommended"] for d in self.final(rnd)["decisions"]))
+        self.assertIn("**Decided (as recommended):** Accept it.", (rnd.folder / "final.md").read_text())
+        text = prmenu.summary(self.ctx, rnd)
+        self.assertIn(f"Your decisions (in {decisions.path(self.run.path)}):", text)
+        self.assertIn("  1. question 1 → Accept it. (as recommended)", text)
+        self.assertNotIn("Decisions for you", text)
+        self.assertIn(("placido · pr-7: the review is ready, with decisions for you",
+                       "#7: fix-here; 2 decision(s) wait for you in the r1-decide tab; placido pr 7"), self.notes())
+
+    def test_a_review_without_open_questions_asks_nothing(self):
+        rnd = self.review()
+        self.assertNotIn("r1-decide", self.runner.names())
+        self.assertNotIn("pr.decided", self.kinds())
+        self.assertIn(("placido · pr-7: the review is ready", "#7: fix-here; placido pr 7"), self.notes())
+        self.assertEqual(decisions.entries(self.run.path), [])
+        self.assertIn("fix", self.keys(rnd))
+
+    def test_a_decision_against_the_recommendation_is_what_the_fix_and_its_check_work_from(self):
+        self.runner.decided = {"answers": [
+            answer(1, decision="Accept it.", as_recommended=True),
+            answer(2, fixes={"F1": "Narrow the doc comment to a later statement."}),
+        ], "verdict": "fix-here"}
+        self.runner.drafts = {"comment.md": "Thanks.\n\n1. Narrowed the guard's promise.\n",
+                              "merge.md": "Close each response (#7)\n\nNarrowed.\n"}
+        rnd = self.review(decisions=TWO)
+        f1 = self.final(rnd)["findings"][0]
+        self.assertEqual((f1["fix"], f1["decided_by"], f1["decision"]), ("Narrow the doc comment to a later statement.", 2, "keep"))
+        judged = runlog.last_event(self.run.path, "pr.judged")["step"]
+        self.assertEqual(json.loads((self.run.path / "steps" / judged / "final.json").read_text())["findings"][0]["fix"], "f")
+        self.assertEqual((rnd.folder / "comment.md").read_text(), "Thanks.\n\n1. Narrowed the guard's promise.\n")
+        self.assertEqual((rnd.folder / "merge.md").read_text(), "Close each response (#7)\n\nNarrowed.\n")
+        decided = runlog.last_event(self.run.path, "pr.decided")
+        self.assertEqual((decided["as_recommended"], decided["changed"], decided["dropped"], decided["added"]),
+                         ([True, False], ["F1"], [], []))
+        self.assertIn("**Fix (your decision 2):** Narrow the doc comment", (rnd.folder / "final.md").read_text())
+        text = prmenu.summary(self.ctx, rnd)
+        self.assertIn("  2. question 2 → narrow it (the recommendation was: Widen it.)", text)
+        self.assertIn("the greeting [A1, B1: all] (fix: your decision 2)", text)
+        self.assertIn("1. Narrowed the guard's promise.", text)
+        self.act("fix", rnd)
+        listed = json.loads((rnd.folder / "fix-findings-1.json").read_text())["findings"]
+        self.assertEqual(listed[0]["fix"], "Narrow the doc comment to a later statement.")
+        for name in ("r1-fix-1", "r1-verify-1"):
+            task = next(c["task"] for c in self.runner.calls if c["name"] == name)
+            self.assertIn(f"{decisions.path(self.run.path)}. Read them; where one differs from the review, the"
+                          " decision wins.", task)
+
+    def test_a_decision_can_drop_a_finding_add_work_and_send_it_back_to_the_contributor(self):
+        added = {"title": "close in the step helpers", "area": "gaps", "severity": "significant", "size": "medium",
+                 "location": "steps.go:9", "description": "each step keeps its connection", "fix": "close it first",
+                 "id": "X1"}
+        self.runner.decided = {"answers": [answer(1, drop=["F1"], add=[added]), answer(2, as_recommended=True)],
+                               "verdict": "request-changes"}
+        self.runner.drafts = {"comment.md": "Thanks.\n\n1. Please close in the step helpers.\n"}
+        rnd = self.review(decisions=TWO)
+        final = self.final(rnd)
+        self.assertEqual((final["verdict"], final["routing"]["route"], final["routing"]["judge_verdict"]),
+                         ("request-changes", "contributor", "fix-here"))
+        f1, f2 = final["findings"]
+        self.assertEqual((f1["decision"], f1["reason"]), ("drop", "Your decision 1: narrow it"))
+        self.assertEqual((f2["id"], f2["sources"], f2["agreement"], f2["decision"], f2["fix"], f2["decided_by"]),
+                         ("F2", ["decision 1"], "yours", "keep", "close it first", 1))
+        decided = runlog.last_event(self.run.path, "pr.decided")
+        self.assertEqual((decided["verdict"], decided["changed"], decided["dropped"], decided["added"]),
+                         ("request-changes", [], ["F1"], ["F2"]))
+        self.assertFalse((rnd.folder / "merge.md").exists())
+        self.assertIn("# Verdict: request-changes (yours; the judge's was fix-here)", (rnd.folder / "final.md").read_text())
+        text = prmenu.summary(self.ctx, rnd)
+        self.assertIn("Verdict: request-changes (yours; the judge's was fix-here). It greets", text)
+        self.assertIn("Fixes: the contributor, as you decided (about 10% of the pull request", text)
+        self.assertIn("F2  significant gaps        `steps.go:9` close in the step helpers [decision 1: yours]\n", text)
+        self.assertIn("F1  the greeting [A1, B1]: Your decision 1: narrow it", text)
+        self.assertEqual(self.keys(rnd), ["edit", "fix", "post", "close", "quit"])
+        self.confirms = [True]
+        self.act("post", rnd)
+        self.assertEqual(self.hub.calls[-1][:2], ("review", "request-changes"))
+
+    def test_questions_left_unanswered_are_asked_again_until_they_are_answered(self):
+        self.runner.failures["r1-decide"] = ["agent-exited"]
+        with self.assertRaisesRegex(pr.PRStop, "the decisions were not all taken .agent-exited.: placido pr 7 asks"
+                                               " them again"):
+            self.review(decisions=TWO)
+        self.assertNotIn("pr.decided", self.kinds())
+        self.assertEqual(decisions.entries(self.run.path), [])
+        pragents.review(self.ctx)
+        pragents.review(self.ctx)
+        self.assertEqual(self.runner.names().count("r1-decide"), 2)
+        self.assertEqual((self.kinds().count("pr.decided"), self.kinds().count("pr.ready")), (1, 1))
+        self.assertEqual(len(decisions.entries(self.run.path)), 2)
+
+    def test_a_later_rounds_reviewers_and_judge_are_told_what_was_decided(self):
+        self.review(decisions=TWO)
+        self.runner.final = None
+        self.push_new_head({"greet.py": "print('hi there, all')\n"}, self.head)
+        self.runner.earlier = ["F1"]
+        pragents.review(self.ctx)
+        for name in ("r2-review-a", "r2-review-b", "r2-judge"):
+            task = next(c["task"] for c in self.runner.calls if c["name"] == name)
+            self.assertIn(f"{decisions.path(self.run.path)}. Read them;", task)
+        self.assertNotIn("r2-decide", self.runner.names())
+
+    def test_the_judge_writes_each_open_question_with_its_recommendation(self):
+        with self.assertRaisesRegex(pr.PRStop, "the judge did not finish"):
+            self.review(decisions=["Accept it?"])
+        self.assertIn("decision 1 needs a non-empty question and recommendation.", self.runner.problems[0][1])
+
+    def test_check_decided(self):
+        final = {**self.runner.default_final(), "decisions": TWO}
+        folder = self.tmp / "decided"
+        folder.mkdir()
+        (folder / "comment.md").write_text("Thanks.\n")
+        (folder / "merge.md").write_text("Add a greeting (#7)\n")
+        good = {"answers": [answer(1), answer(2)], "verdict": "fix-here"}
+
+        def problems(**changes) -> list[str]:
+            data = json.loads(json.dumps(good))
+            for key, value in changes.items():
+                if key[1:].isdigit():  # a1, a2: changes to that answer
+                    data["answers"][int(key[1:]) - 1].update(value)
+                else:
+                    data[key] = value
+            (folder / "decided.json").write_text(json.dumps(data))
+            return prcheck.check_decided(folder, final)
+
+        self.assertEqual(problems(), [])
+        self.assertEqual(problems(answers=[answer(1)]), [
+            "the final review has 2 decision(s), and decided.json answers 1: one answer per decision, in the final"
+            " review's order."])
+        self.assertEqual(problems(a1={"why": " "}), ["answer 1 needs a non-empty question, decision, and why."])
+        self.assertEqual(problems(a2={"as_recommended": "yes"}), ['answer 2 needs "as_recommended": true or false.'])
+        self.assertEqual(problems(a1={"fixes": {"F9": "x"}}), ["answer 1 names 'F9', which is no kept finding (F1)."])
+        self.assertEqual(problems(a1={"fixes": {"F1": " "}}), ['answer 1: "fixes" maps a kept finding\'s id to its fix as decided.'])
+        self.assertEqual(problems(a1={"fixes": {"F1": "x"}}, a2={"drop": ["F1"]}),
+                         ["F1 is changed twice; say in one answer what becomes of it."])
+        self.assertEqual(problems(a1={"add": [{"title": "t", "area": "gaps", "severity": "huge", "size": "small",
+                                               "description": "d", "fix": "f"}]}),
+                         ["answer 1's added finding 1 has severity 'huge'; use blocking, significant, minor."])
+        self.assertEqual(problems(verdict="ship"), ["verdict 'ship': use merge, fix-here, request-changes, close."])
+        self.assertEqual(problems(verdict="merge"), ['a "merge" verdict fixes nothing, but F1 are still kept: drop'
+                                                     ' them, or keep the verdict that fixes them.'])
+        self.assertEqual(problems(a1={"drop": ["F1"]}),
+                         ['no finding is left to fix, so the verdict is "merge" or "close", not "fix-here".'])
+        self.assertEqual(problems(a1={"drop": ["F1"]}, verdict="merge"), [])
+        self.assertEqual(problems(verdict="request-changes", a1={"drop": ["F1"], "add": [
+            {"title": "t", "area": "gaps", "severity": "minor", "size": "small", "description": "d", "fix": "f"}]}), [])
+        (folder / "merge.md").write_text("A" * 73 + "\n")
+        self.assertEqual(problems(), ["the squash subject is 73 characters; keep it to 72."])
+        self.assertEqual(problems(verdict="close"), [])  # nothing is merged, so no squash message
+        (folder / "comment.md").write_text(" \n")
+        self.assertEqual(problems(verdict="close"), [f"{folder / 'comment.md'} is missing or empty."])

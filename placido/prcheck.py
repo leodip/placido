@@ -8,10 +8,16 @@ the rules: every reviewer finding settled exactly once, and the verdict followin
 The agents write JSON alone, and placido renders it for people (`render_review`,
 `render_final`): #588's agents wrote every finding twice, once in Markdown, and the
 judge's Markdown alone ran to 171 lines (decided 2026-10-16).
+
+The judge's open questions are the user's to decide, every one, before anything else
+happens to the pull request: what they decide is applied to the final review
+(`decided_final`), so the fix and its check work from it, whether or not it is what the
+judge recommended (decided 2026-10-16).
 """
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -28,6 +34,8 @@ VERDICTS = ("merge", "fix-here", "request-changes", "close")
 ROUTES = ("here", "contributor", "none")
 CHECKED = ("resolved", "unresolved", "accepted-dispute", "rejected-dispute")
 STILL_OPEN = ("unresolved", "rejected-dispute")
+ROUTE_OF = {"fix-here": "here", "request-changes": "contributor", "merge": "none", "close": "none"}
+ADDED = ("title", "area", "severity", "size", "location", "description", "fix")  # a finding a decision adds
 
 
 def load(path: Path) -> tuple[Any, str]:
@@ -204,6 +212,9 @@ def check_final(folder: Path, ids: list[str], earlier: list[str], share: float) 
     for key in ("decisions", "preexisting"):
         if not isinstance(data.get(key, []), list):
             problems.append(f'"{key}" must be a list.')
+    for n, item in enumerate(data.get("decisions", []) if isinstance(data.get("decisions", []), list) else [], 1):
+        if not isinstance(item, dict) or not texts(item, "question", "recommendation"):
+            problems.append(f"decision {n} needs a non-empty question and recommendation.")
     if not (folder / "comment.md").is_file() or not (folder / "comment.md").read_text(encoding="utf-8").strip():
         problems.append(f"{folder / 'comment.md'} is missing or empty.")
     if verdict in ("merge", "fix-here"):
@@ -234,6 +245,117 @@ def routing_problems(routing: dict[str, Any], verdict: Any, kept: list[dict[str,
     if verdict != verdict_for:
         problems.append(f'kept findings routed {wanted!r} make the verdict "{verdict_for}" (or "close").')
     return problems
+
+
+def decision_items(final: dict[str, Any]) -> list[dict[str, Any]]:
+    """The judge's open questions, each as a dict, whatever form an older judge wrote."""
+
+    return [copy.deepcopy(d) if isinstance(d, dict) else {"question": str(d), "recommendation": ""}
+            for d in final.get("decisions", [])]
+
+
+def check_decided(folder: Path, final: dict[str, Any]) -> list[str]:
+    """Problems with the user's decisions as the decide step wrote them: one answer per
+    open question, in order; what each changes naming kept findings; a verdict that
+    fits the findings left; and the drafts it brought in line."""
+
+    data, error = load(folder / "decided.json")
+    if error:
+        return [error]
+    if not isinstance(data, dict) or not isinstance(data.get("answers"), list):
+        return ['decided.json needs an "answers" list.']
+    asked = decision_items(final)
+    problems = []
+    if len(data["answers"]) != len(asked):
+        problems.append(f"the final review has {len(asked)} decision(s), and decided.json answers"
+                        f" {len(data['answers'])}: one answer per decision, in the final review's order.")
+    kept = [f["id"] for f in final["findings"] if f.get("decision") == "keep"]
+    touched: list[str] = []
+    for n, answer in enumerate(data["answers"], 1):
+        where = f"answer {n}"
+        if not isinstance(answer, dict):
+            problems.append(f"{where} is not an object.")
+            continue
+        if not texts(answer, "question", "decision", "why"):
+            problems.append(f"{where} needs a non-empty question, decision, and why.")
+        if not isinstance(answer.get("as_recommended"), bool):
+            problems.append(f'{where} needs "as_recommended": true or false.')
+        fixes, drop, add = answer.get("fixes", {}), answer.get("drop", []), answer.get("add", [])
+        if not isinstance(fixes, dict) or not all(isinstance(v, str) and v.strip() for v in fixes.values()):
+            problems.append(f'{where}: "fixes" maps a kept finding\'s id to its fix as decided.')
+            fixes = {}
+        if not isinstance(drop, list):
+            problems.append(f'{where}: "drop" is a list of kept findings\' ids.')
+            drop = []
+        for finding_id in [*fixes, *drop]:
+            if finding_id not in kept:
+                problems.append(f"{where} names {finding_id!r}, which is no kept finding ({', '.join(kept) or 'none'}).")
+            elif finding_id in touched:
+                problems.append(f"{finding_id} is changed twice; say in one answer what becomes of it.")
+            touched.append(finding_id)
+        if not isinstance(add, list):
+            problems.append(f'{where}: "add" is a list of findings.')
+            continue
+        for m, item in enumerate(add, 1):
+            problems += added_problems(item, f"{where}'s added finding {m}")
+    verdict = data.get("verdict")
+    if verdict not in VERDICTS:
+        problems.append(f"verdict {verdict!r}: use {', '.join(VERDICTS)}.")
+    if problems:
+        return problems
+    left = [f["id"] for f in decided_final(final, data)["findings"] if f["decision"] == "keep"]
+    if verdict == "merge" and left:
+        problems.append(f'a "merge" verdict fixes nothing, but {", ".join(left)} are still kept: drop them,'
+                        ' or keep the verdict that fixes them.')
+    if verdict in ("fix-here", "request-changes") and not left:
+        problems.append(f'no finding is left to fix, so the verdict is "merge" or "close", not "{verdict}".')
+    if not (folder / "comment.md").is_file() or not (folder / "comment.md").read_text(encoding="utf-8").strip():
+        problems.append(f"{folder / 'comment.md'} is missing or empty.")
+    if verdict in ("merge", "fix-here"):
+        subject = first_line(folder / "merge.md")
+        if not subject:
+            problems.append(f"{folder / 'merge.md'} needs the squash commit's subject on its first line.")
+        elif len(subject) > 72:
+            problems.append(f"the squash subject is {len(subject)} characters; keep it to 72.")
+    return problems
+
+
+def added_problems(item: Any, where: str) -> list[str]:
+    if not isinstance(item, dict):
+        return [f"{where} is not an object."]
+    problems = [] if texts(item, "title", "description", "fix") else [f"{where} needs a non-empty title, description, and fix."]
+    for key, allowed in (("area", AREAS), ("severity", SEVERITIES), ("size", SIZES)):
+        if item.get(key) not in allowed:
+            problems.append(f"{where} has {key} {item.get(key)!r}; use {', '.join(allowed)}.")
+    return problems
+
+
+def decided_final(final: dict[str, Any], decided: dict[str, Any]) -> dict[str, Any]:
+    """The final review with the user's decisions applied: each question carries its
+    decision; a finding fixed another way, dropped, or added says which decision did it;
+    and a verdict the user changed routes the fixes, keeping the judge's beside it."""
+
+    data = copy.deepcopy(final)
+    by_id = {f["id"]: f for f in data["findings"]}
+    items = decision_items(data)
+    for n, (item, answer) in enumerate(zip(items, decided["answers"]), 1):
+        item["decided"] = {key: answer[key] for key in ("question", "decision", "why", "as_recommended")}
+        because = f"Your decision {n}: {answer['decision']}"
+        for finding_id, fix in answer.get("fixes", {}).items():
+            by_id[finding_id].update(fix=fix, decided_by=n)
+        for finding_id in answer.get("drop", []):
+            by_id[finding_id].update(decision="drop", reason=because, decided_by=n)
+        for added in answer.get("add", []):
+            data["findings"].append({
+                **{key: added[key] for key in ADDED if key in added}, "id": f"F{len(data['findings']) + 1}",
+                "sources": [f"decision {n}"], "agreement": "yours", "decision": "keep", "reason": because,
+                "decided_by": n,
+            })
+    data["decisions"] = items
+    if decided["verdict"] != data["verdict"]:
+        data["routing"] = {**data["routing"], "route": ROUTE_OF[decided["verdict"]], "judge_verdict": data["verdict"]}
+        data["verdict"] = decided["verdict"]
+    return data
 
 
 def first_line(path: Path) -> str:
@@ -294,7 +416,8 @@ def _finding_lines(finding: dict[str, Any], extra: str = "") -> list[str]:
     if finding.get("evidence"):
         lines += ["", f"**Evidence:** {finding['evidence'].strip()}"]
     if finding.get("fix"):
-        lines += ["", f"**Fix:** {finding['fix'].strip()}"]
+        decided = f" (your decision {finding['decided_by']})" if finding.get("decided_by") and finding.get("decision") == "keep" else ""
+        lines += ["", f"**Fix{decided}:** {finding['fix'].strip()}"]
     if finding.get("reason"):
         lines += ["", f"**Why {'kept' if finding.get('decision') == 'keep' else 'dropped'}:** {finding['reason'].strip()}"]
     return lines + [""]
@@ -328,7 +451,8 @@ def render_final(data: dict[str, Any]) -> str:
     """The judge's final.json, for people."""
 
     routing = data.get("routing") or {}
-    lines = [f"# Verdict: {data['verdict']}", "", data.get("summary", "").strip(), ""]
+    judged = f" (yours; the judge's was {routing['judge_verdict']})" if routing.get("judge_verdict") else ""
+    lines = [f"# Verdict: {data['verdict']}{judged}", "", data.get("summary", "").strip(), ""]
     if routing.get("route") and routing["route"] != "none":
         lines += [f"Fixes go to: {routing['route']} (share {routing.get('share')}). {routing.get('estimate', '')}".strip(), ""]
     kept = [f for f in data["findings"] if f.get("decision") == "keep"]
@@ -340,11 +464,13 @@ def render_final(data: dict[str, Any]) -> str:
                 lines += _finding_lines(finding, f" · from {', '.join(finding.get('sources', []))} ({finding.get('agreement')})")
     if data.get("decisions"):
         lines += ["## Decisions for the maintainer", ""]
-        for item in data["decisions"]:
-            if isinstance(item, dict):
-                lines.append(f"- {item.get('question', '')} **Recommendation:** {item.get('recommendation', '')}")
-            else:
-                lines.append(f"- {item}")
+        for n, item in enumerate(decision_items(data), 1):
+            line = f"{n}. {item['question']} **Recommendation:** {item['recommendation']}"
+            decided = item.get("decided")
+            if decided:
+                taken = "as recommended" if decided["as_recommended"] else "not as recommended"
+                line += f" **Decided ({taken}):** {decided['decision']} **Why:** {decided['why']}"
+            lines.append(line)
         lines.append("")
     if data.get("preexisting"):
         lines += ["## Already there before this change (for the maintainer only)", ""]

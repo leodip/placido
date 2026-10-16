@@ -701,6 +701,17 @@ them are the risk, not only the change's quality.
   other finding a verdict; a fresh judge settles them, and placido checks that every
   reviewer finding is accounted for exactly once, so nothing is dropped silently. The
   judge is told which findings the cross-checks settled, and verifies only the rest.
+- **The maintainer decides every open question, before the menu.** What the judge
+  leaves to the maintainer (a design choice, a behaviour the issue did not settle,
+  scope) is not a line in the summary: the `decide` role, a conversation in its own tab,
+  puts each question with its context, its options and what each leads to, and the
+  judge's recommendation, and the maintainer answers, recommended or not. Placido
+  applies the answers to the round's final review (a finding fixed another way,
+  dropped, or added; a verdict changed), records them in the decisions file that every
+  later agent reads, and takes the drafts the role brought in line. The fix and its
+  check then work from the decided review, so nothing has to reconcile a recommendation
+  with a contrary decision. A session that ends unfinished asks again on the next
+  `placido pr`; the menu never opens with a question open.
 - **Fixes are checked before they are pushed.** A fix made here goes to the `verify`
   role, by default another vendor than the fixer's, which judges each finding's fix and
   reads the fixes for new problems; what it leaves open goes back to the fixer, up to
@@ -2260,3 +2271,12 @@ ran:
   VPS accepts, so Goiabada's `e2e` joined its host paths. The menu's editor falls back
   to nano rather than vi. Eleven mutations of the new guards were each caught. 649
   tests pass.
+- From #594, with the user: its judge left two questions, whether the contributor's
+  fix was enough and how to fix F2, and only the summary named them, with the fix
+  already written for the recommendations. "I won't be able to pick the recommendations
+  always", and deciding them is "certain, not optional", so they became a step of the
+  review: after the judge, before the menu, the `decide` role (as `judge` by default)
+  takes the user through each, and placido applies the answers to the final review, the
+  drafts, and the decisions file. The judge must now write each question with its
+  recommendation, and the reviewers, the judge, the fixer, and the check are all told
+  the decisions win over the review.

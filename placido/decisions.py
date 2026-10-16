@@ -2,9 +2,11 @@
 
 When an implementer or a fixer cannot go on without the user, it asks in its own
 tab (a result starting `Blocked:`), the user answers there, and the agent records
-the decision in `decisions.md` in the issue's folder before finishing. The sealed
-agreement is never edited: later slices and the reviewer read both, and a decision
-takes precedence over the agreement where they differ.
+the decision in `decisions.md` in the issue's folder before finishing. A pull
+request's review puts its open questions to the user in a step of their own, and
+placido records the answers. The sealed agreement is never edited: later slices and
+the reviewer read both, and a decision takes precedence over the agreement where
+they differ.
 
 Each entry is a level-2 heading naming the step that asked, then the question,
 the decision, and why:
@@ -79,13 +81,14 @@ def record(run_dir: Path, step: str, question: str, decision: str, why: str) -> 
     return number
 
 
-def prompt_line(run_dir: Path) -> str:
-    """How every implement, fix, and review prompt points at the decisions."""
+def prompt_line(run_dir: Path, over: str = "the agreement") -> str:
+    """How every implement, fix, and review prompt points at the decisions. over: what
+    a decision wins over, such as a pull request's final review."""
 
     file = path(run_dir)
     if file.is_file() and entries(run_dir):
         return (
             f"- **Decisions made with the user:** {file}. Read them; where one differs from"
-            " the agreement, the decision wins."
+            f" {over}, the decision wins."
         )
     return f"- **Decisions made with the user:** none yet ({file} when there are)."

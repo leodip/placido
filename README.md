@@ -18,7 +18,8 @@ placido close 439      after you merge: teardown, worktree removed, main pulled,
 
 It also reviews pull requests other people send: `placido pr 602` has a Claude and a
 Codex reviewer each review the pull request on its own, cross-check each other, and a
-judge settle both into one review, with a drafted comment for the contributor. Nothing
+judge settle both into one review, with a drafted comment for the contributor. What
+the judge leaves to you, you decide in a conversation, question by question. Nothing
 is posted, pushed, or merged until you pick it (see
 [Review a contributor's pull request](#review-a-contributors-pull-request)).
 
@@ -187,6 +188,7 @@ Each role has an agent, model, and effort, and a fallback chain:
 | `scan` (`placido pr`, confined) | claude, Opus, high |
 | `judge` (`placido pr`) | claude, Opus, high |
 | `verify` (`placido pr`, checks the fixes) | as `review` |
+| `decide` (`placido pr`, takes you through the review's open questions) | as `judge` |
 | fallback chain | claude Opus at max, then pi with DeepSeek through OpenRouter; an entry with the role's own model is skipped after a refusal |
 
 Change any of them per project:
@@ -383,6 +385,16 @@ stack), unattended until it has something to show you:
    and the squash message. Fixes estimated at `contributor_share` of the pull request
    or more go back to the contributor; smaller ones you make here. The agents write
    JSON, and placido renders it (`review.md`, `final.md`).
+
+7. **Your decisions.** What the judge left to you, such as a design choice the
+   contributor made or scope the issue did not settle, you decide before anything
+   else, every question: the `decide` role takes you through them in its own tab, one
+   at a time, with the context, the options and what each leads to, and the judge's
+   recommendation. Answer as you see fit. Placido applies your answers to the final
+   review (a finding fixed another way, dropped, or added, or a different verdict),
+   records them in `decisions.md`, which every later agent reads, and takes the
+   comment and squash message the role brought in line. Stop halfway, and the next
+   `placido pr` asks again.
 
 Then placido prints the review and a menu. Nothing happens that you do not pick, and
 pushing, merging, and closing ask again: edit the comment or the squash message (in

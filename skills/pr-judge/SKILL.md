@@ -41,7 +41,12 @@ this change. They go to the maintainer only, never into the comment.
 
 List under `decisions` what is the maintainer's call rather than a defect: a design
 choice the contributor made and recorded, a behaviour change the issue did not settle,
-scope.
+scope. Each is a question with the options in it, and your recommendation. The
+maintainer decides every one before anything else happens, and may decide otherwise:
+their answer can fix a finding another way, drop it, add work, or change the verdict,
+and the drafts are brought in line with it. So write the findings, the verdict, and the
+drafts for your recommendation, and keep each question to what is truly theirs. What
+the decisions file your prompt names settles already is decided: do not ask it again.
 
 A branch that conflicts with the base, or misses what the base has since, is brought up
 to date by merging the base into it, never by a rebase: the contributor's branch is

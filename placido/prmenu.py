@@ -128,15 +128,16 @@ def summary(ctx: Context, rnd: Round) -> str:
         f"{pull.url} · @{pull.author} · +{pull.additions} −{pull.deletions} in {pull.files} files"
         f" · round {rnd.number}, head {rnd.head[:12]}",
         "",
-        f"Verdict: {data['verdict']}. {data['summary']}",
+        f"Verdict: {data['verdict']}{_yours(data)}. {data['summary']}",
     ]
     routing = data["routing"]
     if routing["route"] != "none":
         whom = "the contributor" if routing["route"] == "contributor" else "here, by you"
-        lines.append(
-            f"Fixes: {whom} (about {routing['share']:.0%} of the pull request; the line is"
-            f" {ctx.settings.pr.contributor_share:.0%}). {routing.get('estimate', '')}".rstrip()
-        )
+        decided = ", as you decided" if routing.get("judge_verdict") else ""
+        share = routing.get("share")
+        measured = (f" (about {share:.0%} of the pull request; the line is {ctx.settings.pr.contributor_share:.0%})."
+                    f" {routing.get('estimate', '')}" if isinstance(share, (int, float)) else ".")
+        lines.append(f"Fixes: {whom}{decided}{measured}".rstrip())
     scanned = pr.done(run_dir, "pr.scan", rnd.number) or {}
     scan_text = "clear" if scanned.get("verdict") == "clear" else f"{scanned.get('concerns', '?')} concern(s), accepted by you"
     lines.append(f"Scan: {scan_text}")
@@ -158,9 +159,10 @@ def summary(ctx: Context, rnd: Round) -> str:
         lines += ["", "Findings:"]
         for f in kept:
             where = f" `{f['location']}`" if f.get("location") else ""
+            decided = f" (fix: your decision {f['decided_by']})" if f.get("decided_by") and f["agreement"] != "yours" else ""
             lines.append(
                 f"  {f['id']}  {f['severity']:<11} {f['area']:<11}{where} {f['title']}"
-                f" [{', '.join(f['sources'])}: {f['agreement']}]"
+                f" [{', '.join(f['sources'])}: {f['agreement']}]{decided}"
             )
     if dropped:
         lines += ["", "Dropped:"]
@@ -168,10 +170,16 @@ def summary(ctx: Context, rnd: Round) -> str:
     if data.get("earlier"):
         lines += ["", "The round before:"]
         lines += [f"  {e['item']}: {e['status']}" + (f" ({e['note']})" if e.get("note") else "") for e in data["earlier"]]
-    if data.get("decisions"):
+    asked = prcheck.decision_items(data)
+    if asked and all(item.get("decided") for item in asked):
+        lines += ["", f"Your decisions (in {decisions.path(run_dir)}):"]
+        for n, item in enumerate(asked, 1):
+            taken = item["decided"]
+            how = "as recommended" if taken["as_recommended"] else f"the recommendation was: {item['recommendation']}"
+            lines.append(f"  {n}. {taken['question']} → {taken['decision']} ({how})")
+    elif asked:
         lines += ["", "Decisions for you:"]
-        lines += [f"  - {d.get('question', d)} → {d.get('recommendation', '')}" if isinstance(d, dict) else f"  - {d}"
-                  for d in data["decisions"]]
+        lines += [f"  {n}. {item['question']} → {item['recommendation']}" for n, item in enumerate(asked, 1)]
     if data.get("preexisting"):
         lines += ["", "Found outside this change (for you only, never in the comment):"]
         for item in data["preexisting"]:
@@ -206,6 +214,11 @@ def summary(ctx: Context, rnd: Round) -> str:
         *comment_block(rnd),
     ]
     return "\n".join(lines) + "\n"
+
+
+def _yours(data: dict[str, Any]) -> str:
+    judged = data["routing"].get("judge_verdict")
+    return f" (yours; the judge's was {judged})" if judged else ""
 
 
 def comment_block(rnd: Round) -> list[str]:
@@ -863,7 +876,7 @@ def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path, resumed: bo
     lines += [
         f"- **Gates:** {gates}. Placido runs them after you and commits only when they pass, so"
         " run only the narrow tests for what you change.",
-        decisions.prompt_line(ctx.run.path),
+        decisions.prompt_line(ctx.run.path, pragents.OVER),
         f"- **Write:** {folder / 'resolutions.json'} and the result file.",
     ]
     menu_ = config.command_menu(ctx.settings)
@@ -889,6 +902,7 @@ def verify_prompt(ctx: Context, rnd: Round, listed: Path, fix_folder: Path, befo
         f"- **The fixer's answers:** {fix_folder / 'resolutions.json'}",
         f"- **The fixes:** {fixes}. The worktree is at {head[:12]}; leave it so, with nothing"
         " changed or added: placido checks.",
+        decisions.prompt_line(ctx.run.path, pragents.OVER),
         "- **Mutations:** `placido mutate <file> --replace \"<old>\" --with \"<new>\" -- <narrow test"
         " command>`, which restores the file however it ends.",
         f"- **Write:** {folder / 'verify.json'} (new problems as V1, V2, …).",

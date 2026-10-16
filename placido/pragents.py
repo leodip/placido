@@ -10,6 +10,13 @@ cross-checks settled already so it
 verifies only the rest. Each moves down its fallback chain after a refusal or a quota,
 and each writes JSON that placido/prcheck.py holds to its form before the next one
 reads it, and renders for people.
+
+What the judge leaves to the user, its open questions, the user decides before the
+menu, every one, in a conversation with the `decide` role, which presents each with its
+context, its options, and the judge's recommendation. The answers, whatever they are,
+are applied to the final review and recorded as decisions, so the fix and its check
+work from them, and the drafts are brought in line (decided 2026-10-16, after #594's
+review left two questions that only the menu's summary mentioned).
 """
 
 from __future__ import annotations
@@ -19,7 +26,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import config, fallback, prcheck, status
+from placido import config, decisions, fallback, prcheck, status
 from placido.pr import (
     Context, Lane, PRStop, Round, close_agents, close_orphans, current_round, done, gates, host_changes,
     lane_for, letter, notify, open_agents, primary_lane, release_lanes, round_by_number, settle, setup, together,
@@ -28,6 +35,7 @@ from placido.pr import (
 from placido.step import CONFINABLE, Step, StepResult
 
 SKILLS = Path(__file__).resolve().parent.parent / "skills"
+OVER = "the review"  # what a decision the user made wins over, in every prompt
 
 
 # Said first in every prompt. The code, the description, the comments, the commit
@@ -289,6 +297,7 @@ def reviewer_prompt(ctx: Context, rnd: Round, code: str, folder: Path, lane: Lan
         "",
         *_paths_block(ctx, rnd, lane),
         notes_line(rnd, "review", "pr"),
+        decisions.prompt_line(ctx.run.path, OVER),
     ]
     if earlier:
         previous = round_by_number(ctx.run.path, rnd.previous).folder
@@ -471,6 +480,7 @@ def judge_prompt(ctx: Context, rnd: Round, folder: Path) -> str:
         "",
         *_paths_block(ctx, rnd),
         notes_line(rnd, "pr"),
+        decisions.prompt_line(ctx.run.path, OVER),
     ]
     for code, _ in reviewers(ctx):
         reviewed = done(ctx.run.path, "pr.reviewed", rnd.number, letter=code)
@@ -509,6 +519,91 @@ def judge_prompt(ctx: Context, rnd: Round, folder: Path) -> str:
     return "\n".join(lines) + "\n\n" + (menu or "The project defines no commands.\n")
 
 
+# ---- the user's decisions ------------------------------------------------------------------------
+
+
+def open_decisions(ctx: Context, rnd: Round) -> int:
+    """How many of the judge's questions still wait for the user."""
+
+    if done(ctx.run.path, "pr.decided", rnd.number):
+        return 0
+    final = json.loads((rnd.folder / "final.json").read_text(encoding="utf-8"))
+    return len(prcheck.decision_items(final))
+
+
+def decide(ctx: Context, rnd: Round) -> None:
+    """The user decides each of the judge's open questions, in a conversation with the
+    `decide` role; the answers are applied to the final review and recorded as decisions,
+    and the drafts the role brought in line take the round's place."""
+
+    run = ctx.run
+    if not open_decisions(ctx, rnd):
+        return
+    final = json.loads((rnd.folder / "final.json").read_text(encoding="utf-8"))
+    chain = _chain(ctx, "decide", fallback.entries(ctx.settings, "decide"))
+    name = f"r{rnd.number}-decide"
+
+    def start(spec: config.AgentSpec) -> StepResult:
+        folder = run.new_step_dir(name)
+        for file in ("comment.md", "merge.md"):  # the drafts, which the role brings in line
+            if (rnd.folder / file).is_file():
+                shutil.copyfile(rnd.folder / file, folder / file)
+        return ctx.runner(
+            "decide", spec, decide_prompt(ctx, rnd, folder, final), name=name, folder=folder, interactive=True,
+            check=lambda r: prcheck.check_decided(r.parent, final),
+        )
+
+    step = attempt(ctx, chain, start)
+    if step.outcome != "success":
+        raise PRStop(f"the decisions were not all taken ({step.outcome}): placido pr {ctx.pr.number} asks them"
+                     f" again; see {step.path}")
+    decided = json.loads((step.path / "decided.json").read_text(encoding="utf-8"))
+    data = prcheck.decided_final(final, decided)
+    (rnd.folder / "final.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    (rnd.folder / "final.md").write_text(prcheck.render_final(data), encoding="utf-8")
+    shutil.copyfile(step.path / "comment.md", rnd.folder / "comment.md")
+    if data["verdict"] in ("merge", "fix-here"):
+        shutil.copyfile(step.path / "merge.md", rnd.folder / "merge.md")
+    else:
+        (rnd.folder / "merge.md").unlink(missing_ok=True)  # nothing is merged as it stands
+    for answer in decided["answers"]:
+        decisions.record(run.path, step.path.name, answer["question"], answer["decision"], answer["why"])
+    before = {f["id"] for f in final["findings"]}
+    by_decision = [f for f in data["findings"] if f.get("decided_by")]
+    run.event(
+        "pr.decided", round=rnd.number, step=step.path.name, verdict=data["verdict"],
+        as_recommended=[a["as_recommended"] for a in decided["answers"]],
+        changed=[f["id"] for f in by_decision if f["decision"] == "keep" and f["id"] in before],
+        dropped=[f["id"] for f in by_decision if f["decision"] == "drop"],
+        added=[f["id"] for f in by_decision if f["id"] not in before],
+    )
+    settle(ctx, rnd, "the decisions")
+
+
+def decide_prompt(ctx: Context, rnd: Round, folder: Path, final: dict[str, Any]) -> str:
+    count = len(prcheck.decision_items(final))
+    lines = [
+        f"# The open decisions of the review of pull request #{ctx.pr.number}",
+        "",
+        FRAMING,
+        "",
+        f"Follow the placido pr-decide skill in {SKILLS / 'pr-decide' / 'SKILL.md'}. The user is here, in"
+        " this tab: take them through the decisions now.",
+        "",
+        *_paths_block(ctx, rnd),
+        notes_line(rnd, "pr"),
+        f"- **The final review:** {rnd.folder / 'final.md'} ({rnd.folder / 'final.json'}); its {count}"
+        f" decision(s) for the maintainer are yours to put to the user, in order.",
+        f"- **The drafts:** {folder / 'comment.md'}"
+        + (f" and {folder / 'merge.md'}" if (folder / "merge.md").is_file() else "")
+        + ", copies of the round's: bring these in line with what the user decides.",
+        decisions.prompt_line(ctx.run.path, OVER),
+        f"- **Write:** {folder / 'decided.json'}, the drafts, and the result file.",
+    ]
+    menu = config.command_menu(ctx.settings)
+    return "\n".join(lines) + "\n\n" + (menu or "The project defines no commands.\n")
+
+
 # ---- the whole review -----------------------------------------------------------------------------
 
 
@@ -527,6 +622,10 @@ def review(ctx: Context) -> Round:
     if not done(ctx.run.path, "pr.ready", rnd.number):
         ctx.run.event("pr.ready", round=rnd.number)
         verdict = done(ctx.run.path, "pr.judged", rnd.number) or {}
-        notify(ctx, "the review is ready", f"#{ctx.pr.number}: {verdict.get('verdict', '?')}; placido pr {ctx.pr.number}")
+        count = open_decisions(ctx, rnd)
+        waiting = f"; {count} decision(s) wait for you in the r{rnd.number}-decide tab" if count else ""
+        notify(ctx, "the review is ready" + (", with decisions for you" if count else ""),
+               f"#{ctx.pr.number}: {verdict.get('verdict', '?')}{waiting}; placido pr {ctx.pr.number}")
+    decide(ctx, rnd)
     status.show(ctx.run.path, status.text(status.YOU, f"review ready: placido pr {ctx.pr.number}"))
     return rnd
