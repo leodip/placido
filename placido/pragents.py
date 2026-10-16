@@ -1,11 +1,14 @@
 """The agents of `placido pr`, and the order they run in.
 
 First the scan, confined, before anything of the pull request runs (a concern waits
-for the user); then, once placido's own checks and commands have run (placido/pr.py),
-each reviewer in `[pr] reviewers` on its own, one after the other; each, resumed, then
-checks the others' findings; and a judge settles them into the final review. Each
-moves down its fallback chain after a refusal or a quota, and each writes files that
-placido/prcheck.py holds to their form before the next one reads them.
+for the user); while it reads, the lanes' stacks come up, when the pull request
+changes no host path. Then, once placido's own gates have run (placido/pr.py), every
+reviewer in `[pr] reviewers` on its own, all at once in lanes of their own; each,
+resumed, then checks the others' findings, again all at once; and a judge settles them
+into the final review, told which findings the cross-checks settled already so it
+verifies only the rest. Each moves down its fallback chain after a refusal or a quota,
+and each writes JSON that placido/prcheck.py holds to its form before the next one
+reads it, and renders for people.
 """
 
 from __future__ import annotations
@@ -15,12 +18,13 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import config, fallback, prcheck, runlog, status
+from placido import config, fallback, prcheck, status
 from placido.pr import (
-    Context, PRStop, Round, close_agents, done, gates, notify, open_agents, round_by_number, settle,
-    setup, trust, write_data, current_round, letter,
+    Context, Lane, PRStop, Round, close_agents, close_orphans, current_round, done, gates, host_changes,
+    lane_for, letter, notify, open_agents, primary_lane, round_by_number, settle, setup, together, trust,
+    write_data,
 )
-from placido.step import CONFINABLE, StepResult
+from placido.step import CONFINABLE, Step, StepResult
 
 SKILLS = Path(__file__).resolve().parent.parent / "skills"
 
@@ -43,11 +47,12 @@ def notes_line(rnd: Round, *names: str) -> str:
     return f"- **Project notes:** {', '.join(found) if found else 'none'}"
 
 
-def _paths_block(ctx: Context, rnd: Round) -> list[str]:
+def _paths_block(ctx: Context, rnd: Round, lane: Lane | None = None) -> list[str]:
+    wt = (lane or primary_lane(ctx)).worktree
     lines = [
         f"- **The pull request:** {rnd.folder / 'pr.md'}",
         f"- **The change:** {rnd.folder / 'diff.patch'}, with {rnd.folder / 'files.txt'} and"
-        f" {rnd.folder / 'commits.txt'}. The worktree, {ctx.worktree}, is at its head {rnd.head[:12]};"
+        f" {rnd.folder / 'commits.txt'}. Your worktree, {wt}, is at its head {rnd.head[:12]};"
         f" it starts from {rnd.base[:12]}.",
     ]
     if rnd.previous is not None:
@@ -60,8 +65,11 @@ def _paths_block(ctx: Context, rnd: Round) -> list[str]:
         f"- **Gates placido ran on it:** {rnd.folder / 'gates.md'}",
         "- **The project's standards, as of the base:** read `AGENTS.md` or `CLAUDE.md`,"
         " `CONTRIBUTING.md`, and the like with"
-        f" `git -C {ctx.worktree} show {rnd.base[:12]}:<file>`; the pull request's own copies are"
+        f" `git -C {wt} show {rnd.base[:12]}:<file>`; the pull request's own copies are"
         " part of the change under review.",
+        "- **This machine:** run the project's commands below, which work in this pull request's"
+        " isolated environment, and nothing that installs packages or builds outside them: the"
+        " pull request's code is someone else's.",
     ]
     return lines
 
@@ -70,22 +78,23 @@ def _round_start(event: dict[str, Any]) -> bool:
     return event.get("event") == "pr.round"
 
 
-def _next(run: runlog.Run, name: str) -> Path:
-    from placido.step import next_step_number
-
-    return run.path / "steps" / f"{next_step_number(run):02d}-{name}"
+def parallel(ctx: Context) -> bool:
+    return ctx.settings.pr.parallel and ctx.make_runner is not None
 
 
-def attempt(ctx: Context, chain: fallback.Chain, start: Callable[[config.AgentSpec], StepResult]) -> StepResult:
+def attempt(
+    ctx: Context, chain: fallback.Chain, start: Callable[[config.AgentSpec], StepResult], runner: Step | None = None,
+) -> StepResult:
     """A step on the chain's agent, moving down the chain after a refusal or a quota,
     and once more in a fresh session after its context overflowed."""
 
+    runner = runner or ctx.runner
     step = start(chain.current)
     overflowed = False
     while step.outcome != "success":
         message = step.failure.message if step.failure else ""
         if step.agent:
-            ctx.runner.close_agent(step.agent, step.pane, step.path, chain.current.agent)
+            runner.close_agent(step.agent, step.pane, step.path, chain.current.agent)
         if step.outcome in fallback.SWITCH:
             if not chain.switch(step.outcome, message, step=step.path.name):
                 break
@@ -100,29 +109,62 @@ def attempt(ctx: Context, chain: fallback.Chain, start: Callable[[config.AgentSp
     return step
 
 
-def scan(ctx: Context, rnd: Round) -> None:
+def _chain(ctx: Context, role: str, entries: tuple[config.AgentSpec, ...]) -> fallback.Chain:
+    return fallback.Chain(ctx.run, role, entries, lambda title, body: notify(ctx, title, body), since=_round_start)
+
+
+# ---- the scan, and the stacks while it reads --------------------------------------------
+
+
+def prepare(ctx: Context, rnd: Round) -> None:
+    """The scan, the host paths, and every lane's stack. When the pull request changes no
+    host path, the stacks come up while the scan reads, since setup then runs only what
+    the base had (decided 2026-10-16); otherwise the scan and the user's approval of the
+    change come first."""
+
+    lanes = {str(lane.worktree): lane for lane in (lane_for(ctx, rnd, code) for code, _ in reviewers(ctx))}
+    setups = [lambda lane=lane: setup(ctx, rnd, lane) for lane in lanes.values()]
+    if not host_changes(ctx, rnd):
+        together([lambda: run_scan(ctx, rnd), *setups])
+        decide_scan(ctx, rnd)
+        trust(ctx, rnd)
+        return
+    run_scan(ctx, rnd)
+    decide_scan(ctx, rnd)
+    trust(ctx, rnd)
+    together(setups)
+
+
+def run_scan(ctx: Context, rnd: Round) -> None:
+    run = ctx.run
+    if done(run.path, "pr.scan", rnd.number):
+        return
+    chain = _chain(ctx, "scan", tuple(s for s in fallback.entries(ctx.settings, "scan") if s.agent in CONFINABLE))
+    if not chain.entries:
+        raise PRStop("roles.scan and its fallbacks name no agent that can run confined (claude or codex)")
+
+    name = f"r{rnd.number}-scan"
+
+    def start(spec: config.AgentSpec) -> StepResult:
+        folder = run.new_step_dir(name)
+        return ctx.runner(
+            "pr-scan", spec, scan_prompt(ctx, rnd, folder), name=name, folder=folder,
+            check=lambda r: prcheck.check_scan(r.parent / "scan.json"), confined=(ctx.worktree, rnd.folder, SKILLS),
+        )
+
+    step = attempt(ctx, chain, start)
+    if step.outcome != "success":
+        raise PRStop(f"the scan did not finish ({step.outcome}); see {step.path}")
+    data = json.loads((step.path / "scan.json").read_text(encoding="utf-8"))
+    run.event("pr.scan", round=rnd.number, verdict=data["verdict"], concerns=len(data["concerns"]), step=step.path.name)
+
+
+def decide_scan(ctx: Context, rnd: Round) -> None:
+    """Ask the user about the scan's concerns, if it has any and they have not said."""
+
     run = ctx.run
     found = done(run.path, "pr.scan", rnd.number)
-    if found is None:
-        chain = fallback.Chain(
-            run, "scan", tuple(s for s in fallback.entries(ctx.settings, "scan") if s.agent in CONFINABLE),
-            lambda title, body: notify(ctx, title, body), since=_round_start,
-        )
-        if not chain.entries:
-            raise PRStop("roles.scan and its fallbacks name no agent that can run confined (claude or codex)")
-        step = attempt(ctx, chain, lambda spec: ctx.runner(
-            "pr-scan", spec, scan_prompt(ctx, rnd, _next(run, f"r{rnd.number}-scan")),
-            name=f"r{rnd.number}-scan", check=lambda r: prcheck.check_scan(r.parent / "scan.json"),
-            confined=(ctx.worktree, rnd.folder, SKILLS),
-        ))
-        if step.outcome != "success":
-            raise PRStop(f"the scan did not finish ({step.outcome}); see {step.path}")
-        data = json.loads((step.path / "scan.json").read_text(encoding="utf-8"))
-        found = run.event(
-            "pr.scan", round=rnd.number, verdict=data["verdict"], concerns=len(data["concerns"]),
-            step=step.path.name,
-        )
-    if found["verdict"] == "clear" or done(run.path, "pr.scan_accepted", rnd.number):
+    if found is None or found["verdict"] == "clear" or done(run.path, "pr.scan_accepted", rnd.number):
         return
     folder = run.path / "steps" / found["step"]
     data = json.loads((folder / "scan.json").read_text(encoding="utf-8"))
@@ -133,7 +175,7 @@ def scan(ctx: Context, rnd: Round) -> None:
     print(f"Details: {folder / 'scan.md'}")
     status.show(run.path, status.text(status.YOU, f"scan concerns: placido pr {ctx.pr.number}"))
     notify(ctx, "the scan has concerns", f"{len(data['concerns'])} before anything of #{ctx.pr.number} runs")
-    answer = ctx.ask("Go on, running its setup, its tests, and reviewer agents on it?")
+    answer = ctx.ask("Go on, running its tests and reviewer agents on it?")
     if not answer:
         run.event("pr.stopped", round=rnd.number, reason="scan concerns")
         raise PRStop(
@@ -164,37 +206,53 @@ def scan_prompt(ctx: Context, rnd: Round, folder: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---- the reviews ------------------------------------------------------------------------------
+
+
 def reviewers(ctx: Context) -> list[tuple[str, config.Role]]:
     return [(letter(n), role) for n, role in enumerate(ctx.settings.pr.reviewers)]
 
 
 def reviews(ctx: Context, rnd: Round) -> None:
+    jobs = [
+        lambda code=code, reviewer=reviewer: review_one(ctx, rnd, code, reviewer)
+        for code, reviewer in reviewers(ctx) if not done(ctx.run.path, "pr.reviewed", rnd.number, letter=code)
+    ]
+    if parallel(ctx):
+        together(jobs)
+    else:
+        for job in jobs:
+            job()
+
+
+def review_one(ctx: Context, rnd: Round, code: str, reviewer: config.Role) -> None:
     run = ctx.run
-    for code, reviewer in reviewers(ctx):
-        if done(run.path, "pr.reviewed", rnd.number, letter=code):
-            continue
-        chain = fallback.Chain(
-            run, f"pr-review-{code.lower()}", (reviewer.agent, *reviewer.fallback),
-            lambda title, body: notify(ctx, title, body), since=_round_start,
-        )
-        name = f"r{rnd.number}-review-{code.lower()}"
-        earlier = earlier_ids(ctx, rnd)
-        step = attempt(ctx, chain, lambda spec: ctx.runner(
-            "pr-review", spec, reviewer_prompt(ctx, rnd, code, spec, _next(run, name)), name=name,
+    lane = lane_for(ctx, rnd, code)
+    chain = _chain(ctx, f"pr-review-{code.lower()}", (reviewer.agent, *reviewer.fallback))
+    earlier = earlier_ids(ctx, rnd)
+    name = f"r{rnd.number}-review-{code.lower()}"
+
+    def start(spec: config.AgentSpec) -> StepResult:
+        folder = run.new_step_dir(name)
+        return lane.runner(
+            "pr-review", spec, reviewer_prompt(ctx, rnd, code, folder, lane), name=name, folder=folder,
             check=lambda r: prcheck.check_review(r.parent / "findings.json", code, earlier), keep_open=True,
-        ))
-        if step.outcome != "success":
-            raise PRStop(f"reviewer {code} did not finish ({step.outcome}); see {step.path}")
-        spec = chain.current
-        data = json.loads((step.path / "findings.json").read_text(encoding="utf-8"))
-        run.event(
-            "pr.reviewed", round=rnd.number, letter=code, step=step.path.name, agent=spec.agent,
-            model=spec.model, effort=spec.effort, configured=reviewer.agent == spec,
-            findings=len(data["findings"]),
         )
-        run.event("pr.kept_open", round=rnd.number, letter=code, step=step.path.name, name=step.agent,
-                  pane=step.pane, kind=spec.agent)
-        settle(ctx, rnd, f"reviewer {code}")
+
+    step = attempt(ctx, chain, start, lane.runner)
+    if step.outcome != "success":
+        raise PRStop(f"reviewer {code} did not finish ({step.outcome}); see {step.path}")
+    spec = chain.current
+    data = json.loads((step.path / "findings.json").read_text(encoding="utf-8"))
+    (step.path / "review.md").write_text(prcheck.render_review(data, code), encoding="utf-8")
+    run.event(
+        "pr.reviewed", round=rnd.number, letter=code, step=step.path.name, agent=spec.agent,
+        model=spec.model, effort=spec.effort, configured=reviewer.agent == spec,
+        findings=len(data["findings"]), lane=None if lane.primary else lane.code,
+    )
+    run.event("pr.kept_open", round=rnd.number, letter=code, step=step.path.name, name=step.agent,
+              pane=step.pane, kind=spec.agent)
+    settle(ctx, rnd, f"reviewer {code}", lane)
 
 
 def review_folder(ctx: Context, rnd: Round, code: str) -> Path:
@@ -215,7 +273,7 @@ def earlier_ids(ctx: Context, rnd: Round) -> list[str]:
     return [f["id"] for f in data.get("findings", []) if isinstance(f, dict) and f.get("decision") == "keep"]
 
 
-def reviewer_prompt(ctx: Context, rnd: Round, code: str, spec: config.AgentSpec, folder: Path) -> str:
+def reviewer_prompt(ctx: Context, rnd: Round, code: str, folder: Path, lane: Lane | None = None) -> str:
     total = len(ctx.settings.pr.reviewers)
     earlier = earlier_ids(ctx, rnd)
     lines = [
@@ -225,13 +283,13 @@ def reviewer_prompt(ctx: Context, rnd: Round, code: str, spec: config.AgentSpec,
         "",
         f"Follow the placido pr-review skill in {SKILLS / 'pr-review' / 'SKILL.md'}: its review section.",
         "",
-        *_paths_block(ctx, rnd),
+        *_paths_block(ctx, rnd, lane),
         notes_line(rnd, "review", "pr"),
     ]
     if earlier:
         previous = round_by_number(ctx.run.path, rnd.previous).folder
         lines.append(
-            f"- **The round before:** {previous / 'final.md'} and {previous / 'final.json'}; say for each"
+            f"- **The round before:** {previous / 'final.json'}; say for each"
             f" of its kept findings whether this head addresses it: {', '.join(earlier)}."
         )
     lines += [
@@ -239,50 +297,69 @@ def reviewer_prompt(ctx: Context, rnd: Round, code: str, spec: config.AgentSpec,
         " command>`, which restores the file however it ends.",
         "- **The worktree:** leave it as you found it, at its head, with nothing changed or added:"
         " placido checks, and puts back and records anything left.",
-        f"- **Write:** {folder / 'review.md'} and {folder / 'findings.json'} (ids {code}1, {code}2, …).",
+        f"- **Write:** {folder / 'findings.json'} (ids {code}1, {code}2, …).",
     ]
     menu = config.command_menu(ctx.settings)
     return "\n".join(lines) + "\n\n" + (menu or "The project defines no commands.\n")
 
 
-def crosscheck(ctx: Context, rnd: Round) -> None:
-    """Each reviewer, resumed, judges the others' findings; a fresh session takes over a
-    reviewer whose own cannot go on."""
+# ---- the cross-checks --------------------------------------------------------------------------
 
-    run = ctx.run
+
+def crosscheck(ctx: Context, rnd: Round) -> None:
+    """Each reviewer, resumed, judges the others' findings, all at once; a fresh session
+    takes over a reviewer whose own cannot go on."""
+
     codes = [code for code, _ in reviewers(ctx)]
     if len(codes) < 2:
         close_agents(ctx)
         return
-    for code, reviewer in reviewers(ctx):
-        if done(run.path, "pr.crosschecked", rnd.number, letter=code):
-            continue
-        others = {other: _ids(review_folder(ctx, rnd, other)) for other in codes if other != code}
-        own = _ids(review_folder(ctx, rnd, code))
-        name = f"r{rnd.number}-crosscheck-{code.lower()}"
-        check = lambda r, others=others, own=own: prcheck.check_crosscheck(  # noqa: E731
-            r.parent / "crosscheck.json", [i for ids in others.values() for i in ids], own,
-        )
-        kept = next((a for a in open_agents(run.path) if a.get("round") == rnd.number and a.get("letter") == code), None)
-        step = None
-        if kept:
-            task = crosscheck_prompt(ctx, rnd, code, others, _next(run, name), fresh=False)
-            step = ctx.runner.resume("pr-review", kept["kind"], kept["name"], kept["pane"], task, name=name, check=check)
-            run.event("pr.agent_closed", name=kept["name"])
-        if step is None or step.outcome != "success":
-            chain = fallback.Chain(
-                run, f"pr-review-{code.lower()}", (reviewer.agent, *reviewer.fallback),
-                lambda title, body: notify(ctx, title, body), since=_round_start,
-            )
-            step = attempt(ctx, chain, lambda spec: ctx.runner(
-                "pr-review", spec, crosscheck_prompt(ctx, rnd, code, others, _next(run, name), fresh=True),
-                name=name, check=check,
-            ))
-        if step.outcome != "success":
-            raise PRStop(f"reviewer {code}'s cross-check did not finish ({step.outcome}); see {step.path}")
-        run.event("pr.crosschecked", round=rnd.number, letter=code, step=step.path.name)
-        settle(ctx, rnd, f"reviewer {code}'s cross-check")
+    jobs = [
+        lambda code=code, reviewer=reviewer: crosscheck_one(ctx, rnd, code, reviewer, codes)
+        for code, reviewer in reviewers(ctx) if not done(ctx.run.path, "pr.crosschecked", rnd.number, letter=code)
+    ]
+    if parallel(ctx):
+        together(jobs)
+    else:
+        for job in jobs:
+            job()
     close_agents(ctx)
+
+
+def crosscheck_one(ctx: Context, rnd: Round, code: str, reviewer: config.Role, codes: list[str]) -> None:
+    run = ctx.run
+    lane = lane_for(ctx, rnd, code)
+    others = {other: _ids(review_folder(ctx, rnd, other)) for other in codes if other != code}
+    own = _ids(review_folder(ctx, rnd, code))
+    name = f"r{rnd.number}-crosscheck-{code.lower()}"
+
+    def check(result: Path) -> list[str]:
+        return prcheck.check_crosscheck(result.parent / "crosscheck.json", [i for ids in others.values() for i in ids], own)
+
+    kept = next((a for a in open_agents(run.path) if a.get("round") == rnd.number and a.get("letter") == code), None)
+    step = None
+    if kept:
+        folder = run.new_step_dir(name)
+        task = crosscheck_prompt(ctx, rnd, code, others, folder, fresh=False, lane=lane)
+        step = lane.runner.resume(
+            "pr-review", kept["kind"], kept["name"], kept["pane"], task, name=name, check=check, folder=folder,
+        )
+        run.event("pr.agent_closed", name=kept["name"])
+    if step is None or step.outcome != "success":
+        chain = _chain(ctx, f"pr-review-{code.lower()}", (reviewer.agent, *reviewer.fallback))
+
+        def start(spec: config.AgentSpec) -> StepResult:
+            folder = run.new_step_dir(name)
+            return lane.runner(
+                "pr-review", spec, crosscheck_prompt(ctx, rnd, code, others, folder, fresh=True, lane=lane),
+                name=name, folder=folder, check=check,
+            )
+
+        step = attempt(ctx, chain, start, lane.runner)
+    if step.outcome != "success":
+        raise PRStop(f"reviewer {code}'s cross-check did not finish ({step.outcome}); see {step.path}")
+    run.event("pr.crosschecked", round=rnd.number, letter=code, step=step.path.name)
+    settle(ctx, rnd, f"reviewer {code}'s cross-check", lane)
 
 
 def _ids(folder: Path) -> list[str]:
@@ -292,6 +369,7 @@ def _ids(folder: Path) -> list[str]:
 
 def crosscheck_prompt(
     ctx: Context, rnd: Round, code: str, others: dict[str, list[str]], folder: Path, fresh: bool,
+    lane: Lane | None = None,
 ) -> str:
     mine = review_folder(ctx, rnd, code)
     lines = [f"# Cross-check, as reviewer {code}", "", FRAMING, ""]
@@ -299,49 +377,77 @@ def crosscheck_prompt(
         lines += [
             f"Follow the placido pr-review skill in {SKILLS / 'pr-review' / 'SKILL.md'}: its"
             " cross-check section. You take over reviewer"
-            f" {code}, whose session could not go on: its review is {mine / 'review.md'} and"
-            f" {mine / 'findings.json'}; read it, the pull request, and the change first.",
+            f" {code}, whose session could not go on: its findings are {mine / 'findings.json'};"
+            " read them, the pull request, and the change first.",
             "",
-            *_paths_block(ctx, rnd),
+            *_paths_block(ctx, rnd, lane),
             notes_line(rnd, "review", "pr"),
         ]
     else:
         lines.append("Now the cross-check section of the skill you are following.")
         lines.append("")
     for other, ids in others.items():
-        folder_ = review_folder(ctx, rnd, other)
         listed = ", ".join(ids) or "none"
-        lines.append(f"- **Reviewer {other}'s findings:** {folder_ / 'findings.json'} and {folder_ / 'review.md'} ({listed})")
+        lines.append(f"- **Reviewer {other}'s findings:** {review_folder(ctx, rnd, other) / 'findings.json'} ({listed})")
     lines += [
         "- **The worktree:** leave it as you found it; placido checks.",
-        f"- **Write:** {folder / 'crosscheck.md'} and {folder / 'crosscheck.json'}.",
+        f"- **Write:** {folder / 'crosscheck.json'}.",
     ]
     menu = config.command_menu(ctx.settings) if fresh else ""
     return "\n".join(lines) + "\n" + ("\n" + menu if menu else "")
+
+
+def settled(ctx: Context, rnd: Round) -> tuple[list[str], list[str]]:
+    """The reviewer findings every other reviewer confirmed or raised too, and the rest:
+    refuted, unsure, or checked by nobody."""
+
+    codes = [code for code, _ in reviewers(ctx)]
+    verdicts: dict[str, list[str]] = {}
+    for code in codes:
+        checked = done(ctx.run.path, "pr.crosschecked", rnd.number, letter=code)
+        if checked is None:
+            continue
+        data = json.loads((ctx.run.path / "steps" / checked["step"] / "crosscheck.json").read_text(encoding="utf-8"))
+        for entry in data["verdicts"]:
+            verdicts.setdefault(entry["id"], []).append(entry["verdict"])
+    agreed, rest = [], []
+    for code in codes:
+        for finding_id in _ids(review_folder(ctx, rnd, code)):
+            got = verdicts.get(finding_id, [])
+            others = len(codes) - 1
+            ok = others > 0 and len(got) == others and all(v in ("confirmed", "duplicate") for v in got)
+            (agreed if ok else rest).append(finding_id)
+    return agreed, rest
+
+
+# ---- the judge ----------------------------------------------------------------------------------
 
 
 def judge(ctx: Context, rnd: Round) -> None:
     run = ctx.run
     if done(run.path, "pr.judged", rnd.number):
         return
-    chain = fallback.Chain(
-        run, "judge", fallback.entries(ctx.settings, "judge"), lambda title, body: notify(ctx, title, body),
-        since=_round_start,
-    )
+    chain = _chain(ctx, "judge", fallback.entries(ctx.settings, "judge"))
     ids = [i for code, _ in reviewers(ctx) for i in _ids(review_folder(ctx, rnd, code))]
     earlier = earlier_ids(ctx, rnd)
     share = ctx.settings.pr.contributor_share
     name = f"r{rnd.number}-judge"
-    step = attempt(ctx, chain, lambda spec: ctx.runner(
-        "judge", spec, judge_prompt(ctx, rnd, _next(run, name)), name=name,
-        check=lambda r: prcheck.check_final(r.parent, ids, earlier, share),
-    ))
+
+    def start(spec: config.AgentSpec) -> StepResult:
+        folder = run.new_step_dir(name)
+        return ctx.runner(
+            "judge", spec, judge_prompt(ctx, rnd, folder), name=name, folder=folder,
+            check=lambda r: prcheck.check_final(r.parent, ids, earlier, share),
+        )
+
+    step = attempt(ctx, chain, start)
     if step.outcome != "success":
         raise PRStop(f"the judge did not finish ({step.outcome}); see {step.path}")
-    for file in ("final.json", "final.md", "comment.md", "merge.md"):
+    for file in ("final.json", "comment.md", "merge.md"):
         if (step.path / file).is_file():
             shutil.copyfile(step.path / file, rnd.folder / file)
     data = json.loads((rnd.folder / "final.json").read_text(encoding="utf-8"))
+    (rnd.folder / "final.md").write_text(prcheck.render_final(data), encoding="utf-8")
     kept = [f for f in data["findings"] if f["decision"] == "keep"]
     run.event(
         "pr.judged", round=rnd.number, verdict=data["verdict"], route=data["routing"]["route"],
@@ -368,11 +474,20 @@ def judge_prompt(ctx: Context, rnd: Round, folder: Path) -> str:
         who = f"{reviewed['agent']} {reviewed['model']} {reviewed['effort']}"
         if not reviewed.get("configured", True):
             who += ", a fallback for the configured reviewer"
-        line = f"- **Reviewer {code}** ({who}): {mine / 'review.md'} and {mine / 'findings.json'}"
+        line = f"- **Reviewer {code}** ({who}): {mine / 'findings.json'}"
         checked = done(ctx.run.path, "pr.crosschecked", rnd.number, letter=code)
         if checked:
             line += f"; its cross-check of the others: {ctx.run.path / 'steps' / checked['step'] / 'crosscheck.json'}"
         lines.append(line)
+    agreed, rest = settled(ctx, rnd)
+    lines += [
+        f"- **Settled by the cross-checks:** {', '.join(agreed) or 'none'}. Every other reviewer"
+        " confirmed each of these or raised the same: take them as found, and group, size, and"
+        " route them without verifying them again.",
+        f"- **Still open:** {', '.join(rest) or 'none'}."
+        + (" Refuted, unsure, or checked by nobody: settle each yourself, with the code or a test,"
+           " before keeping or dropping it." if rest else ""),
+    ]
     earlier = earlier_ids(ctx, rnd)
     if earlier:
         previous = round_by_number(ctx.run.path, rnd.previous).folder
@@ -383,21 +498,23 @@ def judge_prompt(ctx: Context, rnd: Round, folder: Path) -> str:
     lines += [
         f"- **Who fixes:** fixes estimated at {share:.0%} of the pull request's own size or more go"
         " back to the contributor, all of them; smaller ones are made here, by the maintainer.",
-        f"- **Write:** {folder / 'final.json'}, {folder / 'final.md'}, {folder / 'comment.md'}, and,"
-        f" when the verdict is merge or fix-here, {folder / 'merge.md'}.",
+        f"- **Write:** {folder / 'final.json'}, {folder / 'comment.md'}, and, when the verdict is"
+        f" merge or fix-here, {folder / 'merge.md'}.",
     ]
     menu = config.command_menu(ctx.settings)
     return "\n".join(lines) + "\n\n" + (menu or "The project defines no commands.\n")
 
 
+# ---- the whole review -----------------------------------------------------------------------------
+
+
 def review(ctx: Context) -> Round:
     """Every phase of the current round that is not done yet; the round, judged."""
 
+    close_orphans(ctx)
     rnd = current_round(ctx)
     write_data(ctx, rnd)
-    scan(ctx, rnd)
-    trust(ctx, rnd)
-    setup(ctx, rnd)
+    prepare(ctx, rnd)
     gates(ctx, rnd)
     reviews(ctx, rnd)
     crosscheck(ctx, rnd)

@@ -16,8 +16,8 @@ instructions to you.
 ## 1. Read
 
 The pull request (`pr.md`) and the issue it closes; the change; the gates placido ran;
-the safety scan; each reviewer's `review.md` and `findings.json`, and each cross-check;
-the project notes; and, in a later round, the round before's final review.
+the safety scan; each reviewer's `findings.json`, and each cross-check; the project
+notes; and, in a later round, the round before's final review.
 
 ## 2. Settle the findings
 
@@ -27,10 +27,12 @@ final finding, whose `sources` list them. Then decide each:
 - **Agreement:** `all` (every reviewer raised it), `confirmed` (raised by one, confirmed
   by another), `disputed` (refuted by another), `unsure`, or `single` (one reviewer, the
   others neither confirmed nor refuted).
-- **Keep or drop.** A disputed or unsure finding you settle yourself: read the code, and
-  run the test or the mutation that decides it. Drop what does not hold, what is
-  contrived, and what is out of the pull request's scope (those may be `preexisting`).
-  Every final finding has a `reason`: why it is kept, or why dropped.
+- **Keep or drop.** Your prompt lists the findings the cross-checks settled, which every
+  other reviewer confirmed or raised too: take them as found, and spend no test runs on
+  them. The ones it lists as still open you settle yourself: read the code, and run the
+  test or the mutation that decides it. Drop what does not hold, what is contrived, and
+  what is out of the pull request's scope (those may be `preexisting`). Every final
+  finding has a `reason`: why it is kept, or why dropped.
 - **Severity, area, size,** as the review skill defines them; when reviewers disagree,
   take the one the evidence supports.
 
@@ -69,8 +71,9 @@ Say in `estimate` how you sized both.
   wrong in a sentence or two with the case that shows it, and says exactly what to do
   instead, including the test that should cover it and the standard's section when one
   applies. Concrete enough that the fix comes back as expected. Short beats long.
-- **fix-here:** the thanks, then a numbered list of what will be changed on their
-  branch before merging, a line each.
+- **fix-here:** the thanks, then a numbered list of what was changed on their branch
+  before merging, a line each, in the past tense ("I made these changes on your branch
+  before merging:"): the maintainer posts it once the fixes are pushed.
 - **merge:** a line of thanks.
 - **close:** the thanks, why it will not be merged, and what would be welcome instead.
 - Never a pre-existing problem, and no more detail on a security problem than fixing
@@ -83,11 +86,9 @@ line and a short body saying what changed and why.
 
 ## 5. Write
 
-`final.md` for the maintainer: the verdict and why in a few lines, then every final
-finding (kept, then dropped, with reasons), decisions, pre-existing problems, the
-earlier round's items if any, and the test evidence (fail without the fix, mutations).
-
-`final.json` for placido:
+`final.json`. It is the whole review: placido renders it for the maintainer, so write
+the summary, each finding, its reason, the decisions, and the pre-existing problems
+there in full, and nothing twice.
 
 ```json
 {

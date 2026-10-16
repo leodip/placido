@@ -955,3 +955,13 @@ class ConfinedTest(StepTestCase):
         with self.assertRaisesRegex(ValueError, "pi cannot run confined"):
             runner("scan", AgentSpec("pi", "deepseek/deepseek-v4.1-flash", "high"), "Scan.", confined=())
         self.assertEqual(self.fake.calls, [])
+
+
+class FolderTest(StepTestCase):
+    def test_a_folder_made_beforehand_is_the_steps(self):
+        folder = self.run.new_step_dir("implement")
+        self.fake.result = folder / "result.md"
+        result = self.step(folder=folder)
+        self.assertEqual(result.path, folder)
+        self.assertTrue((folder / "prompt.md").read_text().startswith("Summarize the issue."))
+        self.assertEqual(sorted(p.name for p in (self.run.path / "steps").iterdir()), [folder.name])

@@ -574,8 +574,15 @@ def cmd_pr(args: argparse.Namespace) -> int:
     run = runlog.Run(path, echo=sys.stdout)
     worktree = Path(created["path"])
     env = start.env_of(path)
-    runner = step.Step(run, herdr, created["workspace"], worktree, env=env, quota_wait=settings.quota_wait)
-    ctx = pr.Context(run, runner, herdr, settings, root, worktree, env, hub, pull, ask=_ask)
+    workspace = created["workspace"]
+    runner = step.Step(run, herdr, workspace, worktree, env=env, quota_wait=settings.quota_wait)
+
+    def lane_runner(cwd: Path, lane_env: dict[str, str]) -> step.Step:
+        """A Step for a reviewer's lane: its tabs open in the same workspace, in the lane."""
+
+        return step.Step(run, herdr, workspace, cwd, env=lane_env, quota_wait=settings.quota_wait)
+
+    ctx = pr.Context(run, runner, herdr, settings, root, worktree, env, hub, pull, ask=_ask, make_runner=lane_runner)
     try:
         with driver.Lock(path):
             if pull.state == "OPEN":

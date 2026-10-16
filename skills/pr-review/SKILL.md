@@ -67,8 +67,11 @@ that were already there before this change are not findings: list them under
 `preexisting`, security ones marked, and they stay private to the maintainer.
 
 Run commands in the foreground and wait for them, however long they take; do not end
-your turn while one runs. Leave the worktree exactly as you found it: placido checks,
-and records anything left behind.
+your turn while one runs. Run the project's commands from your prompt, which work in
+this pull request's isolated environment, and nothing that installs packages or builds
+outside them, such as a docs site on this machine: the pull request's code is someone
+else's. Leave the worktree exactly as you found it: placido checks, and records
+anything left behind.
 
 ### 3. Severity and size
 
@@ -91,10 +94,9 @@ in the whole change that is still wrong.
 
 ### 5. Write
 
-`review.md` for people: a short verdict, then each finding with its id, severity,
-area, location, what is wrong with the evidence, and the fix.
-
-`findings.json` for placido, ids from your letter (`A1`, `A2`, … for reviewer A):
+`findings.json`, ids from your letter (`A1`, `A2`, … for reviewer A). It is the whole
+review: placido renders it for people, so write each finding's description, evidence,
+and fix there in full, and nothing twice.
 
 ```json
 {
@@ -136,7 +138,7 @@ Your prompt names the other reviewers' findings. For each one, give exactly one 
 
 Disagree on severity in the note when you do. Leave the worktree as you found it.
 
-Write `crosscheck.md` for people and `crosscheck.json` for placido:
+Write `crosscheck.json`:
 
 ```json
 {"verdicts": [{"id": "B2", "verdict": "refuted", "note": "…evidence…"},

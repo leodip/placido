@@ -289,7 +289,9 @@ class PRSettingsTest(unittest.TestCase):
         self.assertEqual(c.pr.host_paths, (".placido", ".claude", ".codex", ".mcp.json"))
         self.assertEqual((c.pr.gates, c.pr.contributor_share), ((), 0.5))
         self.assertEqual(c.roles["scan"].agent, AgentSpec("claude", "opus", "high"))
-        self.assertEqual(c.roles["judge"].agent, AgentSpec("claude", "opus", "xhigh"))
+        self.assertEqual(c.roles["judge"].agent, AgentSpec("claude", "opus", "high"))
+        self.assertEqual(c.roles["verify"].agent, c.roles["review"].agent)  # another vendor than the fixer's
+        self.assertEqual((c.pr.parallel, c.pr.fix_rounds), (True, 2))
 
     def test_gates_default_to_the_slice_and_final_gates(self):
         c = load_text(
@@ -322,6 +324,8 @@ class PRSettingsTest(unittest.TestCase):
             "[pr]\ncontributor_share = 1.5\n": "pr.contributor_share",
             "[pr]\ncontributor_share = true\n": "pr.contributor_share",
             "[pr]\nshare = 0.5\n": "pr.share: unknown key",
+            "[pr]\nparallel = 1\n": "pr.parallel: must be bool",
+            "[pr]\nfix_rounds = -1\n": "pr.fix_rounds: must not be negative",
         }
         for text, message in cases.items():
             with self.assertRaisesRegex(ConfigError, message, msg=text):

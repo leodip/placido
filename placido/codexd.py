@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -100,8 +101,17 @@ def _daemon(command: str) -> Result:
 def ensure(run: runlog.Run) -> None:
     """Before placido launches Codex: a daemon running from the home folder. Starting
     one does nothing when one runs; one whose folder is gone is restarted from home,
-    unless a Codex session would be cut off."""
+    unless a Codex session would be cut off. One check at a time, since `placido pr`'s
+    reviewers can launch Codex at once."""
 
+    with ENSURING:
+        _ensure(run)
+
+
+ENSURING = threading.Lock()
+
+
+def _ensure(run: runlog.Run) -> None:
     found = daemons()
     if not found:
         result = _daemon("start")

@@ -12,14 +12,15 @@ the worktree must be clean: what changed is kept as evidence and put back, and a
 change under a host path stops the review.
 
 Then the project's setup and the `[pr] gates` run once, and each reviewer in
-`[pr] reviewers` reviews the change on its own, one after the other (decided
-2026-10-16: two at once in one worktree and one stack would spoil each other's
-mutations and test runs). Each, resumed with its context, then checks the others'
-findings, and a judge settles them all into the final review: the findings kept and
-who found each, a verdict, whether the fixes are made here or go back to the
-contributor (`[pr] contributor_share`), and the drafts of the comment and the squash
-message. Nothing is posted, pushed, merged, or closed until the user picks it at the
-menu (placido/prmenu.py).
+`[pr] reviewers` reviews the change on its own, all at once, each in a lane of its
+own: a worktree and the stack the project's setup brings up there (`[pr] parallel`;
+with it off, one after the other in the pull request's own worktree, since two agents
+in one worktree and one stack would spoil each other's mutations and test runs). Each,
+resumed with its context, then checks the others' findings, and a judge settles them
+all into the final review: the findings kept and who found each, a verdict, whether
+the fixes are made here or go back to the contributor (`[pr] contributor_share`), and
+the drafts of the comment and the squash message. Nothing is posted, pushed, merged,
+or closed until the user picks it at the menu (placido/prmenu.py).
 
 A run belongs to the pull request, `pr-<number>`, with a worktree on the branch
 `placido/pr-<number>`. Each new head the contributor pushes starts a round, whose
@@ -37,8 +38,9 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, TextIO
 
@@ -111,6 +113,75 @@ class Context:
     hub: prgh.Hub
     pr: prgh.PullRequest
     ask: Callable[[str], bool | None]  # a yes-or-no question to the user; None: nobody to answer
+    # A Step for a lane's worktree and variables; None keeps every reviewer in lane A.
+    make_runner: Callable[[Path, dict[str, str]], Step] | None = None
+    lanes: dict[str, "Lane"] = field(default_factory=dict)
+
+
+@dataclass
+class Lane:
+    """Where a reviewer works: a worktree, the stack the project's setup brings up there
+    (named by PLACIDO_NAME in env), and a Step that opens tabs in it. Lane A is the pull
+    request's own worktree; the others are detached worktrees placido makes in the run's
+    folder, which hold nothing of placido's and are torn down by `placido close`."""
+
+    code: str
+    worktree: Path
+    env: dict[str, str]
+    runner: Step
+    primary: bool = False
+
+
+def primary_lane(ctx: Context) -> Lane:
+    return Lane("A", ctx.worktree, ctx.env, ctx.runner, primary=True)
+
+
+def lane_for(ctx: Context, rnd: "Round", code: str) -> Lane:
+    """The reviewer's lane, made the first time and brought to the round's head."""
+
+    if code == "A" or not ctx.settings.pr.parallel or ctx.make_runner is None:
+        return primary_lane(ctx)
+    lane = ctx.lanes.get(code)
+    if lane is None:
+        path = ctx.run.path / "lanes" / code.lower()
+        name = f"{ctx.env.get('PLACIDO_NAME') or issue_id(ctx.pr.number)}-{code.lower()}"
+        env = {**ctx.env, "PLACIDO_NAME": name, "PLACIDO_WORKTREE": str(path)}
+        if not path.is_dir():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            git(ctx.root, "worktree", "add", "-q", "--detach", str(path), rnd.head)
+            ctx.run.event("pr.lane", letter=code, path=str(path), name=name)
+        lane = Lane(code, path, env, ctx.make_runner(path, env))
+        ctx.lanes[code] = lane
+    if git(lane.worktree, "rev-parse", "HEAD") != rnd.head or changed_files(lane.worktree):
+        git(lane.worktree, "checkout", "-q", "--force", "--detach", rnd.head)
+        git(lane.worktree, "clean", "-fdq")
+    return lane
+
+
+def together(jobs: list[Callable[[], Any]]) -> None:
+    """Run the jobs at once and wait for them all, then raise the first failure, a stop
+    before anything else. The wait polls, so Ctrl+C still reaches the main thread."""
+
+    if len(jobs) == 1:
+        jobs[0]()
+        return
+    errors: list[BaseException] = []
+
+    def run(job: Callable[[], Any]) -> None:
+        try:
+            job()
+        except BaseException as error:  # noqa: BLE001 - every failure goes back to the caller
+            errors.append(error)
+
+    threads = [threading.Thread(target=run, args=(job,), daemon=True) for job in jobs]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        while thread.is_alive():
+            thread.join(0.5)
+    stops = [e for e in errors if isinstance(e, PRStop)]
+    if stops or errors:
+        raise (stops or errors)[0]
 
 
 # ---- the run -------------------------------------------------------------------------
@@ -366,29 +437,39 @@ def _under(path: str, roots: tuple[str, ...]) -> bool:
     return any(path == r or path.startswith(r + "/") for r in roots)
 
 
-def verify_host_paths(ctx: Context, rnd: Round, before: str) -> None:
+def host_changes(ctx: Context, rnd: Round) -> list[str]:
+    """The host paths the pull request changes."""
+
+    paths = ctx.settings.pr.host_paths
+    return git(ctx.worktree, "diff", "--name-only", rnd.base, rnd.head, "--", *paths).splitlines() if paths else []
+
+
+def verify_host_paths(ctx: Context, rnd: Round, before: str, lane: Lane | None = None) -> None:
     """Stop unless the host paths hold what was trusted, right before `before` runs."""
 
     paths = ctx.settings.pr.host_paths
     if not paths:
         return
-    changed = git(ctx.worktree, "diff", "--name-only", trust_reference(ctx, rnd), "--", *paths).splitlines()
-    files = sorted(set(changed) | set(changed_files(ctx.worktree, *paths)))
+    wt = (lane or primary_lane(ctx)).worktree
+    changed = git(wt, "diff", "--name-only", trust_reference(ctx, rnd), "--", *paths).splitlines()
+    files = sorted(set(changed) | set(changed_files(wt, *paths)))
     if files:
         ctx.run.event("pr.host_paths_changed", round=rnd.number, before=before, files=files)
         notify(ctx, "host paths changed", f"{', '.join(files)[:160]}; nothing more runs")
         raise PRStop(
             f"{', '.join(files)} changed since they were trusted, so {before} does not run. Look at"
-            f" git -C {ctx.worktree} status and diff; once they are as the pull request has them,"
+            f" git -C {wt} status and diff; once they are as the pull request has them,"
             " run placido pr again"
         )
 
 
-def settle(ctx: Context, rnd: Round, after: str) -> list[str]:
+def settle(ctx: Context, rnd: Round, after: str, lane: Lane | None = None) -> list[str]:
     """Put the worktree back as it should be after a command or an agent, keeping what
     changed as evidence; the files that had changed. A change under a host path stops."""
 
-    wt, expected = ctx.worktree, expected_head(ctx, rnd)
+    lane = lane or primary_lane(ctx)
+    wt = lane.worktree
+    expected = expected_head(ctx, rnd) if lane.primary else rnd.head
     head = git(wt, "rev-parse", "HEAD")
     if head != expected:
         (rnd.folder / f"moved-{_slug(after)}.txt").write_text(
@@ -439,7 +520,7 @@ def trust(ctx: Context, rnd: Round) -> None:
     run, paths = ctx.run, ctx.settings.pr.host_paths
     if not paths or done(run.path, "pr.trust_approved", rnd.number, head=rnd.head):
         return
-    changed = git(ctx.worktree, "diff", "--name-only", rnd.base, rnd.head, "--", *paths).splitlines()
+    changed = host_changes(ctx, rnd)
     if not done(run.path, "pr.trust", rnd.number):
         run.event("pr.trust", round=rnd.number, changed=changed)
     if not changed:
@@ -462,30 +543,37 @@ def trust(ctx: Context, rnd: Round) -> None:
     run.event("pr.trust_approved", round=rnd.number, head=rnd.head, files=changed)
 
 
-def setup(ctx: Context, rnd: Round) -> None:
-    """The project's setup, once a round: it brings the stack up, or finds it up."""
+def setup(ctx: Context, rnd: Round, lane: Lane | None = None) -> None:
+    """The project's setup in a lane, once a round: it brings the lane's stack up, or
+    finds it up."""
 
-    if not ctx.settings.setup or done(ctx.run.path, "pr.setup", rnd.number, exit=0):
+    lane = lane or primary_lane(ctx)
+    code = None if lane.primary else lane.code
+    if not ctx.settings.setup or done(ctx.run.path, "pr.setup", rnd.number, exit=0, lane=code):
         return
-    verify_host_paths(ctx, rnd, "setup")
+    label = "setup" if lane.primary else f"setup of lane {lane.code}"
+    verify_host_paths(ctx, rnd, label, lane)
     status.show(ctx.run.path, status.text(status.WORKING, "setting up"))
-    code = run_command(ctx, "setup", ctx.settings.setup, ctx.run.path / "setup.log")
-    ctx.run.event("pr.setup", round=rnd.number, exit=code)
-    settle(ctx, rnd, "setup")
-    if code != 0:
-        raise PRStop(f"setup failed with exit {code}; see {ctx.run.path / 'setup.log'}")
+    log = ctx.run.path / ("setup.log" if lane.primary else f"setup-{lane.code.lower()}.log")
+    exit_code = run_command(ctx, "setup", ctx.settings.setup, log, lane)
+    ctx.run.event("pr.setup", round=rnd.number, exit=exit_code, lane=code)
+    settle(ctx, rnd, label, lane)
+    if exit_code != 0:
+        raise PRStop(f"{label} failed with exit {exit_code}; see {log}")
 
 
-def run_command(ctx: Context, name: str, command: str, log: Path) -> int:
-    ctx.run.event(f"{name}.start", command=command)
+def run_command(ctx: Context, name: str, command: str, log: Path, lane: Lane | None = None) -> int:
+    lane = lane or primary_lane(ctx)
+    ctx.run.event(f"{name}.start", command=command, **({} if lane.primary else {"lane": lane.code}))
     began = time.monotonic()
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w", encoding="utf-8") as out:
         code = subprocess.run(
-            command, shell=True, cwd=ctx.worktree, stdout=out, stderr=subprocess.STDOUT,
-            env={**os.environ, **ctx.env},
+            command, shell=True, cwd=lane.worktree, stdout=out, stderr=subprocess.STDOUT,
+            env={**os.environ, **lane.env},
         ).returncode
-    ctx.run.event(f"{name}.end", exit=code, seconds=round(time.monotonic() - began, 1))
+    ctx.run.event(f"{name}.end", exit=code, seconds=round(time.monotonic() - began, 1),
+                  **({} if lane.primary else {"lane": lane.code}))
     return code
 
 
@@ -553,6 +641,21 @@ def close_agents(ctx: Context) -> None:
     for agent in open_agents(ctx.run.path):
         ctx.runner.close_agent(agent["name"], agent["pane"], ctx.run.path / "steps" / agent["step"], agent["kind"])
         ctx.run.event("pr.agent_closed", name=agent["name"])
+
+
+def close_orphans(ctx: Context) -> None:
+    """Close the agents a stopped `placido pr` left running: started, never ended, and
+    not kept open on purpose for a cross-check."""
+
+    events = list(runlog.read_events(ctx.run.path))
+    ended = {e.get("step") for e in events if e.get("event") in ("step.end", "pr.orphan_closed")}
+    kept = {a["name"] for a in open_agents(ctx.run.path)}
+    for event in events:
+        if event.get("event") != "agent.start" or event.get("step") in ended or event.get("name") in kept:
+            continue
+        ctx.runner.close_agent(event["name"], event["pane"], ctx.run.path / "steps" / event["step"], event["agent"])
+        ctx.run.event("pr.orphan_closed", step=event["step"], name=event["name"])
+        ended.add(event.get("step"))
 
 
 def notify(ctx: Context, title: str, body: str) -> None:

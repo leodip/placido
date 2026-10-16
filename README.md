@@ -185,7 +185,8 @@ Each role has an agent, model, and effort, and a fallback chain:
 | `fix` | as `implement` |
 | `retro` | as `spec` |
 | `scan` (`placido pr`, confined) | claude, Opus, high |
-| `judge` (`placido pr`) | claude, Opus, xhigh |
+| `judge` (`placido pr`) | claude, Opus, high |
+| `verify` (`placido pr`, checks the fixes) | as `review` |
 | fallback chain | claude Opus at max, then pi with DeepSeek through OpenRouter; an entry with the role's own model is skipped after a refusal |
 
 Change any of them per project:
@@ -228,6 +229,8 @@ reviewers = [          # each reviews on its own, in this order; each may name a
 gates = []             # commands run once before the reviews; none named: the slice and final gates
 host_paths = [".placido", ".claude", ".codex", ".mcp.json"]  # changes wait for your approval
 contributor_share = 0.5  # fixes this big, against the pull request, go back to its author
+parallel   = true      # reviewers at once, each in a worktree and stack of its own
+fix_rounds = 2         # times a failed check of the fixes sends them back to the fixer
 ```
 
 ### Your own settings
@@ -360,28 +363,40 @@ stack), unattended until it has something to show you:
    pull request's own tests can write to it. After every command and every agent the
    worktree must be clean: what changed is kept as evidence and put back, and a change
    under a host path stops the review.
-3. **Setup and gates.** Your setup, then the `[pr] gates`, once, for every reviewer.
-4. **Reviews.** Each reviewer, one after the other, reviews on its own: does it solve
-   its issue, gaps, bugs, security, the standards it touches (read from the source),
-   test coverage, and whether the tests are real: they fail without the fix, and
-   mutations of the fix (`placido mutate`) make them fail.
+3. **Setup and gates.** Your setup brings up a stack for each reviewer, while the scan
+   reads when the pull request changes no host path, and after your approval when it
+   does. Then the `[pr] gates`, once, for every reviewer.
+4. **Reviews.** Every reviewer at once, each in a lane of its own: the pull request's
+   worktree for the first, a detached worktree in the run's folder for each other, each
+   with its own stack (`PLACIDO_NAME` such as `goiabada-pr-602-b`), so their test runs
+   and mutations never meet. Each reviews on its own: does it solve its issue, gaps,
+   bugs, security, the standards it touches (read from the source), test coverage, and
+   whether the tests are real: they fail without the fix, and mutations of the fix
+   (`placido mutate`) make them fail. `parallel = false` runs them one after the other
+   in one worktree, with one stack.
 5. **Cross-check.** Each reviewer, resumed, confirms or refutes the others' findings.
-6. **Judge.** One review: the findings kept and who found them, what was dropped and
-   why, a verdict, problems that were already there (for you only), and drafts of the
-   comment and the squash message. Fixes estimated at `contributor_share` of the pull
-   request or more go back to the contributor; smaller ones you make here.
+6. **Judge.** One review, told which findings the cross-checks settled so it verifies
+   only the rest: the findings kept and who found them, what was dropped and why, a
+   verdict, problems that were already there (for you only), and drafts of the comment
+   and the squash message. Fixes estimated at `contributor_share` of the pull request
+   or more go back to the contributor; smaller ones you make here. The agents write
+   JSON, and placido renders it (`review.md`, `final.md`).
 
 Then placido prints the review and a menu. Nothing happens that you do not pick, and
 pushing, merging, and closing ask again: edit the comment or the squash message, fix
-the findings here on the contributor's branch (committed locally by the `fix` role,
-with the gates), push them (never forced, and only when the contributor allows
-maintainers to), post the comment, approve CI runs GitHub holds for first-time
-contributors, squash-merge pinned to the commit the review covered, or close.
+the findings here on the contributor's branch, push them (never forced, and only when
+the contributor allows maintainers to), post the comment, approve CI runs GitHub holds
+for first-time contributors, squash-merge pinned to the commit the review covered, or
+close. A fix is the `fix` role's, committed locally once the gates pass, then checked
+by the `verify` role, another vendor by default: each finding's fix with a test that
+fails without it, and the fixes for new problems. What the check leaves open goes back
+to the fixer, up to `fix_rounds` times, and the push says whether the fixes passed.
 
 `placido pr 602` again shows the menu again, or, once the contributor has pushed, starts
 a new round whose reviewers check each earlier finding. `placido close pr-602` removes
-the worktree and stack, putting the host paths back first, and deletes the branch once
-the pull request is merged or closed and nothing made here is left unpushed. Project
+every lane's worktree and stack, putting the host paths back first, and deletes the
+branch once the pull request is merged or closed and nothing made here is left
+unpushed. Project
 notes for these agents go in `.placido/notes/pr.md` (all of them), `scan.md`,
 `review.md`, and `fix.md`, read from your main checkout, never from the pull request.
 

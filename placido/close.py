@@ -121,6 +121,40 @@ def _pull(run: runlog.Run, repo: Path, base: str) -> None:
     run.event("base.pulled", base=base, before=before[:12], after=after[:12])
 
 
+def _reviewed_outcome(run: runlog.Run) -> tuple[str, str]:
+    """How a `placido pr` review ended, for its run.end: it never ends by itself, since
+    what happens to the pull request is the user's."""
+
+    kinds = {event.get("event") for event in runlog.read_events(run.path)}
+    if "pr.merged" in kinds:
+        return "merged", "the pull request was merged from placido"
+    if "pr.closed_pr" in kinds:
+        return "closed", "the pull request was closed from placido"
+    if "pr.ready" in kinds:
+        return "reviewed", "the review was done; what became of the pull request is the user's"
+    return "abandoned", "closed before the review was done"
+
+
+def _close_lanes(run: runlog.Run, settings: config.Config) -> None:
+    """Tear down the lane each extra reviewer worked in, then remove its worktree, which
+    holds nothing of placido's. A failing teardown is logged and the worktree goes anyway."""
+
+    repo = runlog.read_record(run.path).get("repo")
+    for lane in [e for e in runlog.read_events(run.path) if e.get("event") == "pr.lane"]:
+        path = Path(lane["path"])
+        if not path.is_dir():
+            continue
+        _restore_host_paths(run, path, settings)
+        if settings.teardown:
+            env = {**start.env_of(run.path), "PLACIDO_NAME": lane["name"], "PLACIDO_WORKTREE": str(path)}
+            start.run_project_command(run, f"teardown-{lane['letter'].lower()}", settings.teardown, path, env)
+        done = _git(Path(repo or path), "worktree", "remove", "--force", str(path))
+        if done.returncode == 0:
+            run.event("lane.removed", letter=lane["letter"], path=str(path))
+        else:
+            run.event("lane.remove_failed", letter=lane["letter"], error=(done.stderr or done.stdout).strip()[-300:])
+
+
 def _restore_host_paths(run: runlog.Run, worktree: Path, settings: config.Config) -> None:
     """Put the host paths back as the review last trusted them, so the teardown that runs
     from them is the project's, whatever the pull request's tests wrote."""
@@ -190,8 +224,11 @@ def _close(
     run: runlog.Run, herdr: Herdr, settings: config.Config, worktree: Path, workspace: str, force: bool,
 ) -> None:
     run.event("close.start", force=force)
+    reviewed = runlog.read_record(run.path).get("kind") == "pr"
+    if reviewed:
+        _close_lanes(run, settings)
     if worktree.is_dir():
-        if runlog.read_record(run.path).get("kind") == "pr":
+        if reviewed:
             _restore_host_paths(run, worktree, settings)
         changes = implement.git(worktree, "status", "--porcelain")
         if changes and not force:
@@ -211,7 +248,8 @@ def _close(
     else:
         run.event("worktree.missing", path=str(worktree))
     if not runlog.last_event(run.path, "run.end"):
-        run.event("run.end", outcome="abandoned", reason="closed before the work was done")
+        outcome, reason = _reviewed_outcome(run) if reviewed else ("abandoned", "closed before the work was done")
+        run.event("run.end", outcome=outcome, reason=reason)
     run.event("run.closed")
     summary.write(run.path)
 

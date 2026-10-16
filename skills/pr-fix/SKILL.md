@@ -27,7 +27,15 @@ to fix, the project's standards as of the base (as your prompt shows), and the n
   translations, for what you changed.
 - **Never change** the paths that run on this machine (placido refuses the result), and
   never commit.
+- **Run only the narrow tests** for what you change, through the project's commands in
+  your prompt. Placido runs the full gates after you and commits only when they pass,
+  so running them yourself only doubles the wait.
+- **Nothing outside the project's commands:** no package installs and no builds on this
+  machine, such as a docs site; the pull request's code is someone else's. Check a docs
+  change by reading it.
 - Run commands in the foreground and wait for them; do not end your turn while one runs.
+- **An item with a `check`** was fixed once already, and a check of that fix found it
+  still wrong: the `check` says how. Fix what it says, or dispute it with evidence.
 
 For each finding, one answer: **fixed** (what changed, and the test that covers it), or
 **disputed** (it does not hold; the evidence: a test run, the code, the standard).
@@ -57,8 +65,8 @@ it, and carry on.
 
 Then the result file. When you changed code, its first line is a commit subject of at
 most 72 characters in the project's style, and the lines after it, up to `## Evidence`,
-the commit body; under `## Evidence`, the gates' passing run and each new test failing
-before its fix. When every finding is disputed and nothing changed, the first line is
+the commit body; under `## Evidence`, the narrow tests' passing run and each new test
+failing before its fix. When every finding is disputed and nothing changed, the first line is
 `No code changes` instead.
 
-**Done when** every finding has an answer, the gates pass, and the result file is written.
+**Done when** every finding has an answer, your narrow tests pass, and the result file is written.

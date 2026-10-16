@@ -1,8 +1,13 @@
 """Checks on what `placido pr`'s agents write: the scan, each reviewer's findings and
-cross-check, and the judge's final review, each problem worded for the agent to fix.
-Placido sends them back to the agent until its files pass, so the rest of `placido pr`
-reads well-formed files only. The judge's check also holds it to the rules: every
-reviewer finding settled exactly once, and the verdict following `[pr] contributor_share`.
+cross-check, the judge's final review, and the check of the fixes, each problem worded
+for the agent to fix. Placido sends them back to the agent until its files pass, so the
+rest of `placido pr` reads well-formed files only. The judge's check also holds it to
+the rules: every reviewer finding settled exactly once, and the verdict following
+`[pr] contributor_share`.
+
+The agents write JSON alone, and placido renders it for people (`render_review`,
+`render_final`): #588's agents wrote every finding twice, once in Markdown, and the
+judge's Markdown alone ran to 171 lines (decided 2026-10-16).
 """
 
 from __future__ import annotations
@@ -21,6 +26,8 @@ MUTATIONS = ("killed", "survived", "timeout")
 AGREEMENT = ("all", "confirmed", "disputed", "unsure", "single")
 VERDICTS = ("merge", "fix-here", "request-changes", "close")
 ROUTES = ("here", "contributor", "none")
+CHECKED = ("resolved", "unresolved", "accepted-dispute", "rejected-dispute")
+STILL_OPEN = ("unresolved", "rejected-dispute")
 
 
 def load(path: Path) -> tuple[Any, str]:
@@ -68,21 +75,7 @@ def check_review(path: Path, code: str, earlier: list[str]) -> list[str]:
         return [error]
     if not isinstance(data, dict) or not isinstance(data.get("findings"), list):
         return ['findings.json needs a "findings" list (empty when there are none).']
-    problems = []
-    for n, finding in enumerate(data["findings"], 1):
-        where = f"finding {n}"
-        if not isinstance(finding, dict):
-            problems.append(f"{where} is not an object.")
-            continue
-        if finding.get("id") != f"{code}{n}":
-            problems.append(f"{where} has id {finding.get('id')!r}; it should be {code}{n}.")
-        for key, allowed in (("area", AREAS), ("severity", SEVERITIES), ("size", SIZES)):
-            if finding.get(key) not in allowed:
-                problems.append(f"{where} has {key} {finding.get(key)!r}; use {', '.join(allowed)}.")
-        if not texts(finding, "title", "description", "evidence", "fix"):
-            problems.append(f"{where} needs a non-empty title, description, evidence, and fix.")
-        if not isinstance(finding.get("location", ""), str):
-            problems.append(f"{where} has a location that is not a string.")
+    problems = findings_problems(data["findings"], code)
     tests = data.get("tests")
     if not isinstance(tests, dict) or tests.get("fail_without_fix") not in TESTS:
         problems.append(f'findings.json needs "tests" with "fail_without_fix" one of {", ".join(TESTS)}.')
@@ -107,6 +100,27 @@ def check_review(path: Path, code: str, earlier: list[str]) -> list[str]:
         if entry is None or entry.get("status") not in EARLIER or not texts(entry, "note"):
             problems.append(f"earlier item {item} needs an entry in \"earlier\" with a status of"
                             f" {', '.join(EARLIER)} and a note.")
+    return problems
+
+
+def findings_problems(findings: list[Any], code: str) -> list[str]:
+    """Problems with a list of findings whose ids run from <code>1."""
+
+    problems = []
+    for n, finding in enumerate(findings, 1):
+        where = f"finding {n}"
+        if not isinstance(finding, dict):
+            problems.append(f"{where} is not an object.")
+            continue
+        if finding.get("id") != f"{code}{n}":
+            problems.append(f"{where} has id {finding.get('id')!r}; it should be {code}{n}.")
+        for key, allowed in (("area", AREAS), ("severity", SEVERITIES), ("size", SIZES)):
+            if finding.get(key) not in allowed:
+                problems.append(f"{where} has {key} {finding.get(key)!r}; use {', '.join(allowed)}.")
+        if not texts(finding, "title", "description", "evidence", "fix"):
+            problems.append(f"{where} needs a non-empty title, description, evidence, and fix.")
+        if not isinstance(finding.get("location", ""), str):
+            problems.append(f"{where} has a location that is not a string.")
     return problems
 
 
@@ -190,9 +204,8 @@ def check_final(folder: Path, ids: list[str], earlier: list[str], share: float) 
     for key in ("decisions", "preexisting"):
         if not isinstance(data.get(key, []), list):
             problems.append(f'"{key}" must be a list.')
-    for file in ("final.md", "comment.md"):
-        if not (folder / file).is_file() or not (folder / file).read_text(encoding="utf-8").strip():
-            problems.append(f"{folder / file} is missing or empty.")
+    if not (folder / "comment.md").is_file() or not (folder / "comment.md").read_text(encoding="utf-8").strip():
+        problems.append(f"{folder / 'comment.md'} is missing or empty.")
     if verdict in ("merge", "fix-here"):
         subject = first_line(folder / "merge.md")
         if not subject:
@@ -228,3 +241,118 @@ def first_line(path: Path) -> str:
         return ""
     lines = path.read_text(encoding="utf-8").strip().splitlines()
     return lines[0].strip() if lines else ""
+
+
+def check_verify(path: Path, ids: list[str]) -> list[str]:
+    """Problems with a check of the fixes: one verdict for each finding the fixer
+    answered, and any new problem the fixes brought as a finding V1, V2, …"""
+
+    data, error = load(path)
+    if error:
+        return [error]
+    if not isinstance(data, dict) or not isinstance(data.get("verdicts"), list):
+        return ['verify.json needs a "verdicts" list.']
+    problems, seen = [], []
+    for entry in data["verdicts"]:
+        if not isinstance(entry, dict) or entry.get("verdict") not in CHECKED or not texts(entry, "note"):
+            problems.append(f"verdict {entry!r} needs an id, a verdict of {', '.join(CHECKED)}, and a note.")
+            continue
+        seen.append(entry.get("id"))
+    for finding_id in ids:
+        count = seen.count(finding_id)
+        if count != 1:
+            problems.append(f"{finding_id} needs exactly one verdict; it has {count}.")
+    for finding_id in sorted({i for i in seen if i not in ids}):
+        problems.append(f"{finding_id!r} is not a finding the fix answered ({', '.join(ids)}).")
+    findings = data.get("findings", [])
+    if not isinstance(findings, list):
+        return problems + ['"findings" must be a list (empty when the fixes brought no new problem).']
+    return problems + findings_problems(findings, "V")
+
+
+def verify_passed(data: dict[str, Any]) -> bool:
+    """Every finding resolved, or its dispute accepted, and no new blocking or
+    significant problem."""
+
+    open_ = [v for v in data["verdicts"] if v["verdict"] in STILL_OPEN]
+    serious = [f for f in data.get("findings", []) if f.get("severity") != "minor"]
+    return not open_ and not serious
+
+
+# ---- for people -------------------------------------------------------------------------
+
+
+def _finding_lines(finding: dict[str, Any], extra: str = "") -> list[str]:
+    where = f" · `{finding['location']}`" if finding.get("location") else ""
+    lines = [
+        f"### {finding['id']}. {finding['title']}",
+        "",
+        f"{finding['severity']} · {finding['area']} · {finding.get('size', '?')}{where}{extra}",
+        "",
+        finding.get("description", "").strip(),
+    ]
+    if finding.get("evidence"):
+        lines += ["", f"**Evidence:** {finding['evidence'].strip()}"]
+    if finding.get("fix"):
+        lines += ["", f"**Fix:** {finding['fix'].strip()}"]
+    if finding.get("reason"):
+        lines += ["", f"**Why {'kept' if finding.get('decision') == 'keep' else 'dropped'}:** {finding['reason'].strip()}"]
+    return lines + [""]
+
+
+def render_review(data: dict[str, Any], code: str) -> str:
+    """A reviewer's findings.json, for people."""
+
+    findings = data.get("findings", [])
+    lines = [f"# Reviewer {code}: {len(findings)} finding(s)", ""]
+    for finding in findings:
+        lines += _finding_lines(finding)
+    tests = data.get("tests") or {}
+    lines += ["## Tests", "", f"Fail without the fix: {tests.get('fail_without_fix', '?')}. {tests.get('note', '')}".strip(), ""]
+    for mutation in tests.get("mutations", []):
+        lines.append(f"- {mutation.get('outcome')}: `{mutation.get('location')}`, {mutation.get('change')}")
+    for key, title in (("standards", "Standards read"), ("preexisting", "Already there before this change")):
+        if data.get(key):
+            lines += ["", f"## {title}", ""]
+            for item in data[key]:
+                label = item.get("standard") or item.get("title") or "?"
+                note = item.get("note") or item.get("description") or ""
+                lines.append(f"- **{label}:** {note}")
+    if data.get("earlier"):
+        lines += ["", "## The round before", ""]
+        lines += [f"- {e.get('item')}: {e.get('status')}. {e.get('note', '')}" for e in data["earlier"]]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_final(data: dict[str, Any]) -> str:
+    """The judge's final.json, for people."""
+
+    routing = data.get("routing") or {}
+    lines = [f"# Verdict: {data['verdict']}", "", data.get("summary", "").strip(), ""]
+    if routing.get("route") and routing["route"] != "none":
+        lines += [f"Fixes go to: {routing['route']} (share {routing.get('share')}). {routing.get('estimate', '')}".strip(), ""]
+    kept = [f for f in data["findings"] if f.get("decision") == "keep"]
+    dropped = [f for f in data["findings"] if f.get("decision") != "keep"]
+    for title, group in (("Kept", kept), ("Dropped", dropped)):
+        if group:
+            lines += [f"## {title}", ""]
+            for finding in group:
+                lines += _finding_lines(finding, f" · from {', '.join(finding.get('sources', []))} ({finding.get('agreement')})")
+    if data.get("decisions"):
+        lines += ["## Decisions for the maintainer", ""]
+        for item in data["decisions"]:
+            if isinstance(item, dict):
+                lines.append(f"- {item.get('question', '')} **Recommendation:** {item.get('recommendation', '')}")
+            else:
+                lines.append(f"- {item}")
+        lines.append("")
+    if data.get("preexisting"):
+        lines += ["## Already there before this change (for the maintainer only)", ""]
+        for item in data["preexisting"]:
+            flag = " [security]" if item.get("security") else ""
+            lines.append(f"- **{item.get('title')}**{flag} (`{item.get('location', '')}`): {item.get('description', '')}")
+        lines.append("")
+    if data.get("earlier"):
+        lines += ["## The round before", ""]
+        lines += [f"- {e.get('item')}: {e.get('status')}. {e.get('note', '')}" for e in data["earlier"]]
+    return "\n".join(lines).rstrip() + "\n"

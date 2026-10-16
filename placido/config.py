@@ -14,7 +14,7 @@ from typing import Any
 AGENTS = ("claude", "codex", "pi")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TIERS = ("fast", "default")
-ROLES = ("spec", "implement", "review", "fix", "retro", "scan", "judge")
+ROLES = ("spec", "implement", "review", "fix", "retro", "scan", "judge", "verify")
 
 DEFAULT_MODELS = {"claude": "opus", "codex": "gpt-6.1-sol", "pi": "deepseek/deepseek-v4.1-flash"}
 
@@ -27,9 +27,12 @@ DEFAULTS: dict[str, Any] = {
         "implement": {"agent": "claude", "model": "opus", "effort": "high"},
         "review": {"agent": "codex", "model": "gpt-6.1-sol", "effort": "max", "tier": "fast"},
         # `placido pr`: the scan reads an outside contributor's pull request before any of
-        # its code runs, confined; the judge settles the two reviews into the final one.
+        # its code runs, confined; the judge settles the reviews into the final one, at high
+        # rather than xhigh since #588's judge spent nine minutes re-checking what both
+        # reviewers had confirmed (2026-10-16). `verify`, which checks the fixes made to a
+        # pull request, follows `review`: another vendor than the fixer's.
         "scan": {"agent": "claude", "model": "opus", "effort": "high"},
-        "judge": {"agent": "claude", "model": "opus", "effort": "xhigh"},
+        "judge": {"agent": "claude", "model": "opus", "effort": "high"},
     },
     # Tried in order when a role's agent refuses, runs out of quota, or cannot run. Codex's
     # gpt-daybreak-blue-latest led this chain until ChatGPT logins lost it (2026-10-05).
@@ -55,6 +58,10 @@ DEFAULTS: dict[str, Any] = {
         # MCP servers run on this machine when an agent starts in the worktree.
         "host_paths": [".placido", ".claude", ".codex", ".mcp.json"],
         "contributor_share": 0.5,
+        # Reviewers at once, each in a worktree and stack of its own; and how many times a
+        # failed check of the fixes sends them back to the fixer (decided 2026-10-16).
+        "parallel": True,
+        "fix_rounds": 2,
     },
 }
 
@@ -117,6 +124,8 @@ class PRSettings:
     gates: tuple[str, ...]  # command names placido runs once, before the reviews
     host_paths: tuple[str, ...]  # a pull request changing these waits for the user's approval
     contributor_share: float  # fixes this big, against the pull request, go back to its author
+    parallel: bool = True  # reviewers at once, each in a worktree and stack of its own
+    fix_rounds: int = 2  # times a failed check of the fixes sends them back to the fixer
 
 
 @dataclass(frozen=True)
@@ -333,7 +342,9 @@ def _pr(
     # bool is a subclass of int, so check exactly: `true` is not a share.
     if type(share) not in (int, float) or not 0 < share <= 1:
         raise ConfigError(f"pr.contributor_share: must be a number above 0 and at most 1, not {share!r}")
-    return PRSettings(tuple(reviewers), tuple(names), tuple(host_paths), float(share))
+    parallel = _typed(table, "parallel", DEFAULTS["pr"]["parallel"], "pr")
+    fix_rounds = _typed(table, "fix_rounds", DEFAULTS["pr"]["fix_rounds"], "pr")
+    return PRSettings(tuple(reviewers), tuple(names), tuple(host_paths), float(share), parallel, fix_rounds)
 
 
 def _resolve(data: dict[str, Any], source: Path | None) -> Config:
@@ -357,6 +368,9 @@ def _resolve(data: dict[str, Any], source: Path | None) -> Config:
         if name == "retro":  # a retro is judgment about the project, like the spec interview
             specifier = roles["spec"]
             base, chain = vars(specifier.agent), specifier.fallback
+        if name == "verify":  # checking fixes is a review, by another vendor than the fixer's
+            reviewer = roles["review"]
+            base, chain = vars(reviewer.agent), reviewer.fallback
         spec = _agent(entry, base, where, extra=("fallback",))
         if "fallback" in entry:
             chain = _chain(entry["fallback"], f"{where}.fallback")
@@ -441,6 +455,8 @@ def describe(config: Config, start: Path) -> str:
         f"{'host paths'.ljust(10)} {', '.join(config.pr.host_paths) or '-'}",
         f"{'share'.ljust(10)} {config.pr.contributor_share:g} (fixes this big, against the pull"
         " request, go back to its author)",
+        f"{'parallel'.ljust(10)} {str(config.pr.parallel).lower()}",
+        f"{'fix rounds'.ljust(10)} {config.pr.fix_rounds}",
     ]
     settings = {
         "implement.test_first": str(config.test_first).lower(),

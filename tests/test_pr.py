@@ -1,12 +1,12 @@
+import copy
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from placido import config, pr, pragents, prcheck, prgh, runlog
 from placido.herdr import Herdr
 from placido.outcomes import Failure
-from placido.step import StepResult, next_step_number
+from placido.step import StepResult
 from tests.test_start import StartTestCase, make_repo, sh
 
 CONFIG = """
@@ -101,15 +101,25 @@ class FakeRunner:
         self.final: dict | None = None  # the judge's final.json; None: one built from the findings
         self.during: dict[str, Any] = {}  # step name -> something the agent does to the worktree
         self.fix_change = True
+        self.verify: list[dict] = []  # per check of a fix: its verify.json; none left: all resolved
+        self.env: dict[str, str] = {}
 
-    def __call__(self, role, spec, task, name=None, check=None, keep_open=False, ask=None, confined=None):
+    def lane(self, worktree: Path, env: dict[str, str]) -> "FakeRunner":
+        """The runner of a reviewer's lane: the same script and log, another worktree."""
+
+        clone = copy.copy(self)
+        clone.worktree, clone.env = worktree, env
+        return clone
+
+    def __call__(self, role, spec, task, name=None, check=None, keep_open=False, ask=None, confined=None, folder=None):
         self.calls.append({"how": "start", "role": role, "spec": spec, "name": name, "keep_open": keep_open,
-                           "confined": confined, "task": task})
-        return self._play(name, check)
+                           "confined": confined, "task": task, "cwd": self.worktree, "env": self.env})
+        return self._play(name, check, folder)
 
-    def resume(self, role, kind, agent, pane, task, name=None, check=None, keep_open=False, ask=None):
-        self.calls.append({"how": "resume", "role": role, "agent": agent, "name": name, "task": task})
-        return self._play(name, check)
+    def resume(self, role, kind, agent, pane, task, name=None, check=None, keep_open=False, ask=None, folder=None):
+        self.calls.append({"how": "resume", "role": role, "agent": agent, "name": name, "task": task,
+                           "cwd": self.worktree})
+        return self._play(name, check, folder)
 
     def close_agent(self, agent, pane, folder, kind):
         self.closed.append(agent)
@@ -117,8 +127,8 @@ class FakeRunner:
     def names(self) -> list[str]:
         return [c["name"] for c in self.calls]
 
-    def _play(self, name: str, check) -> StepResult:
-        folder = self.run.step_dir(next_step_number(self.run), name)
+    def _play(self, name: str, check, folder: Path | None = None) -> StepResult:
+        folder = folder or self.run.new_step_dir(name)
         queued = self.failures.get(name)
         if queued:
             kind = queued.pop(0)
@@ -178,11 +188,22 @@ class FakeRunner:
             "earlier": [{"item": i, "status": "addressed", "note": "fixed"} for i in self.earlier],
         }
 
+    def _verify(self, folder: Path, kind: str) -> None:
+        listed = sorted((self.run.path / "rounds").glob("*/fix-findings-*.json"), key=lambda p: p.stat().st_mtime)
+        ids = [f["id"] for f in json.loads(listed[-1].read_text())["findings"]]
+        data = self.verify.pop(0) if self.verify else {
+            "verdicts": [{"id": i, "verdict": "resolved", "note": "the test fails without the fix"} for i in ids],
+            "findings": [],
+        }
+        (folder / "verify.json").write_text(json.dumps(data))
+
     def _fix(self, folder: Path, kind: str) -> None:
-        resolutions = [{"id": "F1", "status": "fixed", "note": "changed greet.py, test added"}]
+        listed = sorted((self.run.path / "rounds").glob("*/fix-findings-*.json"), key=lambda p: p.stat().st_mtime)
+        ids = [f["id"] for f in json.loads(listed[-1].read_text())["findings"]] if listed else ["F1"]
+        resolutions = [{"id": i, "status": "fixed", "note": "changed greet.py, test added"} for i in ids]
         (folder / "resolutions.json").write_text(json.dumps({"resolutions": resolutions}))
         if self.fix_change:
-            (self.worktree / "greet.py").write_text("print('hello')\n")
+            (self.worktree / "greet.py").write_text(f"print('hello {kind}')\n")
             (folder / "result.md").write_text("Greet properly\n\nThe review asked for it.\n\n## Evidence\n- unit passed\n")
         else:
             (folder / "result.md").write_text("No code changes\n")

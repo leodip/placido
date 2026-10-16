@@ -688,14 +688,22 @@ them are the risk, not only the change's quality.
   because an agent started in the worktree runs their hooks and servers on this
   machine. Reviewers still run with approvals bypassed: they need Docker for the tests,
   and Docker is root on the host anyway.
-- **Two reviewers from different vendors, one after the other.** Two at once in one
-  worktree and one stack would spoil each other's mutations and test runs; two
-  worktrees and stacks would double the resources and bring placido's first
-  concurrent steps. The user first chose parallel worktrees, then sequential once the
-  trade-off was laid out; `[pr] parallel` can come later.
+- **Two reviewers from different vendors, at once, each in a lane.** Two in one
+  worktree and one stack would spoil each other's mutations and test runs, so each
+  reviewer gets a lane: the pull request's worktree for the first, a detached worktree
+  in the run's folder for each other, each with the stack the project's setup brings up
+  there under its own `PLACIDO_NAME`. They first ran one after the other; #588 showed
+  why that was slow (below), and `[pr] parallel` now defaults on. Steps that run at once
+  take their folders under the run log's lock (`Run.new_step_dir`) and hand them to the
+  step, since their prompts name them.
 - **Cross-check, then a judge.** Each reviewer, resumed with its context, gives every
   other finding a verdict; a fresh judge settles them, and placido checks that every
-  reviewer finding is accounted for exactly once, so nothing is dropped silently.
+  reviewer finding is accounted for exactly once, so nothing is dropped silently. The
+  judge is told which findings the cross-checks settled, and verifies only the rest.
+- **Fixes are checked before they are pushed.** A fix made here goes to the `verify`
+  role, by default another vendor than the fixer's, which judges each finding's fix and
+  reads the fixes for new problems; what it leaves open goes back to the fixer, up to
+  `[pr] fix_rounds` times, and the push says whether the fixes passed.
 - **Who fixes is a rule, not a mood.** Fixes estimated at `contributor_share` (0.5) of
   the pull request's own size or more go back to the contributor, all of them;
   smaller ones are made here, on the contributor's branch, so the pull request stays
@@ -2176,4 +2184,30 @@ ran:
   own check of the host paths, so a test could write there and ride into the fix's
   commit; the host paths are verified again right before it. Seventeen deliberate
   mutations of the new guards were each caught by the tests. 605 tests pass.
+- The first real run, Goiabada #588 (a 235-line fix to how an email body's language is
+  picked), took about 45 minutes to the menu: scan 43s, setup 46s, gates 5m, Claude's
+  review 11m, Codex's 6.5m, cross-checks 4m, the judge 9m. Claude's review spent 19s of
+  its 662 waiting on tools, so nearly all of it was the model; the judge produced 43k
+  tokens, re-checking what both reviewers had confirmed, and wrote 171 lines of Markdown
+  repeating its JSON. The review itself was good: Claude at xhigh found a blocking bug
+  (an unrelated language's copy, or a `.bak` backup parsed as Bashkir, sent where English
+  was), which Codex confirmed in its cross-check; the fix was one line.
+- From that run, with the user: reviewers at once in lanes (`[pr] parallel`, default
+  on); the setup while the scan reads, when the pull request changes no host path; the
+  judge at high, told what the cross-checks settled; the agents writing JSON alone, which
+  placido renders (`prcheck.render_review`, `render_final`); and the fixer running only
+  narrow tests, since placido runs the gates after it anyway. The reviewers stay at
+  xhigh and max: their depth found the bug.
+- Also from #588: a fix made here went out checked by the gates alone. A `verify` step
+  now checks every fix, by another vendor, and loops back to the fixer up to
+  `fix_rounds` times. The judge writes a fix-here comment in the past tense, since it is
+  posted after the push. Agents no longer install packages or build sites on the host
+  for a pull request: #588's fixer ran `npm install` and a site build in the worktree,
+  harmless there since the pull request changed no package file, but host-side code all
+  the same. `placido close` records a reviewed run's outcome (reviewed, merged, closed)
+  rather than "abandoned", and tears every lane down.
+- A test of the run log's lock first could not fail: one `O_APPEND` write per line is
+  atomic on Linux, and the interpreter rarely switches threads between `print`'s two
+  writes. It now runs eight threads through a live view that yields on every write, and
+  without the lock the lines interleave every time.
 

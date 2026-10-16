@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, TextIO
 
 Clock = Callable[[], datetime]
+
+# One writer at a time across threads, such as `placido pr`'s reviewers running at once:
+# an event line, or the number a new step folder takes.
+WRITING = threading.RLock()
 
 
 def local_now() -> datetime:
@@ -70,17 +75,27 @@ class Run:
     def event(self, kind: str, /, **fields: Any) -> dict[str, Any]:
         """Append one event; the file is closed after every line so a crash loses nothing."""
 
-        record = {"ts": self.clock().isoformat(timespec="milliseconds"), "event": kind, **fields}
-        with self.events_path.open("a", encoding="utf-8") as log:
-            log.write(json.dumps(record, ensure_ascii=False) + "\n")
-        if self.echo is not None:
-            print(format_event(record), file=self.echo, flush=True)
+        with WRITING:
+            record = {"ts": self.clock().isoformat(timespec="milliseconds"), "event": kind, **fields}
+            with self.events_path.open("a", encoding="utf-8") as log:
+                log.write(json.dumps(record, ensure_ascii=False) + "\n")
+            if self.echo is not None:
+                print(format_event(record), file=self.echo, flush=True)
         return record
 
     def step_dir(self, number: int, name: str) -> Path:
         path = self.path / "steps" / f"{number:02d}-{name}"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def new_step_dir(self, name: str) -> Path:
+        """The next step's folder, made at once under the lock, so steps starting at the
+        same time never take the same number."""
+
+        with WRITING:
+            steps = self.path / "steps"
+            number = 1 + (len([p for p in steps.iterdir() if p.is_dir()]) if steps.is_dir() else 0)
+            return self.step_dir(number, name)
 
 
 def read_events(path: Path) -> Iterator[dict[str, Any]]:

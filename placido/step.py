@@ -248,6 +248,7 @@ class Step:
         keep_open: bool = False,
         ask: Callable[[Path], str | None] | None = None,
         confined: tuple[Path, ...] | None = None,
+        folder: Path | None = None,
     ) -> StepResult:
         """Run the step. An interactive step is a conversation with the user, so an idle
         agent is waiting for them rather than done. check, given the result file,
@@ -256,11 +257,13 @@ class Step:
         user is brought to the agent's tab, and the step goes on once the agent writes
         its result again. The agent's tab is closed afterwards, once its output is safe,
         unless keep_open. confined, the folders the agent may read: it then starts in its
-        step folder, confined as CONFINABLE describes, rather than in the worktree."""
+        step folder, confined as CONFINABLE describes, rather than in the worktree. folder:
+        one the caller made already (runlog.Run.new_step_dir), as steps that run at once
+        must, since their prompts name it."""
 
         if confined is not None and spec.agent not in CONFINABLE:
             raise ValueError(f"{spec.agent} cannot run confined")
-        folder, prompt, result = self._new_step(name or role, task)
+        folder, prompt, result = self._new_step(name or role, task, folder)
         began = self.clock()
         self.run.event("step.start", step=folder.name, role=role)
 
@@ -300,19 +303,20 @@ class Step:
         check: Callable[[Path], list[str]] | None = None,
         keep_open: bool = False,
         ask: Callable[[Path], str | None] | None = None,
+        folder: Path | None = None,
     ) -> StepResult:
         """A new step with an agent kept open by an earlier one, such as the reviewer in a
         later round, whose resumed session keeps its context and its cache."""
 
-        folder, prompt, result = self._new_step(name or role, task)
+        folder, prompt, result = self._new_step(name or role, task, folder)
         began = self.clock()
         self.run.event("step.start", step=folder.name, role=role, resumed=agent)
         return self._conduct(
             agent, pane, folder, prompt, result, kind, began, "work", False, check, keep_open, ask
         )
 
-    def _new_step(self, name: str, task: str) -> tuple[Path, Path, Path]:
-        folder = self.run.step_dir(next_step_number(self.run), name)
+    def _new_step(self, name: str, task: str, folder: Path | None = None) -> tuple[Path, Path, Path]:
+        folder = folder or self.run.new_step_dir(name)
         prompt, result = folder / "prompt.md", folder / "result.md"
         prompt.write_text(task.rstrip() + FOOTER.format(result=result), encoding="utf-8")
         return folder, prompt, result

@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 from unittest import mock
 
 from placido import pr, pragents, prgh, prmenu, runlog
@@ -145,7 +144,7 @@ class FixAndPushTest(MenuTestCase):
 
     def test_a_fix_that_touches_a_host_path_is_refused(self):
         rnd = self.review()
-        self.runner.during["r1-fix"] = lambda wt: (wt / ".placido" / "stack.sh").write_text("evil\n")
+        self.runner.during["r1-fix-1"] = lambda wt: (wt / ".placido" / "stack.sh").write_text("evil\n")
         with self.assertRaisesRegex(pr.PRStop, "the fix did not finish"):
             self.act("fix", rnd)
         self.assertIn("which run on this machine; undo those changes", self.runner.problems[-1][1][0])
@@ -291,3 +290,98 @@ class FixGatesTest(MenuTestCase):
         with self.assertRaisesRegex(pr.PRStop, r"\.placido/stack\.sh changed since they were trusted"):
             self.act("fix", rnd)
         self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD"), self.head)
+
+
+class VerifyTest(MenuTestCase):
+    def failing(self, note: str = "ru still gets the sr copy") -> dict:
+        return {
+            "verdicts": [{"id": "F1", "verdict": "unresolved", "note": note}],
+            "findings": [{
+                "id": "V1", "area": "bugs", "severity": "significant", "size": "small", "location": "greet.py:1",
+                "title": "the fix broke es-MX", "description": "d", "evidence": "a test", "fix": "f",
+            }],
+        }
+
+    def test_a_fix_is_checked_by_another_vendor_before_it_is_offered(self):
+        rnd = self.review()
+        self.act("fix", rnd)
+        checked = runlog.last_event(self.run.path, "pr.verified")
+        self.assertEqual((checked["passed"], checked["agent"]), (True, "codex"))
+        verify = next(c for c in self.runner.calls if c["name"] == "r1-verify-1")
+        self.assertEqual(verify["spec"].agent, "codex")
+        self.assertIn("resolutions.json", verify["task"])
+        self.assertIn(f"log -p {self.head[:12]}..", verify["task"])
+        listed, _ = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
+        self.assertIn(("push", "Push the 1 commit(s) made here, checked, to alice/proj:greeting"), listed)
+        self.assertNotIn("fix", [k for k, _ in listed])
+
+    def test_what_the_check_leaves_open_goes_back_to_the_fixer(self):
+        rnd = self.review()
+        self.runner.verify = [self.failing()]
+        self.act("fix", rnd)
+        self.assertEqual([c["name"] for c in self.runner.calls if "fix" in c["name"] or "verify" in c["name"]],
+                         ["r1-fix-1", "r1-verify-1", "r1-fix-2", "r1-verify-2"])
+        second = json.loads((rnd.folder / "fix-findings-2.json").read_text())["findings"]
+        self.assertEqual([f["id"] for f in second], ["F1", "V1-1"])
+        self.assertEqual(second[0]["check"], "unresolved: ru still gets the sr copy")
+        verdicts = [e["passed"] for e in runlog.read_events(self.run.path) if e["event"] == "pr.verified"]
+        self.assertEqual(verdicts, [False, True])
+        self.assertIn("checked", dict(prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0])["push"])
+
+    def test_a_minor_new_problem_does_not_send_the_fix_back(self):
+        rnd = self.review()
+        data = self.failing()
+        data["verdicts"][0]["verdict"] = "resolved"
+        data["findings"][0]["severity"] = "minor"
+        self.runner.verify = [data]
+        self.act("fix", rnd)
+        self.assertNotIn("r1-fix-2", self.runner.names())
+        self.assertTrue(runlog.last_event(self.run.path, "pr.verified")["passed"])
+
+    def test_with_no_round_left_the_push_says_the_check_failed(self):
+        rnd = self.review()
+        self.settings = self.load(
+            CONFIG_WITH_ROUNDS.format(rounds=0)
+        )
+        self.ctx = self.context()
+        self.runner.verify = [self.failing()]
+        self.act("fix", rnd)
+        self.assertNotIn("r1-fix-2", self.runner.names())
+        listed = dict(prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0])
+        self.assertEqual(listed["push"], "Push anyway: the check left 2 item(s) open (alice/proj:greeting)")
+        self.assertEqual(listed["fix"], "Send the 2 item(s) the check left open back to the fixer, then check again")
+        self.act("push", rnd)  # declined
+        self.assertIn("The check of the fixes left items open.", self.confirmed[-1])
+        self.act("fix", rnd)  # the open items, once more
+        third = json.loads((rnd.folder / "fix-findings-2.json").read_text())["findings"]
+        self.assertEqual([f["id"] for f in third], ["F1", "V1-1"])
+        self.assertTrue(runlog.last_event(self.run.path, "pr.verified")["passed"])
+
+    def test_check_verify(self):
+        from placido import prcheck
+
+        path = self.tmp / "verify.json"
+        path.write_text(json.dumps({"verdicts": [
+            {"id": "F1", "verdict": "resolved", "note": "ok"},
+            {"id": "F9", "verdict": "fixed", "note": "?"},
+        ], "findings": [{"id": "V2", "area": "bugs", "severity": "minor", "size": "small",
+                         "title": "t", "description": "d", "evidence": "e", "fix": "f"}]}))
+        problems = prcheck.check_verify(path, ["F1", "F2"])
+        self.assertIn("F2 needs exactly one verdict; it has 0.", problems)
+        self.assertTrue(any("needs an id, a verdict of resolved, unresolved" in p for p in problems))
+        self.assertIn("finding 1 has id 'V2'; it should be V1.", problems)
+
+
+CONFIG_WITH_ROUNDS = """
+[project]
+base = "main"
+[commands.unit]
+run = "true"
+[commands.lint]
+run = "true"
+[gates]
+slice = ["unit"]
+final = ["lint"]
+[pr]
+fix_rounds = {rounds}
+"""
