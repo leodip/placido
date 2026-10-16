@@ -271,7 +271,9 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
     if s.waiting:
         out.append(("ci", f"Approve the {len(s.waiting)} CI run(s) waiting for a maintainer"))
     if not s.ahead and (s.verdict == "merge" or s.pushed or (s.fixed and not s.fixes)):
-        out.append(("merge", f"Squash-merge into {s.pull.base}, pinned to {s.pull.head_sha[:12]} (CI {s.ci})"))
+        when = (f" once CI is green (placido waits up to {config.format_duration(ctx.settings.ci_wait)})"
+                if s.ci == "pending" else "")
+        out.append(("merge", f"Squash-merge into {s.pull.base}{when}, pinned to {s.pull.head_sha[:12]} (CI {s.ci})"))
     out.append(("close", "Close the pull request, posting the comment if it is not posted"))
     out.append(("quit", f"Nothing more now: placido pr {s.pull.number} shows this again"))
     return out, notes
@@ -412,29 +414,42 @@ def merge(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
     head = s.pull.head_sha
     if head not in covered:
         raise PRStop(f"the pull request's head is {head[:12]}, which this review did not cover; run placido pr again")
-    ci = s.ci
-    if ci == "pending":
-        if not confirm(f"CI is still running on {head[:12]}. Wait for it (up to {config.format_duration(ctx.settings.ci_wait)})?"):
-            return
-        ci, _ = github._await_ci(ctx.hub, s.pull.number, head, ctx.settings.ci_wait, time.sleep, time.monotonic,
-                                 github._progress(ctx.run, f"CI on #{s.pull.number}"))
+    ci, number, wait = s.ci, s.pull.number, config.format_duration(ctx.settings.ci_wait)
+    if s.waiting:
+        raise PRStop(f"{len(s.waiting)} CI run(s) on {head[:12]} wait for a maintainer's approval, so CI cannot"
+                     " finish: approve them, with the merge if you like")
     if ci == "red":
         raise PRStop(f"CI is red on {head[:12]}; see {s.pull.url}/checks")
     if ci in ("none", "unknown") and not confirm(f"CI shows no result on {head[:12]}. Merge anyway?"):
         return
     drafted = rnd.folder / "merge.md"
     # Without the judge's draft (a request for changes fixed here instead), GitHub's own.
-    text = drafted.read_text(encoding="utf-8") if drafted.is_file() else f"{s.pull.title} (#{s.pull.number})"
+    text = drafted.read_text(encoding="utf-8") if drafted.is_file() else f"{s.pull.title} (#{number})"
     lines = text.strip().splitlines()
     subject = lines[0].strip()
     body = rnd.folder / "merge-body.md"
     body.write_text("\n".join(lines[1:]).strip() + "\n", encoding="utf-8")
-    if not confirm(f"Squash-merge #{s.pull.number} into {s.pull.base} as \"{subject}\"?"):
+    # Pending CI is waited out here, and the merge follows its green without asking again,
+    # so the user can leave it (decided 2026-10-16).
+    later = f" once CI is green on {head[:12]}? Placido waits up to {wait} and merges then" if ci == "pending" else "?"
+    if not confirm(f"Squash-merge #{number} into {s.pull.base} as \"{subject}\"{later}"):
         return
-    ctx.hub.merge(s.pull.number, head, subject, body)
+    if ci == "pending":
+        ctx.run.event("pr.merge_waiting", round=rnd.number, head=head)
+        status.show(ctx.run.path, status.text(status.WAITING, f"CI on #{number}, then the merge"))
+        ci, failed = github._await_ci(ctx.hub, number, head, ctx.settings.ci_wait, time.sleep, time.monotonic,
+                                      github._progress(ctx.run, f"CI on #{number}"))
+        if ci != "green":
+            why = {"red": f"CI went red on {head[:12]} ({', '.join(c.get('name', '?') for c in failed)})",
+                   "pending": f"CI was still running on {head[:12]} after {wait}"}.get(ci, f"CI showed no result on {head[:12]}")
+            pr.notify(ctx, "not merged", f"#{number}: {why}")
+            raise PRStop(f"{why}; nothing was merged. See {s.pull.url}/checks")
+    ctx.hub.merge(number, head, subject, body)
     ctx.run.event("pr.merged", round=rnd.number, head=head, subject=subject)
-    status.show(ctx.run.path, status.text(status.DONE, f"merged; placido close pr-{s.pull.number}"))
-    print(f"merged #{s.pull.number}; placido close pr-{s.pull.number} tears its worktree and stack down")
+    status.show(ctx.run.path, status.text(status.DONE, f"merged; placido close pr-{number}"))
+    if later != "?":
+        pr.notify(ctx, "merged", f"#{number} into {s.pull.base} once CI was green; placido close pr-{number}")
+    print(f"merged #{number}; placido close pr-{number} tears its worktree and stack down")
 
 
 def close_pr(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:

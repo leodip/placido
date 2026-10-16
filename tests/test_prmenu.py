@@ -201,6 +201,55 @@ class MergeTest(MenuTestCase):
         self.assertEqual(self.hub.calls[-1], ("merge", fix, "Add a greeting (#7)", "It greets.\n"))
         self.assertIn("pr.merged", self.kinds())
 
+    def test_pending_ci_is_waited_out_then_merged_without_asking_again(self):
+        rnd, fix = self.fixed_and_pushed()
+        self.hub.ci = [{"name": "unit", "bucket": "pending"}]
+        listed, _ = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
+        self.assertIn("Squash-merge into main once CI is green (placido waits up to 1h)", dict(listed)["merge"])
+        self.confirms = [True]
+        polls = []
+
+        def sleep(seconds):
+            polls.append(seconds)
+            self.hub.ci = [{"name": "unit", "bucket": "pass"}]
+
+        with mock.patch.object(prmenu.time, "sleep", sleep):
+            self.act("merge", rnd)
+        self.assertEqual(len(polls), 1)
+        self.assertEqual(self.confirmed[-1], f'Squash-merge #7 into main as "Add a greeting (#7)" once CI is green on'
+                                             f" {fix[:12]}? Placido waits up to 1h and merges then")
+        self.assertEqual(self.hub.calls[-1][:2], ("merge", fix))
+        self.assertEqual([k for k in self.kinds() if k in ("pr.merge_waiting", "pr.merged")], ["pr.merge_waiting", "pr.merged"])
+
+    def test_ci_that_goes_red_while_waited_on_merges_nothing(self):
+        rnd, _ = self.fixed_and_pushed()
+        self.hub.ci = [{"name": "unit", "bucket": "pending"}]
+        self.confirms = [True]
+
+        def sleep(seconds):
+            self.hub.ci = [{"name": "unit", "bucket": "fail"}]
+
+        with mock.patch.object(prmenu.time, "sleep", sleep), self.assertRaisesRegex(pr.PRStop, "CI went red on .* .unit.; nothing was merged"):
+            self.act("merge", rnd)
+        self.assertNotIn("merge", [c[0] for c in self.hub.calls])
+        self.assertNotIn("pr.merged", self.kinds())
+
+    def test_declining_merges_nothing_and_waits_for_nothing(self):
+        rnd, _ = self.fixed_and_pushed()
+        self.hub.ci = [{"name": "unit", "bucket": "pending"}]
+        self.confirms = [False]
+        self.act("merge", rnd)
+        self.assertNotIn("merge", [c[0] for c in self.hub.calls])
+        self.assertNotIn("pr.merge_waiting", self.kinds())
+
+    def test_ci_runs_held_for_approval_are_not_waited_on(self):
+        rnd, _ = self.fixed_and_pushed()
+        self.hub.ci = [{"name": "unit", "bucket": "pending"}]
+        self.hub.waiting = [{"databaseId": 5}]
+        with self.assertRaisesRegex(pr.PRStop, "1 CI run.s. on .* wait for a maintainer's approval"):
+            self.act("merge", rnd)
+        self.assertNotIn("pr.merge_waiting", self.kinds())
+
     def test_red_ci_refuses(self):
         rnd, _ = self.fixed_and_pushed()
         self.hub.ci = [{"name": "unit", "bucket": "fail"}]
