@@ -715,6 +715,12 @@ them are the risk, not only the change's quality.
   is never forced. Once merged, the host paths are held to the base's tip, which the
   maintainer owns; a pull request that changes host paths is not merged into, and is
   fixed on its own base.
+- **The last gates on demand.** The checks an issue run keeps for after the review,
+  such as Goiabada's browser suite against a deployment built from the branch, are a
+  menu option, run on the worktree as it is (the pull request with the fixes made
+  here), shown as they run and logged in the round's folder. They run before a push
+  picked with them, so a failure stops it. Whatever such a gate runs from the
+  worktree on this machine belongs among the host paths.
 - **Who fixes is a rule, not a mood.** Fixes estimated at `contributor_share` (0.5) of
   the pull request's own size or more go back to the contributor, all of them;
   smaller ones are made here, on the contributor's branch, so the pull request stays
@@ -2247,3 +2253,10 @@ ran:
   print it in full and ask. Every one of eleven mutations of the new guards was caught;
   a twelfth, a round filter on the kept fixer, survived because a new round closes every
   kept agent, so the filter was dead and went. 641 tests pass.
+- From #593, with the user: the menu runs the project's last gates on demand, Goiabada's
+  browser suite on the VPS built from the branch (`.placido/e2e.sh`, `e2e/run.sh
+  --source`), before a push picked with them. That script is trusted, but it runs the
+  worktree's `e2e/` scripts and installs its suite's packages here, with the SSH key the
+  VPS accepts, so Goiabada's `e2e` joined its host paths. The menu's editor falls back
+  to nano rather than vi. Eleven mutations of the new guards were each caught. 649
+  tests pass.

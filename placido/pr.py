@@ -679,6 +679,42 @@ def gates(ctx: Context, rnd: Round) -> None:
     run.event("pr.gates", round=rnd.number, results={n: r["exit"] for n, r in results.items()})
 
 
+def last_gates(ctx: Context, rnd: Round, echo: TextIO) -> dict[str, int]:
+    """The project's last gates, run when the user picks them at the menu: the costly
+    checks an issue run keeps for after the review, such as a browser suite against a
+    real deployment. Each runs on the worktree as it is now, the fixes made here
+    included, its output shown as it comes and kept in the round's folder."""
+
+    run, wt = ctx.run, ctx.worktree
+    head = git(wt, "rev-parse", "HEAD")
+    attempt = len(round_events(run.path, "pr.last_gates", rnd.number)) + 1
+    results: dict[str, int] = {}
+    for name in ctx.settings.last_gates:
+        verify_host_paths(ctx, rnd, f"the {name} gate")
+        status.show(run.path, status.text(status.WORKING, f"last gate {name}"))
+        command = ctx.settings.commands[name].run
+        run.event("gate.start", gate=name, command=command)
+        began = time.monotonic()
+        log = rnd.folder / "last-gates" / f"{attempt}-{name}.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("w", encoding="utf-8") as out:
+            proc = subprocess.Popen(
+                command, shell=True, cwd=wt, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                env={**os.environ, **ctx.env},
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                out.write(line)
+                echo.write(line)
+                echo.flush()
+            code = proc.wait()
+        run.event("gate.end", gate=name, exit=code, seconds=round(time.monotonic() - began, 1))
+        settle(ctx, rnd, f"the {name} gate")
+        results[name] = code
+    run.event("pr.last_gates", round=rnd.number, attempt=attempt, head=head, results=results)
+    return results
+
+
 def gates_text(rnd: Round, results: dict[str, dict[str, Any]]) -> str:
     if not results:
         return "# Gates\n\nThe project names no gates for pull requests.\n"

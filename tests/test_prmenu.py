@@ -4,7 +4,7 @@ from contextlib import redirect_stdout
 from unittest import mock
 
 from placido import pr, pragents, prgh, prmenu, runlog
-from tests.test_pr import PRTestCase, git_commit, sh
+from tests.test_pr import CONFIG, PRTestCase, git_commit, sh
 
 
 class MenuTestCase(PRTestCase):
@@ -85,6 +85,22 @@ class OptionsTest(MenuTestCase):
         listed, notes = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
         self.assertEqual([k for k, _ in listed], ["quit"])
         self.assertIn("placido close pr-7", notes[0])
+
+
+class EditTest(MenuTestCase):
+    def editor_used(self, environ: dict[str, str]) -> str:
+        with mock.patch.dict("os.environ", environ), mock.patch.object(prmenu.subprocess, "run") as run:
+            for name in ("VISUAL", "EDITOR"):
+                if name not in environ:
+                    prmenu.os.environ.pop(name, None)
+            prmenu._edit(self.tmp / "comment.md")
+        return run.call_args.args[0][0]
+
+    def test_nano_unless_the_user_chose_an_editor(self):
+        self.assertEqual(self.editor_used({}), "nano")
+
+    def test_the_users_editor_wins(self):
+        self.assertEqual(self.editor_used({"EDITOR": "vim"}), "vim")
 
 
 class PostTest(MenuTestCase):
@@ -597,6 +613,92 @@ class BaseMergeTest(MenuTestCase):
         close.close(self.run, Herdr(self.fake), self.settings, force=False)
         self.assertNotIn("close.host_paths_restored", self.kinds())
         self.assertFalse(self.worktree.exists())
+
+
+class LastGatesTest(MenuTestCase):
+    """The project's last gates, which an issue run keeps for after the review, run on
+    demand from the menu."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.settings = self.load(CONFIG.replace('final = ["lint"]', 'final = ["lint"]\nlast = ["e2e"]') + (
+            '[commands.e2e]\nrun = "echo the browser suite ran; '
+            '[ -z \\"$E2E_TOUCH\\" ] || echo x >> greet.py; exit ${E2E_EXIT:-0}"\n'
+        ))
+        self.ctx = self.context()
+
+    def local_head(self) -> str:
+        return sh(self.worktree, "git", "rev-parse", "HEAD")
+
+    def run_last(self, rnd: pr.Round) -> str:
+        shown = io.StringIO()
+        with redirect_stdout(shown):
+            self.act("last", rnd)
+        return shown.getvalue()
+
+    def test_they_run_on_the_worktree_as_it_is_and_say_how_it_went(self):
+        rnd = self.review()
+        self.act("fix", rnd)
+        fix = self.local_head()
+        s = prmenu.state(self.ctx, rnd)
+        self.assertEqual(prmenu._last_text(self.ctx, s), " · last gates not run")
+        listed, _ = prmenu.options(self.ctx, rnd, s)
+        self.assertEqual([k for k, _ in listed], ["edit", "edit-merge", "last", "push", "post", "close", "quit"])
+        self.assertEqual(dict(listed)["last"], f"Run the last gates (e2e) on {fix[:12]}")
+        shown = self.run_last(rnd)
+        self.assertIn("the browser suite ran\n", shown)
+        self.assertIn(f"the last gates passed on {fix[:12]}", shown)
+        self.assertEqual((rnd.folder / "last-gates" / "1-e2e.log").read_text(), "the browser suite ran\n")
+        ran = runlog.last_event(self.run.path, "pr.last_gates")
+        self.assertEqual((ran["head"], ran["results"]), (fix, {"e2e": 0}))
+        self.assertEqual(prmenu._last_text(self.ctx, prmenu.state(self.ctx, rnd)), f" · last gates passed on {fix[:12]}")
+        self.assertIn(f"Last gates on {fix[:12]}: e2e pass", prmenu.summary(self.ctx, rnd))
+
+    def test_a_failing_one_stops_the_push_picked_with_it(self):
+        rnd = self.review()
+        self.act("fix", rnd)
+        listed, _ = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
+        numbers = {key: str(n) for n, (key, _) in enumerate(listed, 1)}
+        answers = iter([f"{numbers['push']} {numbers['last']}", ""])
+        self.confirms = [True]
+        with mock.patch.dict("os.environ", {"E2E_EXIT": "3"}), redirect_stdout(io.StringIO()):
+            prmenu.menu(self.ctx, rnd, lambda prompt: next(answers), self.confirm)
+        self.assertEqual(self.fork_head(), self.head)  # the push never ran
+        failed = runlog.last_event(self.run.path, "pr.action_failed")
+        self.assertEqual(failed["action"], "last")
+        self.assertIn("e2e (exit 3)", failed["error"])
+        self.assertTrue(prmenu._last_text(self.ctx, prmenu.state(self.ctx, rnd)).startswith(" · last gates failed (e2e)"))
+
+    def test_a_host_path_changed_since_it_was_trusted_stops_them_before_they_run(self):
+        rnd = self.review()
+        (self.worktree / ".placido" / "stack.sh").write_text("echo evil\n")
+        with self.assertRaisesRegex(pr.PRStop, r"\.placido/stack\.sh changed since they were trusted"):
+            self.run_last(rnd)
+        self.assertFalse((rnd.folder / "last-gates" / "1-e2e.log").exists())
+
+    def test_what_they_change_in_the_worktree_is_put_back(self):
+        rnd = self.review()
+        with mock.patch.dict("os.environ", {"E2E_TOUCH": "1"}):
+            self.run_last(rnd)
+        self.assertEqual(sh(self.worktree, "git", "status", "--porcelain"), "")
+        self.assertIn("the-e2e-gate", " ".join(e.get("evidence", "") for e in runlog.read_events(self.run.path)
+                                               if e["event"] == "pr.tree_restored"))
+
+    def test_on_a_base_that_moved_on_they_say_whose_base_they_run_on(self):
+        rnd = self.review()
+        (self.repo / "later.txt").write_text("later\n")
+        git_commit(self.repo, "later on main")
+        sh(self.repo, "git", "push", "-q", "origin", "main")
+        label = dict(prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0])["last"]
+        self.assertTrue(label.endswith(": main has moved on, and this runs on the pull request's own base"), label)
+
+    def test_a_project_without_them_is_offered_none(self):
+        self.settings = self.load(CONFIG)
+        self.ctx = self.context()
+        rnd = self.review()
+        s = prmenu.state(self.ctx, rnd)
+        self.assertNotIn("last", [k for k, _ in prmenu.options(self.ctx, rnd, s)[0]])
+        self.assertEqual(prmenu._last_text(self.ctx, s), "")
 
 
 CONFIG_WITH_ROUNDS = """

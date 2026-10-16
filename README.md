@@ -385,8 +385,11 @@ stack), unattended until it has something to show you:
    JSON, and placido renders it (`review.md`, `final.md`).
 
 Then placido prints the review and a menu. Nothing happens that you do not pick, and
-pushing, merging, and closing ask again: edit the comment or the squash message, fix
-the findings here on the contributor's branch, push them (never forced, and only when
+pushing, merging, and closing ask again: edit the comment or the squash message (in
+`$VISUAL`, `$EDITOR`, or nano), fix the findings here on the contributor's branch, run
+the project's last gates on the branch as it is here (the checks an issue run keeps
+for after the review, such as a browser suite against a real deployment; a failure
+stops the push or merge picked with them), push them (never forced, and only when
 the contributor allows maintainers to), post the comment (shown in full first, as it
 will go out), approve CI runs GitHub holds
 for first-time contributors, squash-merge pinned to the commit the review covered, or

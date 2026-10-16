@@ -30,6 +30,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -41,7 +42,9 @@ from placido.pr import Context, PRStop, Round
 NO_CHANGES = "No code changes"
 PUSH_URL = "https://github.com/{repo}.git"  # where the contributor's branch is pushed to
 RESOLUTIONS = ("fixed", "disputed")
-ORDER = ("edit", "edit-merge", "fix", "push", "post", "ci", "merge", "close")
+# The last gates run before the push, as in an issue run, so a failing one stops the
+# push, the post, and the merge picked with it.
+ORDER = ("edit", "edit-merge", "fix", "last", "push", "post", "ci", "merge", "close")
 # How each verdict's comment is posted: the review's kind on GitHub, and in words.
 POSTED_AS = {
     "request-changes": ("request-changes", "as a review requesting changes"),
@@ -74,6 +77,7 @@ class State:
     posted: bool
     waiting: list[dict[str, Any]]  # CI runs held for approval
     ci: str  # green, red, pending, or none
+    last: dict[str, Any] | None  # the round's latest run of the last gates
 
 
 def state(ctx: Context, rnd: Round) -> State:
@@ -109,6 +113,7 @@ def state(ctx: Context, rnd: Round) -> State:
         posted=bool(pr.round_events(run_dir, "pr.posted", rnd.number)),
         waiting=waiting,
         ci=ci,
+        last=pr.done(run_dir, "pr.last_gates", rnd.number),
     )
 
 
@@ -189,6 +194,10 @@ def summary(ctx: Context, rnd: Round) -> str:
             verdict = "passed" if checked["passed"] else f"left {', '.join(checked['open'] + checked['new'])} open"
             lines.append(f"Checked by {checked.get('agent', '?')}: {verdict}"
                          f" (see {run_dir / 'steps' / checked['step'] / 'verify.json'})")
+    ran = pr.done(run_dir, "pr.last_gates", rnd.number)
+    if ran:
+        shown = " · ".join(f"{name} {'pass' if code == 0 else 'FAIL'}" for name, code in ran["results"].items())
+        lines += ["", f"Last gates on {ran['head'][:12]}: {shown} (logs in {rnd.folder / 'last-gates'})"]
     lines += [
         "",
         f"Full review: {rnd.folder / 'final.md'}",
@@ -229,6 +238,10 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
         count = len(open_items(rnd))
         out.append(("fix", f"{merge}{'send' if merge else 'Send'} the {count} item(s) the check left open back to"
                            " the fixer, then check again"))
+    if ctx.settings.last_gates:
+        stale = f": {s.pull.base} has moved on, and this runs on the pull request's own base" if s.merges_base else ""
+        out.append(("last", f"Run the last gates ({', '.join(ctx.settings.last_gates)}) on"
+                            f" {pr.git(ctx.worktree, 'rev-parse', 'HEAD')[:12]}{stale}"))
     if s.ahead and s.pull.can_modify:
         target = f"{s.pull.head_repo}:{s.pull.head_ref}"
         if s.verified:
@@ -257,7 +270,7 @@ def menu(ctx: Context, rnd: Round, read: Callable[[str], str | None], confirm: A
     while True:
         s = state(ctx, rnd)
         listed, notes = options(ctx, rnd, s)
-        print(f"\nCI {s.ci} · {'posted' if s.posted else 'not posted'} · "
+        print(f"\nCI {s.ci}{_last_text(ctx, s)} · {'posted' if s.posted else 'not posted'} · "
               f"{s.ahead} commit(s) here not pushed · {len(s.waiting)} CI run(s) waiting")
         for note in notes:
             print(note)
@@ -289,7 +302,7 @@ def menu(ctx: Context, rnd: Round, read: Callable[[str], str | None], confirm: A
 
 
 def _edit(path: Path) -> None:
-    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "nano"  # nano unless the user chose one
     subprocess.run([*shlex.split(editor), str(path)])
 
 
@@ -326,6 +339,28 @@ def post(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
     ctx.hub.review(s.pull.number, kind, _body(ctx, rnd))
     ctx.run.event("pr.posted", round=rnd.number, kind=kind)
     print(f"posted on {s.pull.url}")
+
+
+def _last_text(ctx: Context, s: State) -> str:
+    if not ctx.settings.last_gates:
+        return ""
+    if s.last is None:
+        return " · last gates not run"
+    failed = [name for name, code in s.last["results"].items() if code]
+    verdict = f"failed ({', '.join(failed)})" if failed else "passed"
+    return f" · last gates {verdict} on {s.last['head'][:12]}"
+
+
+def last(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
+    """The project's last gates, on the worktree as it is: the pull request with the fixes
+    made here. A failure stops the actions picked after it."""
+
+    results = pr.last_gates(ctx, rnd, sys.stdout)
+    head = pr.git(ctx.worktree, "rev-parse", "HEAD")[:12]
+    failed = [f"{name} (exit {code})" for name, code in results.items() if code]
+    if failed:
+        raise PRStop(f"the last gates failed on {head}: {', '.join(failed)}; logs in {rnd.folder / 'last-gates'}")
+    print(f"the last gates passed on {head}")
 
 
 def push(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
@@ -877,6 +912,7 @@ ACTIONS: dict[str, Callable[[Context, Round, State, Ask], None]] = {
     "edit": edit,
     "edit-merge": edit_merge,
     "fix": fix,
+    "last": last,
     "push": push,
     "post": post,
     "ci": approve_ci,
