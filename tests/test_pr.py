@@ -101,6 +101,7 @@ class FakeRunner:
         self.final: dict | None = None  # the judge's final.json; None: one built from the findings
         self.during: dict[str, Any] = {}  # step name -> something the agent does to the worktree
         self.fix_change = True
+        self.resolution: str | None = "print('hi there, all')\n"  # what a conflict resolves to; None: left as is
         self.verify: list[dict] = []  # per check of a fix: its verify.json; none left: all resolved
         self.env: dict[str, str] = {}
 
@@ -196,6 +197,13 @@ class FakeRunner:
             "findings": [],
         }
         (folder / "verify.json").write_text(json.dumps(data))
+
+    def _merge(self, folder: Path, kind: str) -> None:
+        conflicted = sh(self.worktree, "git", "diff", "--name-only", "--diff-filter=U").split()
+        if self.resolution is not None:
+            for name in conflicted:
+                (self.worktree / name).write_text(self.resolution)
+        (folder / "result.md").write_text("".join(f"{name}: kept both sides\n" for name in conflicted))
 
     def _fix(self, folder: Path, kind: str) -> None:
         listed = sorted((self.run.path / "rounds").glob("*/fix-findings-*.json"), key=lambda p: p.stat().st_mtime)

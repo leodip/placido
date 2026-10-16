@@ -43,6 +43,12 @@ List under `decisions` what is the maintainer's call rather than a defect: a des
 choice the contributor made and recorded, a behaviour change the issue did not settle,
 scope.
 
+A branch that conflicts with the base, or misses what the base has since, is brought up
+to date by merging the base into it, never by a rebase: the contributor's branch is
+never force-pushed. Fixed here, placido does that merge before the fixer starts, as a
+commit of its own; so say "merge" in the finding's fix and in the comment ("Merged main
+into your branch, resolving the conflict in …").
+
 ## 3. Who fixes
 
 Estimate the pull request's own size (the work it represents: lines of production code

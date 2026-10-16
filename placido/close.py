@@ -25,7 +25,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from placido import codexd, config, driver, implement, runlog, start, summary
+from placido import codexd, config, driver, implement, pr, runlog, start, summary
 from placido.herdr import Herdr, HerdrError
 from placido.proc import Runner, run_command
 
@@ -144,7 +144,7 @@ def _close_lanes(run: runlog.Run, settings: config.Config) -> None:
         path = Path(lane["path"])
         if not path.is_dir():
             continue
-        _restore_host_paths(run, path, settings)
+        _restore_host_paths(run, path, settings, primary=False)
         if settings.teardown:
             env = {**start.env_of(run.path), "PLACIDO_NAME": lane["name"], "PLACIDO_WORKTREE": str(path)}
             start.run_project_command(run, f"teardown-{lane['letter'].lower()}", settings.teardown, path, env)
@@ -155,20 +155,16 @@ def _close_lanes(run: runlog.Run, settings: config.Config) -> None:
             run.event("lane.remove_failed", letter=lane["letter"], error=(done.stderr or done.stdout).strip()[-300:])
 
 
-def _restore_host_paths(run: runlog.Run, worktree: Path, settings: config.Config) -> None:
+def _restore_host_paths(run: runlog.Run, worktree: Path, settings: config.Config, primary: bool = True) -> None:
     """Put the host paths back as the review last trusted them, so the teardown that runs
-    from them is the project's, whatever the pull request's tests wrote."""
+    from them is the project's, whatever the pull request's tests wrote. A lane never
+    has the base merged in, so its reference is the round's own."""
 
     paths = settings.pr.host_paths
-    rounds = [e for e in runlog.read_events(run.path) if e.get("event") == "pr.round"]
+    rounds = pr.rounds(run.path)
     if not paths or not rounds:
         return
-    last = rounds[-1]
-    approved = any(
-        e.get("event") == "pr.trust_approved" and e.get("round") == last["round"] and e.get("head") == last["head"]
-        for e in runlog.read_events(run.path)
-    )
-    reference = last["head"] if approved else last["base"]
+    reference = pr.trusted(run.path, rounds[-1], primary)
     changed = set(_git(worktree, "diff", "--name-only", reference, "--", *paths).stdout.splitlines())
     loose = _git(worktree, "status", "--porcelain", "--untracked-files=all", "--", *paths).stdout
     changed |= {line[3:] for line in loose.splitlines()}

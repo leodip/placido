@@ -1,6 +1,6 @@
 ---
 name: placido-pr-fix
-description: Fix the kept findings of a reviewed outside contribution on the contributor's own branch, for the maintainer, keeping the contributor's approach, and leave the fixes uncommitted with a result that carries the commit message. Use when placido fixes a reviewed pull request's findings.
+description: Fix the kept findings of a reviewed outside contribution on the contributor's own branch, for the maintainer, keeping the contributor's approach, and leave the fixes uncommitted with a result that carries the commit message; or resolve the conflicts of merging the base into that branch. Use when placido fixes a reviewed pull request's findings or merges its base in.
 ---
 
 # Findings to fixes on someone else's branch
@@ -26,7 +26,11 @@ to fix, the project's standards as of the base (as your prompt shows), and the n
 - **Everything the project's standards ask beside a change:** regenerated files, docs,
   translations, for what you changed.
 - **Never change** the paths that run on this machine (placido refuses the result), and
-  never commit.
+  never commit, merge, rebase, or reset.
+- **The base is merged in already** when it had moved on: placido merges it into the
+  branch before you, as a commit of its own, so you fix what will land, and your prompt
+  names that commit. A finding that asks for a rebase or a merge is answered by it; fix
+  what remains, such as tests the base's changes broke.
 - **Run only the narrow tests** for what you change, through the project's commands in
   your prompt. Placido runs the full gates after you and commits only when they pass,
   so running them yourself only doubles the wait.
@@ -70,3 +74,21 @@ failing before its fix. When every finding is disputed and nothing changed, the 
 `No code changes` instead.
 
 **Done when** every finding has an answer, your narrow tests pass, and the result file is written.
+
+## Conflicts with the base
+
+When your prompt says placido is merging the base into the branch and git stopped on
+conflicts, you resolve those conflicts, and nothing else, before the findings are fixed
+in a commit of their own:
+
+- **Each conflict to what both sides mean:** the pull request's change, carried onto the
+  base's code as it is now. Read both sides' history (`git log --merge -p <file>`) when
+  the intent is unclear.
+- **Only the files that conflicted.** Placido refuses a change to a file that merged
+  cleanly, and to the paths that run on this machine; a finding that needs more waits
+  for the fix.
+- **Leave the merge in progress:** no commit, no `git merge --abort`, no rebase, no
+  reset. Placido commits it, and the gates run with the fix that follows.
+
+The result file: a line per file, how you resolved it. **Done when** no conflict
+marker is left and the result file is written.

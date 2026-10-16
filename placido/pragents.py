@@ -4,8 +4,9 @@ First the scan, confined, before anything of the pull request runs (a concern wa
 for the user); while it reads, the lanes' stacks come up, when the pull request
 changes no host path. Then, once placido's own gates have run (placido/pr.py), every
 reviewer in `[pr] reviewers` on its own, all at once in lanes of their own; each,
-resumed, then checks the others' findings, again all at once; and a judge settles them
-into the final review, told which findings the cross-checks settled already so it
+resumed, then checks the others' findings, again all at once; the extra lanes' stacks
+go down; and a judge settles them into the final review, told which findings the
+cross-checks settled already so it
 verifies only the rest. Each moves down its fallback chain after a refusal or a quota,
 and each writes JSON that placido/prcheck.py holds to its form before the next one
 reads it, and renders for people.
@@ -21,8 +22,8 @@ from typing import Any, Callable
 from placido import config, fallback, prcheck, status
 from placido.pr import (
     Context, Lane, PRStop, Round, close_agents, close_orphans, current_round, done, gates, host_changes,
-    lane_for, letter, notify, open_agents, primary_lane, round_by_number, settle, setup, together, trust,
-    write_data,
+    lane_for, letter, notify, open_agents, primary_lane, release_lanes, round_by_number, settle, setup, together,
+    trust, write_data,
 )
 from placido.step import CONFINABLE, Step, StepResult
 
@@ -117,12 +118,15 @@ def _chain(ctx: Context, role: str, entries: tuple[config.AgentSpec, ...]) -> fa
 
 
 def prepare(ctx: Context, rnd: Round) -> None:
-    """The scan, the host paths, and every lane's stack. When the pull request changes no
+    """The scan, the host paths, and the stacks: the pull request's own, and the lane of
+    each reviewer whose cross-check is still to come. When the pull request changes no
     host path, the stacks come up while the scan reads, since setup then runs only what
     the base had (decided 2026-10-16); otherwise the scan and the user's approval of the
     change come first."""
 
-    lanes = {str(lane.worktree): lane for lane in (lane_for(ctx, rnd, code) for code, _ in reviewers(ctx))}
+    working = [code for code, _ in reviewers(ctx) if not done(ctx.run.path, "pr.crosschecked", rnd.number, letter=code)]
+    needed = [primary_lane(ctx), *(lane_for(ctx, rnd, code) for code in working)]
+    lanes = {str(lane.worktree): lane for lane in needed}
     setups = [lambda lane=lane: setup(ctx, rnd, lane) for lane in lanes.values()]
     if not host_changes(ctx, rnd):
         together([lambda: run_scan(ctx, rnd), *setups])
@@ -518,6 +522,7 @@ def review(ctx: Context) -> Round:
     gates(ctx, rnd)
     reviews(ctx, rnd)
     crosscheck(ctx, rnd)
+    release_lanes(ctx, rnd)
     judge(ctx, rnd)
     if not done(ctx.run.path, "pr.ready", rnd.number):
         ctx.run.event("pr.ready", round=rnd.number)

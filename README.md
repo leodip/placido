@@ -375,6 +375,8 @@ stack), unattended until it has something to show you:
    (`placido mutate`) make them fail. `parallel = false` runs them one after the other
    in one worktree, with one stack.
 5. **Cross-check.** Each reviewer, resumed, confirms or refutes the others' findings.
+   Then the other lanes' stacks go down, since only the pull request's own worktree
+   works after this; a later round brings them up again.
 6. **Judge.** One review, told which findings the cross-checks settled so it verifies
    only the rest: the findings kept and who found them, what was dropped and why, a
    verdict, problems that were already there (for you only), and drafts of the comment
@@ -391,6 +393,10 @@ close. A fix is the `fix` role's, committed locally once the gates pass, then ch
 by the `verify` role, another vendor by default: each finding's fix with a test that
 fails without it, and the fixes for new problems. What the check leaves open goes back
 to the fixer, up to `fix_rounds` times, and the push says whether the fixes passed.
+When the base branch has moved on, the fix first merges it into the branch, as a commit
+of its own, so the fixes are made and gated on what will land; the `fix` role resolves
+any conflict, and only the conflicts. A merge, not a rebase, since the push is never
+forced. A pull request that changes host paths is fixed on its own base instead.
 
 `placido pr 602` again shows the menu again, or, once the contributor has pushed, starts
 a new round whose reviewers check each earlier finding. `placido close pr-602` removes

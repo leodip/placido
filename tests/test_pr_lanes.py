@@ -4,9 +4,9 @@ import time
 from pathlib import Path
 from unittest import mock
 
-from placido import close, pr, pragents, runlog
+from placido import close, pr, pragents, prmenu, runlog
 from placido.herdr import Herdr
-from tests.test_pr import CONFIG, PRTestCase, sh
+from tests.test_pr import CONFIG, PRTestCase, git_commit, sh
 
 
 def wait_for(condition, seconds: float = 5.0) -> bool:
@@ -41,6 +41,12 @@ class LaneTestCase(PRTestCase):
 
     def calls(self, name: str) -> list[dict]:
         return [c for c in self.runner.calls if c["name"] == name]
+
+    def setups(self) -> list[str]:
+        return [line for line in self.log.read_text().splitlines() if not line.startswith("down ")]
+
+    def teardowns(self) -> list[str]:
+        return [line for line in self.log.read_text().splitlines() if line.startswith("down ")]
 
 
 class LanesTest(LaneTestCase):
@@ -83,7 +89,7 @@ class LanesTest(LaneTestCase):
         self.runner.during["r1-scan"] = lambda wt: seen.append(wait_for(lambda: lines() == 2))
         pragents.review(self.ctx)
         self.assertEqual(seen, [True], "both stacks came up while the scan was reading")
-        self.assertEqual(sorted(self.log.read_text().split()), ["proj-pr-7", "proj-pr-7-b"])
+        self.assertEqual(sorted(self.setups()), ["proj-pr-7", "proj-pr-7-b"])
         self.assertTrue((self.run.path / "setup-b.log").is_file())
 
     def test_a_host_path_change_is_approved_before_any_setup(self):
@@ -95,6 +101,39 @@ class LanesTest(LaneTestCase):
         kinds = self.kinds()
         self.assertLess(kinds.index("pr.trust_approved"), kinds.index("setup.start"))
         self.assertLess(kinds.index("pr.scan"), kinds.index("setup.start"))
+
+    def test_a_lanes_stack_goes_down_once_the_cross_checks_are_done(self):
+        self.with_setup()
+        pragents.review(self.ctx)
+        self.assertEqual(self.teardowns(), ["down proj-pr-7-b"])
+        kinds = self.kinds()
+        last_crosscheck = max(i for i, kind in enumerate(kinds) if kind == "pr.crosschecked")
+        self.assertLess(last_crosscheck, kinds.index("pr.lane_down"))
+        self.assertLess(kinds.index("pr.lane_down"), kinds.index("pr.judged"))
+        self.assertTrue((self.run.path / "lanes" / "b").is_dir())  # kept for a later round
+        pragents.review(self.ctx)  # resumed: nothing comes up or goes down again
+        self.assertEqual((sorted(self.setups()), self.teardowns()), (["proj-pr-7", "proj-pr-7-b"], ["down proj-pr-7-b"]))
+
+    def test_a_new_round_brings_a_lanes_stack_up_again(self):
+        self.with_setup()
+        pragents.review(self.ctx)
+        self.push_new_head({"greet.py": "print('hi again')\n"}, self.head)
+        self.runner.earlier.append("F1")  # in place: lane B's runner is a copy sharing the list
+        pragents.review(self.ctx)
+        self.assertEqual(self.setups().count("proj-pr-7-b"), 2)
+        self.assertEqual(self.teardowns(), ["down proj-pr-7-b"] * 2)
+
+    def test_a_lane_keeps_its_rounds_host_paths_after_the_base_is_merged_in(self):
+        self.with_setup()
+        rnd = pragents.review(self.ctx)
+        (self.repo / ".placido" / "notes" / "pr.md").write_text("Run every engine, twice.\n")
+        git_commit(self.repo, "later on main")
+        sh(self.repo, "git", "push", "-q", "origin", "main")
+        prmenu.fix(self.ctx, rnd, prmenu.state(self.ctx, rnd), lambda question: False)
+        self.assertIn("pr.base_merged", self.kinds())
+        with mock.patch.dict("os.environ", {"LOG": str(self.log)}):
+            close.close(self.run, Herdr(self.fake), self.settings, force=False)
+        self.assertNotIn("close.host_paths_restored", self.kinds())
 
     def test_close_tears_every_lane_down_and_records_the_review(self):
         self.with_setup()

@@ -12,12 +12,21 @@ for new problems, and what it finds open goes back to the fixer, up to `[pr]
 fix_rounds` times (decided 2026-10-16, after #588's fix went out checked by its gates
 alone). Fixes that never passed the check can still be pushed, saying so, when the user
 confirms.
+
+Before a fix, the base branch is merged into the branch when it has moved past it, as a
+commit of its own, its conflicts resolved by the fix role and nothing else: the fixes
+are then made, gated, and checked on what the squash merge will land, and a branch that
+conflicts with the base is brought up to date without the force push a rebase needs,
+which placido never does (decided 2026-10-16, after #592's review asked for a rebase).
+A pull request that changes host paths is fixed on its own base instead, since the
+paths placido trusts are then its approved ones.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -49,9 +58,10 @@ class State:
     route: str
     kept: list[dict[str, Any]]
     fixed: bool  # the fix ran this round, whether or not it changed code
-    fixes: list[str]  # commits made here this round
+    fixes: list[str]  # commits made here this round: the base merged in, and the fixes
     verified: bool | None  # the latest check of the fixes passed; None: never checked
-    ahead: int  # commits here that the pull request's branch lacks
+    ahead: int  # commits made here that the pull request's branch lacks, the base's own not counted
+    merges_base: bool  # a fix merges the base in first: it moved past the branch, which changes no host path
     pushed: bool
     posted: bool
     waiting: list[dict[str, Any]]  # CI runs held for approval
@@ -66,8 +76,12 @@ def state(ctx: Context, rnd: Round) -> State:
         pr.fetch(ctx.root, pull.base, number)
     data = final(rnd)
     run_dir = ctx.run.path
-    fixes = pr.fix_commits(run_dir, rnd.number)
-    ahead = int(pr.git(ctx.worktree, "rev-list", "--count", f"{pr.pr_ref(number)}..HEAD") or 0)
+    fixes = pr.commits_here(run_dir, rnd.number)
+    ahead = int(pr.git(ctx.worktree, "rev-list", "--count", "--first-parent", f"{pr.pr_ref(number)}..HEAD") or 0)
+    merges_base = (
+        pull.state == "OPEN" and not pr.is_ancestor(ctx.worktree, pr.base_ref(pull.base), "HEAD")
+        and not pr.host_changes(ctx, rnd)
+    )
     try:
         waiting = ctx.hub.waiting_runs(pull.head_sha) if pull.state == "OPEN" else []
         ci = prgh.ci_state(ctx.hub.checks(number)) if pull.state == "OPEN" else "none"
@@ -82,6 +96,7 @@ def state(ctx: Context, rnd: Round) -> State:
         fixes=fixes,
         verified=(pr.done(run_dir, "pr.verified", rnd.number) or {}).get("passed"),
         ahead=ahead,
+        merges_base=merges_base,
         pushed=bool(pr.round_events(run_dir, "pr.pushed", rnd.number)),
         posted=bool(pr.round_events(run_dir, "pr.posted", rnd.number)),
         waiting=waiting,
@@ -151,6 +166,10 @@ def summary(ctx: Context, rnd: Round) -> str:
             if isinstance(item, dict):
                 where = f" ({item['location']})" if item.get("location") else ""
                 lines.append(f"  - {item.get('title', '?')}{where}{flag}")
+    merged = pr.done(run_dir, "pr.base_merged", rnd.number)
+    if merged:
+        resolved = f", resolving {', '.join(merged['conflicts'])}" if merged["conflicts"] else ""
+        lines += ["", f"Merged {pull.base} ({merged['tip'][:12]}) into the branch here as {merged['commit'][:12]}{resolved}"]
     fixed = pr.round_events(run_dir, "pr.fixed", rnd.number)
     if fixed:
         last = fixed[-1]
@@ -188,12 +207,14 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
     out.append(("edit", f"Edit the comment ({rnd.folder / 'comment.md'})"))
     if (rnd.folder / "merge.md").is_file():
         out.append(("edit-merge", f"Edit the squash message ({rnd.folder / 'merge.md'})"))
+    merge = f"Merge {s.pull.base} into the branch, then " if s.merges_base else ""
     if s.kept and not s.fixed:
-        out.append(("fix", f"Fix the {len(s.kept)} kept finding(s) here, on the contributor's branch, and"
-                           " have the fixes checked: committed locally, nothing pushed"))
+        out.append(("fix", f"{merge}{'fix' if merge else 'Fix'} the {len(s.kept)} kept finding(s) here, on the"
+                           " contributor's branch, and have the fixes checked: committed locally, nothing pushed"))
     elif s.fixed and s.verified is False:
         count = len(open_items(rnd))
-        out.append(("fix", f"Send the {count} item(s) the check left open back to the fixer, then check again"))
+        out.append(("fix", f"{merge}{'send' if merge else 'Send'} the {count} item(s) the check left open back to"
+                           " the fixer, then check again"))
     if s.ahead and s.pull.can_modify:
         target = f"{s.pull.head_repo}:{s.pull.head_ref}"
         if s.verified:
@@ -374,16 +395,18 @@ def open_items(rnd: Round) -> list[dict[str, Any]]:
 
 
 def fix(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
-    """Fix the kept findings here, on the contributor's branch, then have the fixes
-    checked; what the check leaves open goes back to the fixer, up to `[pr] fix_rounds`
-    times. Placido runs the gates and commits; nothing is pushed."""
+    """Merge the base in when it moved on, fix the kept findings here, on the
+    contributor's branch, then have the fixes checked; what the check leaves open goes
+    back to the fixer, up to `[pr] fix_rounds` times. Placido runs the gates and
+    commits; nothing is pushed."""
 
     items = open_items(rnd) if s.fixed and s.verified is False else s.kept
     done_before = len(pr.round_events(ctx.run.path, "pr.fixed", rnd.number))
     ctx.run.event("pr.fix_start", round=rnd.number, findings=[f["id"] for f in items])
+    before = pr.git(ctx.worktree, "rev-parse", "HEAD")  # the first check reads the merge too
+    merge_base_in(ctx, rnd)
     for n in range(1, ctx.settings.pr.fix_rounds + 2):
         attempt_no = done_before + n
-        before = pr.git(ctx.worktree, "rev-parse", "HEAD")
         folder = fix_once(ctx, rnd, items, attempt_no)
         data = check_fix(ctx, rnd, items, attempt_no, before, folder)
         if prcheck.verify_passed(data):
@@ -393,7 +416,189 @@ def fix(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
         (rnd.folder / "open-items.json").write_text(json.dumps({"findings": items}, indent=2) + "\n", encoding="utf-8")
         print(f"the check of fix {attempt_no} left {len(items)} item(s) open: "
               + ", ".join(f"{i['id']} {i['title']}" for i in items))
+        before = pr.git(ctx.worktree, "rev-parse", "HEAD")
     print("No fix round is left: push anyway, or send them back to the fixer from the menu.")
+
+
+# ---- the base merged in before a fix ---------------------------------------------------
+
+# A line git writes around a conflict; `=======` alone is left out, being a Markdown
+# heading's underline too.
+MARKER = re.compile(r"^(<{7}|>{7}|\|{7})( |$)", re.MULTILINE)
+
+
+def merge_base_in(ctx: Context, rnd: Round) -> None:
+    """Merge the base branch into the branch, as a commit of its own, when it has moved
+    past it and the pull request changes no host path. A conflict goes to the fix role,
+    which resolves the conflicts and nothing else; the gates run with the fix after."""
+
+    wt, run, base = ctx.worktree, ctx.run, ctx.pr.base
+    tip = pr.git(wt, "rev-parse", pr.base_ref(base))
+    if pr.is_ancestor(wt, tip, "HEAD"):
+        return
+    if pr.host_changes(ctx, rnd):
+        run.event("pr.base_merge_skipped", round=rnd.number, tip=tip, reason="host paths")
+        print(f"{base} has moved on, but the pull request changes host paths, so placido does not merge"
+              f" {base} into it: the fixes are made on its own base.")
+        return
+    pr.verify_host_paths(ctx, rnd, f"the merge of {base}")
+    if pr.git(wt, "status", "--porcelain"):  # a merge that fails is undone with a hard reset
+        raise PRStop(f"{wt} has uncommitted changes; look at them (git -C {wt} status) and clean up first")
+    head = pr.git(wt, "rev-parse", "HEAD")
+    status.show(run.path, status.text(status.WORKING, f"merging {base}"))
+    done = subprocess.run(
+        ["git", "-C", str(wt), "merge", "-q", "--no-ff", "--no-commit", tip], capture_output=True, text=True,
+    )
+    conflicts = pr.git(wt, "diff", "--name-only", "--diff-filter=U").splitlines()
+    if done.returncode != 0 and not conflicts:
+        _undo_merge(ctx, rnd, head)
+        raise PRStop(f"git merge {base}: {(done.stderr or done.stdout).strip()[-400:]}")
+    if conflicts:
+        resolve_conflicts(ctx, rnd, tip, head, conflicts)
+    commit = _commit(wt, f"Merge branch '{base}' into {ctx.pr.head_ref}", run, rnd)
+    run.event("pr.base_merged", round=rnd.number, commit=commit, tip=tip, conflicts=conflicts)
+    print(f"merged {base} ({tip[:12]}) into the branch as {commit[:12]}"
+          + (f", resolving {', '.join(conflicts)}" if conflicts else "") + "; not pushed")
+
+
+def resolve_conflicts(ctx: Context, rnd: Round, tip: str, head: str, conflicts: list[str]) -> None:
+    """The fix role resolves a merge's conflicts and leaves the merge for placido to
+    commit; one that does not finish leaves nothing behind but what it did, as evidence."""
+
+    run, wt = ctx.run, ctx.worktree
+    created = set(_untracked(wt))  # what git wrote itself, such as both sides of a rename
+    merged = _merged_entries(wt)
+    chain = fallback.Chain(
+        run, "fix", fallback.entries(ctx.settings, "fix"), lambda title, body: pr.notify(ctx, title, body),
+        since=lambda event: event.get("event") == "pr.fix_start",
+    )
+
+    def check(result: Path) -> list[str]:
+        if implement.blocked(result) is not None:
+            return []
+        return decisions.check(result.parent, run.path) + merge_problems(ctx, tip, head, conflicts, created, merged)
+
+    name = f"r{rnd.number}-merge"
+
+    def start(spec: config.AgentSpec) -> Any:
+        folder = run.new_step_dir(name)
+        return ctx.runner(
+            "fix", spec, merge_prompt(ctx, rnd, tip, conflicts), name=name, folder=folder, check=check,
+            ask=implement.blocked,
+        )
+
+    step = pragents.attempt(ctx, chain, start)
+    if step.outcome != "success":
+        evidence = _undo_merge(ctx, rnd, head)
+        raise PRStop(
+            f"the merge of {ctx.pr.base} did not finish ({step.outcome}); nothing is committed, and what was"
+            f" done is in {evidence}. See {step.path}"
+        )
+
+
+def merge_problems(
+    ctx: Context, tip: str, head: str, conflicts: list[str], created: set[str], merged: dict[str, str],
+) -> list[str]:
+    """What is wrong with a resolution: the merge no longer in progress, a conflict
+    marker left, a change beyond the conflicts, a host path not as the base has it."""
+
+    wt, base = ctx.worktree, ctx.pr.base
+    if pr.git(wt, "rev-parse", "HEAD") != head or _merge_head(wt) != tip:
+        return [
+            "the merge is no longer in progress, and placido commits it. Put it back: `git merge --abort` if"
+            f" one is open, `git reset -q --hard {head[:12]}`, `git merge --no-ff --no-commit {tip[:12]}`;"
+            " then resolve the conflicts again."
+        ]
+    problems = []
+    marked = [name for name in conflicts if MARKER.search(_read(wt / name))]
+    if marked:
+        problems.append(f"conflict markers are left in {', '.join(marked)}.")
+    now = _merged_entries(wt)
+    staged = {p for p in set(merged) | set(now) if merged.get(p) != now.get(p)}
+    loose = set(pr.git(wt, "diff", "--name-only").splitlines()) | (set(_untracked(wt)) - created)
+    beyond = sorted((staged | loose) - set(conflicts))
+    if beyond:
+        problems.append(
+            f"only the conflicts: {', '.join(beyond)} merged cleanly, and you changed them. Put them back"
+            " (`git checkout -- <file>`; `git rm --cached` and delete a file you added). The findings are"
+            " fixed after the merge, in a commit of their own."
+        )
+    host = pr.host_paths_differ(wt, tip, ctx.settings.pr.host_paths)
+    if host:
+        problems.append(
+            f"{', '.join(host)} run on this machine and must stay as {base} has them:"
+            f" `git checkout {tip[:12]} -- <file>`."
+        )
+    return problems
+
+
+def merge_prompt(ctx: Context, rnd: Round, tip: str, conflicts: list[str]) -> str:
+    base = ctx.pr.base
+    lines = [
+        f"# Resolve the conflicts of merging {base} into pull request #{ctx.pr.number}",
+        "",
+        pragents.FRAMING,
+        "",
+        f"Follow the placido pr-fix skill in {pragents.SKILLS / 'pr-fix' / 'SKILL.md'}: its section on"
+        " conflicts with the base.",
+        "",
+        *pragents._paths_block(ctx, rnd),
+        pragents.notes_line(rnd, "fix", "pr"),
+        f"- **The final review:** {rnd.folder / 'final.md'}",
+        f"- **The merge:** placido is merging {base} ({tip[:12]}) into the branch, so that the fixes are made"
+        f" on what will land, and git stopped on conflicts in: {', '.join(conflicts)}.",
+        "- **Write:** the result file: a line per file, how you resolved it.",
+    ]
+    menu_ = config.command_menu(ctx.settings)
+    return "\n".join(lines) + "\n\n" + (menu_ or "The project defines no commands.\n")
+
+
+def _merged_entries(wt: Path) -> dict[str, str]:
+    """The index's merged entries, path to object: what the merge left staged."""
+
+    entries = {}
+    for line in pr.git(wt, "ls-files", "--stage").splitlines():
+        meta, path = line.split("\t", 1)
+        _mode, oid, stage = meta.split()
+        if stage == "0":
+            entries[path] = oid
+    return entries
+
+
+def _merge_head(wt: Path) -> str:
+    """The commit being merged in, or "" when no merge is in progress."""
+
+    done = subprocess.run(["git", "-C", str(wt), "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+                          capture_output=True, text=True)
+    return done.stdout.strip()
+
+
+def _untracked(wt: Path) -> list[str]:
+    return pr.git(wt, "ls-files", "--others", "--exclude-standard").splitlines()
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""  # deleted: a resolution too
+
+
+def _undo_merge(ctx: Context, rnd: Round, head: str) -> Path:
+    """Put the worktree back at head, clean, as it was before the merge, keeping what was
+    there as evidence. A hard reset rather than `git merge --abort`, which refuses a file
+    the merge added and the resolver then edited, and cannot undo a resolver's commit."""
+
+    wt = ctx.worktree
+    evidence = rnd.folder / "merge-unfinished.diff"
+    text = pr.git(wt, "status", "--short", "--untracked-files=all") + "\n\n" + pr.git(wt, "diff") + "\n"
+    for name in _untracked(wt):
+        text += f"\n--- untracked {name}\n{_read(wt / name)}"
+    evidence.write_text(text, encoding="utf-8")
+    pr.git(wt, "reset", "-q", "--hard", head)
+    pr.git(wt, "clean", "-fdq")
+    ctx.run.event("pr.base_merge_undone", round=rnd.number, evidence=evidence.name)
+    return evidence
 
 
 def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: int) -> Path:
@@ -450,7 +655,7 @@ def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: 
         # The gates in the check ran the pull request's tests after the fixer's own check
         # of the host paths: whatever they wrote there must not ride into the commit.
         pr.verify_host_paths(ctx, rnd, "the fix's commit")
-        commit = _commit(wt, result, run, rnd)
+        commit = _commit(wt, implement.message(result), run, rnd)
     run.event("pr.fixed", round=rnd.number, attempt=attempt_no, commit=commit, step=step.path.name, **counts)
     pr.settle(ctx, rnd, f"fix {attempt_no}")
     print(f"\nfix {attempt_no}: {counts['fixed']} fixed, {counts['disputed']} disputed"
@@ -529,7 +734,6 @@ def check_resolutions(path: Path, ids: list[str]) -> list[str]:
 
 
 def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path) -> str:
-    gates = ", ".join(ctx.settings.pr.gates) or "none"
     lines = [
         f"# Fix the review's findings on pull request #{ctx.pr.number}",
         "",
@@ -542,6 +746,17 @@ def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path) -> str:
         f"- **The final review:** {rnd.folder / 'final.md'}",
         f"- **The findings to fix, all of them:** {listed}. An item with a `check` names what the"
         " check of an earlier fix still found wrong.",
+    ]
+    merged = pr.done(ctx.run.path, "pr.base_merged", rnd.number)
+    if merged:
+        lines.append(
+            f"- **The base:** placido merged {ctx.pr.base} ({merged['tip'][:12]}) into the branch before you, as"
+            f" {merged['commit'][:12]}, so you fix what will land (`git -C {ctx.worktree} show --remerge-diff"
+            f" {merged['commit'][:12]}` shows how its conflicts were resolved). A finding that asks for a rebase"
+            " or a merge is answered by it: fix what remains, such as tests the base's changes broke."
+        )
+    gates = ", ".join(ctx.settings.pr.gates) or "none"
+    lines += [
         f"- **Gates:** {gates}. Placido runs them after you and commits only when they pass, so"
         " run only the narrow tests for what you change.",
         decisions.prompt_line(ctx.run.path),
@@ -553,7 +768,8 @@ def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path) -> str:
 
 def verify_prompt(ctx: Context, rnd: Round, listed: Path, fix_folder: Path, before: str, folder: Path) -> str:
     head = pr.git(ctx.worktree, "rev-parse", "HEAD")
-    fixes = (f"`git -C {ctx.worktree} log -p {before[:12]}..{head[:12]}`" if head != before
+    fixes = (f"`git -C {ctx.worktree} log -p --first-parent --remerge-diff {before[:12]}..{head[:12]}`"
+             f" (a merge of {ctx.pr.base} shows only what its conflicts were resolved to)" if head != before
              else "none: the fixer changed no code, disputing every item")
     lines = [
         f"# Check the fixes to pull request #{ctx.pr.number}",
@@ -577,11 +793,8 @@ def verify_prompt(ctx: Context, rnd: Round, listed: Path, fix_folder: Path, befo
     return "\n".join(lines) + "\n\n" + (menu_ or "The project defines no commands.\n")
 
 
-def _commit(worktree: Path, result: Path, run: runlog.Run, rnd: Round) -> str:
-    text = (
-        f"{implement.message(result)}\n\nPlacido-Run: {run.path.parent.name}/{run.path.name}\n"
-        f"Placido-PR-Round: {rnd.number}\n"
-    )
+def _commit(worktree: Path, message: str, run: runlog.Run, rnd: Round) -> str:
+    text = f"{message}\n\nPlacido-Run: {run.path.parent.name}/{run.path.name}\nPlacido-PR-Round: {rnd.number}\n"
     pr.git(worktree, "add", "-A")
     done = subprocess.run(
         ["git", "-C", str(worktree), "commit", "-q", "-F", "-"], input=text, capture_output=True, text=True

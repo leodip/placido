@@ -310,7 +310,7 @@ class VerifyTest(MenuTestCase):
         verify = next(c for c in self.runner.calls if c["name"] == "r1-verify-1")
         self.assertEqual(verify["spec"].agent, "codex")
         self.assertIn("resolutions.json", verify["task"])
-        self.assertIn(f"log -p {self.head[:12]}..", verify["task"])
+        self.assertIn(f"log -p --first-parent --remerge-diff {self.head[:12]}..", verify["task"])
         listed, _ = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
         self.assertIn(("push", "Push the 1 commit(s) made here, checked, to alice/proj:greeting"), listed)
         self.assertNotIn("fix", [k for k, _ in listed])
@@ -370,6 +370,175 @@ class VerifyTest(MenuTestCase):
         self.assertIn("F2 needs exactly one verdict; it has 0.", problems)
         self.assertTrue(any("needs an id, a verdict of resolved, unresolved" in p for p in problems))
         self.assertIn("finding 1 has id 'V2'; it should be V1.", problems)
+
+
+class BaseMergeTest(MenuTestCase):
+    """The base branch moved on after the pull request started from it."""
+
+    def advance_main(self, files: dict[str, str]) -> str:
+        for name, text in files.items():
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).write_text(text)
+        tip = git_commit(self.repo, "later on main")
+        sh(self.repo, "git", "push", "-q", "origin", "main")
+        return tip
+
+    def fix_label(self, rnd: pr.Round) -> str:
+        return dict(prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0])["fix"]
+
+    def test_the_base_is_merged_in_as_its_own_commit_before_the_fix(self):
+        rnd = self.review()
+        tip = self.advance_main({"later.txt": "later\n", ".placido/notes/pr.md": "Run every engine, twice.\n"})
+        self.assertEqual(self.fix_label(rnd), "Merge main into the branch, then fix the 1 kept finding(s) here, on the"
+                         " contributor's branch, and have the fixes checked: committed locally, nothing pushed")
+        self.act("fix", rnd)
+        merged = runlog.last_event(self.run.path, "pr.base_merged")
+        self.assertEqual((merged["tip"], merged["conflicts"]), (tip, []))
+        self.assertEqual(sh(self.worktree, "git", "rev-list", "--parents", "-n1", merged["commit"]).split()[1:],
+                         [self.head, tip])
+        self.assertEqual(sh(self.worktree, "git", "log", "-1", "--format=%s", merged["commit"]),
+                         "Merge branch 'main' into greeting")
+        fix = sh(self.worktree, "git", "rev-parse", "HEAD")
+        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD^"), merged["commit"])
+        # main's host paths came with the merge, and placido trusts them from then on.
+        self.assertEqual((self.worktree / ".placido/notes/pr.md").read_text(), "Run every engine, twice.\n")
+        fixer = next(c for c in self.runner.calls if c["name"] == "r1-fix-1")
+        self.assertIn(f"placido merged main ({tip[:12]}) into the branch before you", fixer["task"])
+        verify = next(c for c in self.runner.calls if c["name"] == "r1-verify-1")
+        self.assertIn(f"--remerge-diff {self.head[:12]}..{fix[:12]}", verify["task"])
+        self.assertNotIn("r1-merge", self.runner.names())
+        listed = dict(prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0])
+        self.assertEqual(listed["push"], "Push the 2 commit(s) made here, checked, to alice/proj:greeting")
+        self.assertIn(f"Merged main ({tip[:12]}) into the branch here as {merged['commit'][:12]}\n",
+                      prmenu.summary(self.ctx, rnd))
+        self.confirms = [True]
+        self.act("push", rnd)
+        self.assertEqual(self.fork_head(), fix)
+
+    def test_a_merge_outlives_a_fix_that_did_not_finish(self):
+        rnd = self.review()
+        self.advance_main({"later.txt": "later\n"})
+        self.runner.failures["r1-fix-1"] = ["invalid"]
+        with self.assertRaisesRegex(pr.PRStop, "the fix did not finish"):
+            self.act("fix", rnd)
+        merge = runlog.last_event(self.run.path, "pr.base_merged")["commit"]
+        rnd = pragents.review(self.ctx)  # placido pr again: the same round, the merge kept
+        self.assertEqual((rnd.number, sh(self.worktree, "git", "rev-parse", "HEAD")), (1, merge))
+        self.act("fix", rnd)
+        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD^"), merge)
+        self.assertEqual(self.kinds().count("pr.base_merged"), 1)
+
+    def test_conflicts_are_resolved_by_the_fix_role_into_the_merge_commit(self):
+        rnd = self.review()
+        self.advance_main({"greet.py": "print('hello')\n"})
+        self.act("fix", rnd)
+        self.assertEqual(self.runner.problems, [])
+        merged = runlog.last_event(self.run.path, "pr.base_merged")
+        self.assertEqual(merged["conflicts"], ["greet.py"])
+        self.assertEqual(sh(self.worktree, "git", "show", f"{merged['commit']}:greet.py"), "print('hi there, all')")
+        resolver = next(c for c in self.runner.calls if c["name"] == "r1-merge")
+        self.assertEqual(resolver["role"], "fix")
+        self.assertIn("git stopped on conflicts in: greet.py.", resolver["task"])
+        self.assertEqual([n for n in self.runner.names() if n.startswith(("r1-merge", "r1-fix", "r1-verify"))],
+                         ["r1-merge", "r1-fix-1", "r1-verify-1"])
+        self.assertIn(", resolving greet.py", prmenu.summary(self.ctx, rnd))
+
+    def unfinished(self, rnd: pr.Round) -> list[str]:
+        with self.assertRaisesRegex(pr.PRStop, "the merge of main did not finish"):
+            self.act("fix", rnd)
+        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD"), self.head)
+        self.assertEqual(sh(self.worktree, "git", "status", "--porcelain", "--untracked-files=all"), "")
+        self.assertNotIn("pr.base_merged", self.kinds())
+        self.assertNotIn("r1-fix-1", self.runner.names())
+        return self.runner.problems[-1][1]
+
+    def test_a_conflict_marker_left_keeps_the_merge_from_being_committed(self):
+        rnd = self.review()
+        self.advance_main({"greet.py": "print('hello')\n"})
+        self.runner.resolution = None
+        self.assertEqual(self.unfinished(rnd), ["conflict markers are left in greet.py."])
+        self.assertIn("<<<<<<<", (rnd.folder / "merge-unfinished.diff").read_text())
+
+    def test_a_resolution_that_changes_more_than_the_conflicts_is_sent_back(self):
+        rnd = self.review()
+        self.advance_main({"greet.py": "print('hello')\n", "later.txt": "later\n", "notes.txt": "notes\n"})
+
+        def beyond(wt):
+            (wt / "later.txt").write_text("changed\n")
+            sh(wt, "git", "add", "later.txt")
+            (wt / "notes.txt").write_text("changed\n")
+            (wt / "new.txt").write_text("new\n")
+
+        self.runner.during["r1-merge"] = beyond
+        problems = self.unfinished(rnd)
+        self.assertTrue(problems[0].startswith("only the conflicts: later.txt, new.txt, notes.txt merged cleanly"),
+                        problems)
+        self.assertIn("--- untracked new.txt\nnew\n", (rnd.folder / "merge-unfinished.diff").read_text())
+
+    def test_a_resolution_must_leave_the_host_paths_as_the_base_has_them(self):
+        rnd = self.review()
+        self.advance_main({"greet.py": "print('hello')\n"})
+
+        def host(wt):
+            (wt / ".placido" / "stack.sh").write_text("evil\n")
+            (wt / ".claude").mkdir()
+            (wt / ".claude" / "settings.json").write_text("{}\n")
+
+        self.runner.during["r1-merge"] = host
+        problems = self.unfinished(rnd)
+        self.assertTrue(problems[-1].startswith(
+            ".claude/settings.json, .placido/stack.sh run on this machine and must stay as main has"), problems)
+        self.assertEqual((self.worktree / ".placido" / "stack.sh").read_text(), "echo stack\n")
+        self.assertFalse((self.worktree / ".claude").exists())
+
+    def test_a_merge_committed_by_the_resolver_is_refused(self):
+        rnd = self.review()
+        self.advance_main({"greet.py": "print('hello')\n"})
+
+        def commits(wt):
+            (wt / "greet.py").write_text("print('both')\n")
+            git_commit(wt, "merged it myself")
+
+        self.runner.during["r1-merge"] = commits
+        self.assertIn("the merge is no longer in progress", self.unfinished(rnd)[0])
+
+    def test_a_worktree_with_changes_is_not_merged_into(self):
+        rnd = self.review()
+        self.advance_main({"later.txt": "later\n"})
+        (self.worktree / "stray.txt").write_text("mine\n")
+        with self.assertRaisesRegex(pr.PRStop, "has uncommitted changes"):
+            self.act("fix", rnd)
+        self.assertEqual((self.worktree / "stray.txt").read_text(), "mine\n")
+        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD"), self.head)
+
+    def test_a_pull_request_that_changes_host_paths_is_fixed_on_its_own_base(self):
+        head = self.push_new_head({".placido/stack.sh": "echo theirs\n"}, self.head)
+        self.answers = [True]
+        rnd = self.review()
+        self.advance_main({"later.txt": "later\n"})
+        self.assertTrue(self.fix_label(rnd).startswith("Fix the 1 kept finding(s)"))
+        self.act("fix", rnd)
+        self.assertEqual(runlog.last_event(self.run.path, "pr.base_merge_skipped")["reason"], "host paths")
+        self.assertNotIn("pr.base_merged", self.kinds())
+        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD^"), head)
+
+    def test_an_up_to_date_branch_is_fixed_without_a_merge(self):
+        rnd = self.review()
+        self.assertTrue(self.fix_label(rnd).startswith("Fix the 1 kept finding(s)"))
+        self.act("fix", rnd)
+        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD^"), self.head)
+        self.assertNotIn("pr.base_merged", self.kinds())
+
+    def test_close_keeps_the_host_paths_the_merge_brought(self):
+        from placido import close
+        from placido.herdr import Herdr
+
+        rnd = self.review()
+        self.advance_main({".placido/notes/pr.md": "Run every engine, twice.\n"})
+        self.act("fix", rnd)
+        close.close(self.run, Herdr(self.fake), self.settings, force=False)
+        self.assertNotIn("close.host_paths_restored", self.kinds())
+        self.assertFalse(self.worktree.exists())
 
 
 CONFIG_WITH_ROUNDS = """

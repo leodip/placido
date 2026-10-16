@@ -695,7 +695,8 @@ them are the risk, not only the change's quality.
   there under its own `PLACIDO_NAME`. They first ran one after the other; #588 showed
   why that was slow (below), and `[pr] parallel` now defaults on. Steps that run at once
   take their folders under the run log's lock (`Run.new_step_dir`) and hand them to the
-  step, since their prompts name them.
+  step, since their prompts name them. The other lanes' stacks go down once the
+  cross-checks are done, since only the pull request's own worktree works after them.
 - **Cross-check, then a judge.** Each reviewer, resumed with its context, gives every
   other finding a verdict; a fresh judge settles them, and placido checks that every
   reviewer finding is accounted for exactly once, so nothing is dropped silently. The
@@ -704,6 +705,14 @@ them are the risk, not only the change's quality.
   role, by default another vendor than the fixer's, which judges each finding's fix and
   reads the fixes for new problems; what it leaves open goes back to the fixer, up to
   `[pr] fix_rounds` times, and the push says whether the fixes passed.
+- **Fixes land on the base as it is now.** When the base has moved past the branch, the
+  fix first merges it in, as a commit of its own, so the fixes are made, gated, and
+  checked on what the squash merge will land. The `fix` role resolves the conflicts and
+  nothing else, and placido refuses a resolution that leaves a marker, touches a file
+  that merged cleanly, or changes a host path. A merge, never a rebase, because the push
+  is never forced. Once merged, the host paths are held to the base's tip, which the
+  maintainer owns; a pull request that changes host paths is not merged into, and is
+  fixed on its own base.
 - **Who fixes is a rule, not a mood.** Fixes estimated at `contributor_share` (0.5) of
   the pull request's own size or more go back to the contributor, all of them;
   smaller ones are made here, on the contributor's branch, so the pull request stays
@@ -2210,4 +2219,18 @@ ran:
   atomic on Linux, and the interpreter rarely switches threads between `print`'s two
   writes. It now runs eight threads through a live view that yields on every write, and
   without the lock the lines interleave every time.
-
+- Goiabada #592, the first run with lanes: 20 minutes to the menu, against #588's 45.
+  The scan took 46s, both stacks came up beside it in 51s and 53s, and the gates took 5m.
+  The reviewers ran at once, Codex in 4m48s and Claude in 9m17s, then the cross-checks
+  at once in 43s and 3m29s, and the judge at high in 1m35s.
+- The review held, and its first finding showed a gap. #592 conflicted with main, which
+  had moved on by nine commits, so the judge's fix said to rebase. Placido never
+  force-pushes, and its host paths were held to the pull request's old base, while main
+  had since changed `.placido/config.toml` and `.placido/notes/pr.md`. A fixer that
+  merged main would have been told to undo those two files, and squash-merging the
+  result would have reverted them on main. The fix now merges the base in first, as a
+  commit of its own, and the host paths follow the merged tip. The check reads the
+  fixes with `--first-parent --remerge-diff`, which shows only what a merge's conflicts
+  were resolved to, and the push counts first-parent commits. Lane B's stack, five
+  containers, had sat idle from the cross-checks until close; it now goes down then.
+  Twenty-six mutations of the new guards were each caught. 637 tests pass.

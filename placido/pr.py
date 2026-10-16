@@ -67,6 +67,10 @@ def pr_ref(number: int) -> str:
     return f"refs/remotes/origin/pr/{number}"
 
 
+def base_ref(base: str) -> str:
+    return f"refs/remotes/origin/{base}"
+
+
 def letter(index: int) -> str:
     return chr(ord("A") + index)
 
@@ -90,6 +94,10 @@ def changed_files(repo: Path, *paths: str) -> list[str]:
 
 def _ok(repo: Path, *args: str) -> bool:
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True).returncode == 0
+
+
+def is_ancestor(repo: Path, commit: str, of: str) -> bool:
+    return _ok(repo, "merge-base", "--is-ancestor", commit, of)
 
 
 @dataclass(frozen=True)
@@ -145,7 +153,7 @@ def lane_for(ctx: Context, rnd: "Round", code: str) -> Lane:
     if lane is None:
         path = ctx.run.path / "lanes" / code.lower()
         name = f"{ctx.env.get('PLACIDO_NAME') or issue_id(ctx.pr.number)}-{code.lower()}"
-        env = {**ctx.env, "PLACIDO_NAME": name, "PLACIDO_WORKTREE": str(path)}
+        env = lane_env(ctx, path, name)
         if not path.is_dir():
             path.parent.mkdir(parents=True, exist_ok=True)
             git(ctx.root, "worktree", "add", "-q", "--detach", str(path), rnd.head)
@@ -156,6 +164,10 @@ def lane_for(ctx: Context, rnd: "Round", code: str) -> Lane:
         git(lane.worktree, "checkout", "-q", "--force", "--detach", rnd.head)
         git(lane.worktree, "clean", "-fdq")
     return lane
+
+
+def lane_env(ctx: Context, path: Path, name: str) -> dict[str, str]:
+    return {**ctx.env, "PLACIDO_NAME": name, "PLACIDO_WORKTREE": str(path)}
 
 
 def together(jobs: list[Callable[[], Any]]) -> None:
@@ -199,7 +211,7 @@ def find_run(root: Path, runs_root: Path, number: int) -> Path | None:
 def fetch(root: Path, base: str, number: int) -> None:
     """The base branch and the pull request's head, as GitHub has them now."""
 
-    git(root, "fetch", "-q", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}",
+    git(root, "fetch", "-q", "origin", f"+refs/heads/{base}:{base_ref(base)}",
         f"+refs/pull/{number}/head:{pr_ref(number)}")
 
 
@@ -228,7 +240,7 @@ def create_run(
             "repo": str(root),
             "config": str(settings.source) if settings.source else None,
             "base": pr.base,
-            "base_commit": git(root, "merge-base", f"refs/remotes/origin/{pr.base}", pr_ref(pr.number)),
+            "base_commit": git(root, "merge-base", base_ref(pr.base), pr_ref(pr.number)),
             "branch": branch,
             "issue_title": pr.title,
             "issue_source": pr.url,
@@ -280,15 +292,26 @@ def done(run_dir: Path, kind: str, number: int, **match: Any) -> dict[str, Any] 
     return found[-1] if found else None
 
 
-def fix_commits(run_dir: Path, number: int) -> list[str]:
-    return [e["commit"] for e in round_events(run_dir, "pr.fixed", number) if e.get("commit")]
+MADE_HERE = ("pr.base_merged", "pr.fixed")  # the events that commit on the branch here
+
+
+def commits_here(run_dir: Path, number: int) -> list[str]:
+    """The commits made on the branch here in the round, in order: the base merged in,
+    and the fixes."""
+
+    return [e["commit"] for e in runlog.read_events(run_dir)
+            if e.get("event") in MADE_HERE and e.get("round") == number and e.get("commit")]
+
+
+def commits_here_all(run_dir: Path) -> list[str]:
+    return [e["commit"] for e in runlog.read_events(run_dir) if e.get("event") in MADE_HERE and e.get("commit")]
 
 
 def expected_head(ctx: Context, rnd: Round) -> str:
-    """Where the worktree should be: the round's head, or the fixes made on it here."""
+    """Where the worktree should be: the round's head, or the commits made on it here."""
 
-    fixes = fix_commits(ctx.run.path, rnd.number)
-    return fixes[-1] if fixes else rnd.head
+    made = commits_here(ctx.run.path, rnd.number)
+    return made[-1] if made else rnd.head
 
 
 def current_round(ctx: Context) -> Round:
@@ -299,9 +322,9 @@ def current_round(ctx: Context) -> Round:
     latest = rounds(run.path)
     if latest:
         last = latest[-1]
-        fixes = fix_commits(run.path, last.number)
+        fixes = commits_here(run.path, last.number)
         local = git(ctx.worktree, "rev-parse", "HEAD")
-        if fixes and local == fixes[-1] and not _ok(ctx.worktree, "merge-base", "--is-ancestor", local, head):
+        if fixes and local == fixes[-1] and not is_ancestor(ctx.worktree, local, head):
             if head != last.head:
                 raise PRStop(
                     f"the contributor pushed {head[:12]} while the fixes made here ({local[:12]}) are not"
@@ -313,7 +336,7 @@ def current_round(ctx: Context) -> Round:
             follow(ctx, head)
             return last
     follow(ctx, head)
-    base = git(ctx.root, "merge-base", f"refs/remotes/origin/{ctx.pr.base}", head)
+    base = git(ctx.root, "merge-base", base_ref(ctx.pr.base), head)
     judged = [e["round"] for e in runlog.read_events(run.path) if e.get("event") == "pr.judged"]
     number = latest[-1].number + 1 if latest else 1
     event = run.event("pr.round", round=number, head=head, base=base, previous=judged[-1] if judged else None)
@@ -331,19 +354,15 @@ def follow(ctx: Context, head: str) -> None:
     current = git(wt, "rev-parse", "HEAD")
     if current == head:
         return
-    if _ok(wt, "merge-base", "--is-ancestor", current, head):
+    if is_ancestor(wt, current, head):
         git(wt, "merge", "-q", "--ff-only", head)
         ctx.run.event("pr.followed", head=head, rewritten=False)
         return
-    ours = [c for c in fix_commits_all(ctx.run.path) if _ok(wt, "merge-base", "--is-ancestor", c, current)]
-    if any(not _ok(wt, "merge-base", "--is-ancestor", c, head) for c in ours):
-        raise PRStop(f"{wt} holds fixes made here that {head[:12]} lacks; push or drop them first")
+    ours = [c for c in commits_here_all(ctx.run.path) if is_ancestor(wt, c, current)]
+    if any(not is_ancestor(wt, c, head) for c in ours):
+        raise PRStop(f"{wt} holds commits made here that {head[:12]} lacks; push or drop them first")
     git(wt, "reset", "-q", "--hard", head)  # the contributor rewrote the branch; nothing of ours is lost
     ctx.run.event("pr.followed", head=head, rewritten=True)
-
-
-def fix_commits_all(run_dir: Path) -> list[str]:
-    return [e["commit"] for e in runlog.read_events(run_dir) if e.get("event") == "pr.fixed" and e.get("commit")]
 
 
 # ---- what every agent reads ----------------------------------------------------------
@@ -367,7 +386,7 @@ def write_data(ctx: Context, rnd: Round) -> None:
     )
     if rnd.previous is not None:
         before = round_by_number(ctx.run.path, rnd.previous).head
-        if _ok(wt, "merge-base", "--is-ancestor", before, rnd.head):
+        if is_ancestor(wt, before, rnd.head):
             text = git(wt, "diff", before, rnd.head) + "\n"
         else:
             text = f"The contributor rewrote the branch since {before[:12]}; read the whole change in diff.patch.\n"
@@ -426,11 +445,31 @@ def pr_text(ctx: Context, rnd: Round) -> str:
 # ---- the worktree stays as the pull request has it -----------------------------------
 
 
-def trust_reference(ctx: Context, rnd: Round) -> str:
-    """What the host paths must match: the round's head once the user approved its
-    changes to them, otherwise the merge base."""
+def trusted(run_dir: Path, rnd: Round, primary: bool = True) -> str:
+    """What the host paths must match. In the pull request's own worktree, the base
+    branch's tip once placido merged it in, which it does only into a pull request that
+    changes no host path. Otherwise the round's head once the user approved its changes
+    to them, or else the merge base."""
 
-    return rnd.head if done(ctx.run.path, "pr.trust_approved", rnd.number, head=rnd.head) else rnd.base
+    merged = done(run_dir, "pr.base_merged", rnd.number) if primary else None
+    if merged:
+        return merged["tip"]
+    return rnd.head if done(run_dir, "pr.trust_approved", rnd.number, head=rnd.head) else rnd.base
+
+
+def trust_reference(ctx: Context, rnd: Round, lane: Lane | None = None) -> str:
+    return trusted(ctx.run.path, rnd, primary=lane is None or lane.primary)
+
+
+def host_paths_differ(wt: Path, ref: str, paths: tuple[str, ...]) -> list[str]:
+    """The host paths in the worktree that are not as ref has them: changed, or not in
+    it. Read against ref alone, so it holds in the middle of a merge too."""
+
+    if not paths:
+        return []
+    changed = git(wt, "diff", "--name-only", ref, "--", *paths).splitlines()
+    added = git(wt, "ls-files", "--others", "--exclude-standard", "--", *paths).splitlines()
+    return sorted(set(changed) | set(added))
 
 
 def _under(path: str, roots: tuple[str, ...]) -> bool:
@@ -451,7 +490,7 @@ def verify_host_paths(ctx: Context, rnd: Round, before: str, lane: Lane | None =
     if not paths:
         return
     wt = (lane or primary_lane(ctx)).worktree
-    changed = git(wt, "diff", "--name-only", trust_reference(ctx, rnd), "--", *paths).splitlines()
+    changed = git(wt, "diff", "--name-only", trust_reference(ctx, rnd, lane), "--", *paths).splitlines()
     files = sorted(set(changed) | set(changed_files(wt, *paths)))
     if files:
         ctx.run.event("pr.host_paths_changed", round=rnd.number, before=before, files=files)
@@ -549,7 +588,7 @@ def setup(ctx: Context, rnd: Round, lane: Lane | None = None) -> None:
 
     lane = lane or primary_lane(ctx)
     code = None if lane.primary else lane.code
-    if not ctx.settings.setup or done(ctx.run.path, "pr.setup", rnd.number, exit=0, lane=code):
+    if not ctx.settings.setup or stack_up(ctx.run.path, rnd.number, code):
         return
     label = "setup" if lane.primary else f"setup of lane {lane.code}"
     verify_host_paths(ctx, rnd, label, lane)
@@ -560,6 +599,40 @@ def setup(ctx: Context, rnd: Round, lane: Lane | None = None) -> None:
     settle(ctx, rnd, label, lane)
     if exit_code != 0:
         raise PRStop(f"{label} failed with exit {exit_code}; see {log}")
+
+
+def stack_up(run_dir: Path, number: int, code: str | None) -> bool:
+    """Whether the round's setup brought the lane's stack up (code None: the pull
+    request's own worktree), and no teardown took it down since."""
+
+    up = False
+    for event in runlog.read_events(run_dir):
+        if event.get("round") != number or event.get("lane") != code:
+            continue
+        if event.get("event") == "pr.setup":
+            up = event.get("exit") == 0
+        elif event.get("event") == "pr.lane_down":
+            up = False
+    return up
+
+
+def release_lanes(ctx: Context, rnd: Round) -> None:
+    """Tear down the extra reviewers' stacks once the cross-checks are done: only the pull
+    request's own worktree works after them. Their worktrees stay, for a later round's
+    reviewers, until `placido close`."""
+
+    if not ctx.settings.teardown:
+        return
+    for event in [e for e in runlog.read_events(ctx.run.path) if e.get("event") == "pr.lane"]:
+        code, path = event["letter"], Path(event["path"])
+        if not path.is_dir() or not stack_up(ctx.run.path, rnd.number, code):
+            continue
+        lane = Lane(code, path, lane_env(ctx, path, event["name"]), ctx.runner)
+        verify_host_paths(ctx, rnd, f"the teardown of lane {code}", lane)
+        log = ctx.run.path / f"teardown-{code.lower()}.log"
+        exit_code = run_command(ctx, "teardown", ctx.settings.teardown, log, lane)
+        # Down either way: a later setup brings it up afresh, and close tears down again.
+        ctx.run.event("pr.lane_down", round=rnd.number, lane=code, exit=exit_code)
 
 
 def run_command(ctx: Context, name: str, command: str, log: Path, lane: Lane | None = None) -> int:
