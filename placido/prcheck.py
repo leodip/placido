@@ -63,11 +63,15 @@ def check_scan(path: Path) -> list[str]:
     concerns = data.get("concerns")
     if not isinstance(concerns, list):
         return problems + ['scan.json needs a "concerns" list (empty when clear).']
-    for n, concern in enumerate(concerns, 1):
-        if not isinstance(concern, dict) or not texts(concern, "title", "why"):
-            problems.append(f"concern {n} needs a non-empty 'title' and 'why'.")
-        elif not isinstance(concern.get("location", ""), str):
-            problems.append(f"concern {n} has a 'location' that is not a string.")
+    notes = data.get("notes", [])
+    if not isinstance(notes, list):
+        return problems + ['scan.json\'s "notes" must be a list (empty when there are none).']
+    for kind, items in (("concern", concerns), ("note", notes)):
+        for n, item in enumerate(items, 1):
+            if not isinstance(item, dict) or not texts(item, "title", "why"):
+                problems.append(f"{kind} {n} needs a non-empty 'title' and 'why'.")
+            elif not isinstance(item.get("location", ""), str):
+                problems.append(f"{kind} {n} has a 'location' that is not a string.")
     if data.get("verdict") == "concerns" and not concerns:
         problems.append('a "concerns" verdict needs at least one concern.')
     if data.get("verdict") == "clear" and concerns:

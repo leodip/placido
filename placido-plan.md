@@ -688,6 +688,15 @@ them are the risk, not only the change's quality.
   because an agent started in the worktree runs their hooks and servers on this
   machine. Reviewers still run with approvals bypassed: they need Docker for the tests,
   and Docker is root on the host anyway.
+- **Documentation for agents is a note, not a stop.** Contributors often add to
+  `AGENTS.md` and `CLAUDE.md`, which agents in the worktree load by themselves, and a
+  stop for every such paragraph trains the maintainer to answer yes. The scan sorts
+  them: prose that reads as the project's documentation (no reader addressed as an
+  agent, nothing asked of anyone, no command, tool, URL, or outside path) is a note,
+  printed and handed to the reviewers, who read the change anyway; text aimed at
+  agents, and any change to settings, hooks, MCP servers, or skills, is a concern and
+  stops. This is the scan's judgment, so it is no stronger than the scan; the
+  deterministic boundary above is unchanged.
 - **Two reviewers from different vendors, at once, each in a lane.** Two in one
   worktree and one stack would spoil each other's mutations and test runs, so each
   reviewer gets a lane: the pull request's worktree for the first, a detached worktree

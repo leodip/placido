@@ -1,4 +1,6 @@
+import contextlib
 import copy
+import io
 import json
 from pathlib import Path
 from typing import Any
@@ -435,6 +437,24 @@ class ScanTest(PRTestCase):
         pragents.review(self.ctx)
         self.assertEqual(self.runner.names().count("r1-scan"), 1)
 
+    def test_notes_alone_go_on_and_reach_the_reviewers(self):
+        self.runner.scan = {"verdict": "clear", "concerns": [], "notes": [
+            {"title": "AGENTS.md gains a paragraph", "location": "AGENTS.md:40", "why": "it documents the fix"}]}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            pragents.review(self.ctx)
+        self.assertEqual(self.asked, [])
+        self.assertNotIn("pr.scan_accepted", self.kinds())
+        self.assertEqual(pr.done(self.run.path, "pr.scan", 1)["notes"], 1)
+        self.assertIn("1. AGENTS.md gains a paragraph (AGENTS.md:40): it documents the fix", out.getvalue())
+        review = next(c for c in self.runner.calls if c["name"] == "r1-review-a")
+        self.assertIn("weigh each of its notes", review["task"])
+
+    def test_without_notes_the_reviewers_are_not_told_of_any(self):
+        pragents.review(self.ctx)
+        review = next(c for c in self.runner.calls if c["name"] == "r1-review-a")
+        self.assertNotIn("weigh each of its notes", review["task"])
+
     def test_only_agents_that_can_be_confined_scan(self):
         self.settings = self.load(CONFIG + '[roles.scan]\nagent = "pi"\nfallback = [{agent = "codex"}]\n')
         self.ctx = self.context()
@@ -457,6 +477,11 @@ class ScanTest(PRTestCase):
             ({"verdict": "clear", "concerns": [{"title": "t", "why": "w"}]},
              ['a "clear" verdict lists no concerns; use "concerns" instead.']),
             ({"verdict": "concerns", "concerns": [{"title": "t"}]}, ["concern 1 needs a non-empty 'title' and 'why'."]),
+            ({"verdict": "clear", "concerns": [], "notes": [{"title": "t", "location": "AGENTS.md:1", "why": "w"}]}, []),
+            ({"verdict": "clear", "concerns": [], "notes": "none"},
+             ['scan.json\'s "notes" must be a list (empty when there are none).']),
+            ({"verdict": "clear", "concerns": [], "notes": [{"title": "t", "why": " "}]},
+             ["note 1 needs a non-empty 'title' and 'why'."]),
         ]
         for data, expected in cases:
             (folder / "scan.json").write_text(json.dumps(data))

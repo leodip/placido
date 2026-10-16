@@ -69,6 +69,8 @@ def _paths_block(ctx: Context, rnd: Round, lane: Lane | None = None) -> list[str
     scanned = done(ctx.run.path, "pr.scan", rnd.number)
     if scanned:
         accepted = " (concerns the user read and accepted)" if scanned["verdict"] == "concerns" else ""
+        if scanned.get("notes"):
+            accepted += "; weigh each of its notes as you review the change"
         lines.append(f"- **The safety scan:** {ctx.run.path / 'steps' / scanned['step'] / 'scan.md'}{accepted}")
     lines += [
         f"- **Gates placido ran on it:** {rnd.folder / 'gates.md'}",
@@ -168,7 +170,20 @@ def run_scan(ctx: Context, rnd: Round) -> None:
     if step.outcome != "success":
         raise PRStop(f"the scan did not finish ({step.outcome}); see {step.path}")
     data = json.loads((step.path / "scan.json").read_text(encoding="utf-8"))
-    run.event("pr.scan", round=rnd.number, verdict=data["verdict"], concerns=len(data["concerns"]), step=step.path.name)
+    notes = data.get("notes", [])
+    run.event(
+        "pr.scan", round=rnd.number, verdict=data["verdict"], concerns=len(data["concerns"]), notes=len(notes),
+        step=step.path.name,
+    )
+    if notes:
+        print(f"\nThe scan of #{ctx.pr.number} has {len(notes)} note(s), which do not stop it; the reviewers get them:")
+        _print_items(notes)
+
+
+def _print_items(items: list[dict[str, Any]]) -> None:
+    for n, item in enumerate(items, 1):
+        where = f" ({item['location']})" if item.get("location") else ""
+        print(f"  {n}. {item['title']}{where}: {item['why']}")
 
 
 def decide_scan(ctx: Context, rnd: Round) -> None:
@@ -181,9 +196,7 @@ def decide_scan(ctx: Context, rnd: Round) -> None:
     folder = run.path / "steps" / found["step"]
     data = json.loads((folder / "scan.json").read_text(encoding="utf-8"))
     print(f"\nThe scan of #{ctx.pr.number} has {len(data['concerns'])} concern(s) about running it here:")
-    for n, concern in enumerate(data["concerns"], 1):
-        where = f" ({concern['location']})" if concern.get("location") else ""
-        print(f"  {n}. {concern['title']}{where}: {concern['why']}")
+    _print_items(data["concerns"])
     print(f"Details: {folder / 'scan.md'}")
     status.show(run.path, status.text(status.YOU, f"scan concerns: placido pr {ctx.pr.number}"))
     notify(ctx, "the scan has concerns", f"{len(data['concerns'])} before anything of #{ctx.pr.number} runs")

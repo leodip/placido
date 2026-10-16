@@ -357,7 +357,9 @@ stack), unattended until it has something to show you:
    nothing else (claude in `dontAsk` mode with no shell, or codex in its sandbox with no
    network). It looks for code that would reach beyond the project when the setup or
    the tests run, hidden content, new dependencies, and text aimed at agents. Any
-   concern stops the review until you say to go on.
+   concern stops the review until you say to go on. A change to a file agents load by
+   themselves, such as `AGENTS.md`, that reads as ordinary project documentation is a
+   note instead: shown, and handed to the reviewers, without stopping.
 2. **Host paths.** The paths in `[pr] host_paths` run on your machine: your scripts and
    the agents' project settings, whose hooks and MCP servers start with an agent in
    the worktree. A pull request that changes them waits for your approval, and they
