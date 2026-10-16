@@ -13,6 +13,11 @@ when the checkout is on the base with no changes), and deletes the issue's branc
 once its work is merged: its pull request merged on GitHub, which a squash merge
 hides from git, or the branch merged into the base, and drops the git stashes the run
 set aside. An unmerged branch and its stashes stay.
+
+A `placido pr` run reviewed someone else's pull request: its branch goes once the pull
+request is merged or closed and every commit made on it here reached it, and before
+its teardown runs from the worktree, the host paths are put back as they were trusted,
+since the pull request's tests could write to them (decided 2026-10-16).
 """
 
 from __future__ import annotations
@@ -116,10 +121,40 @@ def _pull(run: runlog.Run, repo: Path, base: str) -> None:
     run.event("base.pulled", base=base, before=before[:12], after=after[:12])
 
 
+def _restore_host_paths(run: runlog.Run, worktree: Path, settings: config.Config) -> None:
+    """Put the host paths back as the review last trusted them, so the teardown that runs
+    from them is the project's, whatever the pull request's tests wrote."""
+
+    paths = settings.pr.host_paths
+    rounds = [e for e in runlog.read_events(run.path) if e.get("event") == "pr.round"]
+    if not paths or not rounds:
+        return
+    last = rounds[-1]
+    approved = any(
+        e.get("event") == "pr.trust_approved" and e.get("round") == last["round"] and e.get("head") == last["head"]
+        for e in runlog.read_events(run.path)
+    )
+    reference = last["head"] if approved else last["base"]
+    changed = set(_git(worktree, "diff", "--name-only", reference, "--", *paths).stdout.splitlines())
+    loose = _git(worktree, "status", "--porcelain", "--untracked-files=all", "--", *paths).stdout
+    changed |= {line[3:] for line in loose.splitlines()}
+    for name in sorted(changed):
+        if _git(worktree, "cat-file", "-e", f"{reference}:{name}").returncode == 0:
+            _git(worktree, "checkout", reference, "--", name)
+        else:
+            (worktree / name).unlink(missing_ok=True)
+            _git(worktree, "rm", "-q", "--cached", "--ignore-unmatch", "--", name)
+    if changed:
+        run.event("close.host_paths_restored", files=sorted(changed), reference=reference)
+
+
 def _merged(run: runlog.Run, repo: Path, base: str, branch: str, gh: Runner) -> str | None:
     """Why the branch counts as merged, or None: its pull request merged, or the
     branch already in the base."""
 
+    record = runlog.read_record(run.path)
+    if record.get("kind") == "pr":
+        return _reviewed(repo, branch, record, gh)
     opened = runlog.last_event(run.path, "pr.opened")
     owner_repo = start.origin_repo(repo)
     if opened and owner_repo:
@@ -132,11 +167,32 @@ def _merged(run: runlog.Run, repo: Path, base: str, branch: str, gh: Runner) -> 
     return None
 
 
+def _reviewed(repo: Path, branch: str, record: dict, gh: Runner) -> str | None:
+    """Why a reviewed pull request's branch can go, or None: the pull request merged or
+    closed, and every commit made on the branch here on it."""
+
+    number, owner_repo = record.get("pr_number"), start.origin_repo(repo)
+    if not number or not owner_repo:
+        return None
+    result = gh(["gh", "pr", "view", str(number), "-R", owner_repo, "--json", "state", "--jq", ".state"], timeout=60)
+    state = result.out.strip() if result.code == 0 else ""
+    if state not in ("MERGED", "CLOSED"):
+        return None
+    ref = f"refs/remotes/origin/pr/{number}"
+    _git(repo, "fetch", "-q", "origin", f"+refs/pull/{number}/head:{ref}")
+    if _git(repo, "merge-base", "--is-ancestor", branch, ref).returncode != 0:
+        return None  # it holds commits made here that never reached the pull request
+    _git(repo, "update-ref", "-d", ref)
+    return f"pull request #{number} {state.lower()}"
+
+
 def _close(
     run: runlog.Run, herdr: Herdr, settings: config.Config, worktree: Path, workspace: str, force: bool,
 ) -> None:
     run.event("close.start", force=force)
     if worktree.is_dir():
+        if runlog.read_record(run.path).get("kind") == "pr":
+            _restore_host_paths(run, worktree, settings)
         changes = implement.git(worktree, "status", "--porcelain")
         if changes and not force:
             raise CloseError(

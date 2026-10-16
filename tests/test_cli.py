@@ -149,3 +149,22 @@ class EntryPointTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PRCommandTest(unittest.TestCase):
+    def test_reads_a_number_a_hash_or_a_url(self):
+        for text in ("602", "#602", "https://github.com/leodip/goiabada/pull/602",
+                     "https://github.com/leodip/goiabada/pull/602/files"):
+            self.assertEqual(cli.pr_number(text), 602, text)
+        for text in ("abc", "https://github.com/leodip/goiabada/issues/602", ""):
+            self.assertIsNone(cli.pr_number(text), text)
+
+    def test_refuses_what_is_not_a_pull_request(self):
+        err = io.StringIO()
+        with mock.patch("sys.stderr", err):
+            self.assertEqual(cli.main(["pr", "nope"]), 1)
+        self.assertIn("'nope' is not a pull request number or URL", err.getvalue())
+
+    def test_no_menu_option(self):
+        args = cli.build_parser().parse_args(["pr", "602", "--no-menu"])
+        self.assertEqual((args.pr, args.no_menu, args.func), ("602", True, cli.cmd_pr))

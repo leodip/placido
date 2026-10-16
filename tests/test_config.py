@@ -278,6 +278,62 @@ class FindConfigTest(unittest.TestCase):
             self.assertIsNone(config.find_config(Path(tmp)))
 
 
+class PRSettingsTest(unittest.TestCase):
+    def test_defaults(self):
+        c = config.load(None)
+        self.assertEqual(
+            [r.agent for r in c.pr.reviewers],
+            [AgentSpec("claude", "opus", "xhigh"), AgentSpec("codex", "gpt-6.1-sol", "max", "fast")],
+        )
+        self.assertEqual(c.pr.reviewers[1].fallback, c.roles["review"].fallback)
+        self.assertEqual(c.pr.host_paths, (".placido", ".claude", ".codex", ".mcp.json"))
+        self.assertEqual((c.pr.gates, c.pr.contributor_share), ((), 0.5))
+        self.assertEqual(c.roles["scan"].agent, AgentSpec("claude", "opus", "high"))
+        self.assertEqual(c.roles["judge"].agent, AgentSpec("claude", "opus", "xhigh"))
+
+    def test_gates_default_to_the_slice_and_final_gates(self):
+        c = load_text(
+            '[commands.unit]\nrun = "u"\n[commands.lint]\nrun = "l"\n'
+            '[gates]\nslice = ["unit"]\nfinal = ["lint", "unit"]\n'
+        )
+        self.assertEqual(c.pr.gates, ("unit", "lint"))
+
+    def test_everything_is_configurable(self):
+        c = load_text(
+            '[commands.unit]\nrun = "u"\n'
+            '[pr]\ngates = ["unit"]\nhost_paths = ["scripts/", ".placido"]\ncontributor_share = 1\n'
+            'reviewers = [{agent = "codex", effort = "high", fallback = []}, {agent = "pi"}]\n'
+            '[roles.judge]\nagent = "codex"\n'
+        )
+        self.assertEqual([r.agent for r in c.pr.reviewers],
+                         [AgentSpec("codex", "gpt-6.1-sol", "high"), AgentSpec("pi", "deepseek/deepseek-v4.1-flash", "high")])
+        self.assertEqual(c.pr.reviewers[0].fallback, ())
+        self.assertEqual((c.pr.gates, c.pr.host_paths, c.pr.contributor_share), (("unit",), ("scripts", ".placido"), 1.0))
+        self.assertEqual(c.roles["judge"].agent.agent, "codex")
+
+    def test_refusals(self):
+        cases = {
+            "[pr]\nreviewers = []\n": "pr.reviewers: must be a list of 1 to 26 agent tables",
+            "[pr]\nreviewers = [{model = \"x\"}]\n": "pr.reviewers #1: needs an agent",
+            "[pr]\ngates = [\"nope\"]\n": "pr.gates: 'nope' is not a command",
+            "[pr]\nhost_paths = [\"/etc\"]\n": "pr.host_paths: '/etc' must be a path inside the repository",
+            "[pr]\nhost_paths = [\"a/../../b\"]\n": "must be a path inside the repository",
+            "[pr]\ncontributor_share = 0\n": "pr.contributor_share: must be a number above 0 and at most 1",
+            "[pr]\ncontributor_share = 1.5\n": "pr.contributor_share",
+            "[pr]\ncontributor_share = true\n": "pr.contributor_share",
+            "[pr]\nshare = 0.5\n": "pr.share: unknown key",
+        }
+        for text, message in cases.items():
+            with self.assertRaisesRegex(ConfigError, message, msg=text):
+                load_text(text)
+
+    def test_described(self):
+        text = config.describe(config.load(None), Path("."))
+        self.assertIn("[pr]\nreviewer A claude --model opus --effort xhigh", text)
+        self.assertIn("reviewer B codex -m gpt-6.1-sol", text)
+        self.assertIn("host paths .placido, .claude, .codex, .mcp.json", text)
+
+
 class ConfigCommandTest(unittest.TestCase):
     def placido(self, *argv: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()

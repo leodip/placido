@@ -668,6 +668,49 @@ step. To be built with steps 7 to 10.
 | Named sessions | Isolated testing of placido: `HERDR_SESSION=placido-test herdr server` runs a headless server, and `HERDR_CONFIG_PATH` gives it its own worktree directory |
 | Detach, reattach, SSH, browser | Runs continue while the user is away |
 
+### Reviewing contributors' pull requests
+
+`placido pr <number>` reviews a pull request someone else sent, for the maintainer,
+and acts on it only as the maintainer picks (decided 2026-10-16). It is built from the
+parts a run already has, a worktree and workspace through Herdr, the project's setup,
+steps with fallback chains, and `placido mutate`, but on a different footing: the code
+and the text are a stranger's, so the agents that read them and the commands that run
+them are the risk, not only the change's quality.
+
+- **The order is safety first.** A scan agent reads the change before any of it runs,
+  confined (`step.CONFINABLE`: claude in `dontAsk` mode with no shell and reads limited
+  to the folders it is given, codex in its `workspace-write` sandbox with no network
+  and `/tmp` excluded; both measured with a fake worktree before relying on them). It
+  is a filter, not a guarantee, so the hard boundary is deterministic: the paths in
+  `[pr] host_paths` must hold what the base had, or what the user approved, before
+  every command placido runs from the worktree, and the worktree must be clean after
+  every command and agent. The defaults include `.claude`, `.codex`, and `.mcp.json`,
+  because an agent started in the worktree runs their hooks and servers on this
+  machine. Reviewers still run with approvals bypassed: they need Docker for the tests,
+  and Docker is root on the host anyway.
+- **Two reviewers from different vendors, one after the other.** Two at once in one
+  worktree and one stack would spoil each other's mutations and test runs; two
+  worktrees and stacks would double the resources and bring placido's first
+  concurrent steps. The user first chose parallel worktrees, then sequential once the
+  trade-off was laid out; `[pr] parallel` can come later.
+- **Cross-check, then a judge.** Each reviewer, resumed with its context, gives every
+  other finding a verdict; a fresh judge settles them, and placido checks that every
+  reviewer finding is accounted for exactly once, so nothing is dropped silently.
+- **Who fixes is a rule, not a mood.** Fixes estimated at `contributor_share` (0.5) of
+  the pull request's own size or more go back to the contributor, all of them;
+  smaller ones are made here, on the contributor's branch, so the pull request stays
+  the way the change lands and keeps its author. The judge's verdict must follow the
+  rule, or its result is sent back.
+- **Nothing outward without the user.** Posting, pushing (never forced), approving CI
+  runs, merging (pinned to the head the review covered), and closing happen only from
+  the menu, and pushing, merging, and closing ask again. Problems found outside the
+  change go to the maintainer only, never into the comment.
+- **Untrusted input everywhere.** Every prompt says the pull request's code and text are
+  data, not instructions; the project notes and standards come from the main checkout
+  or the base commit, never the pull request's copies; and the earlier review a new
+  round verifies is taken only from comments by the user's own login, since anyone can
+  write placido's marker.
+
 ## Open questions to re-evaluate
 
 ### Isolating agent runs (raised 2026-10-02, decide before step 14)
@@ -2106,3 +2149,31 @@ ran:
   fix that passes its check ends the gates as passed (`*_gates.passed` with
   `by=fix`); there is one fixer step per failure, whose check retries within the
   step, and MAX_FIXES applies to CI only.
+
+### 2026-10-16
+
+- `placido pr <number>`: reviewing other people's pull requests, from the maintainer's
+  wish for a Claude and a Codex review cross-checked into one (see "Reviewing
+  contributors' pull requests"). New: `placido/pr.py` (the run, its rounds, the files
+  every agent reads, the host paths, setup and gates), `placido/pragents.py` (the scan,
+  the reviews, the cross-checks, and the judge), `placido/prcheck.py` (the checks on
+  every file those agents write), `placido/prgh.py` (gh), `placido/prmenu.py` (the
+  summary, the menu, and its actions, the fix among them), the `pr-scan`, `pr-review`,
+  `pr-judge`, and `pr-fix` skills, the `scan` and `judge` roles, `[pr]` in the config,
+  and confined steps. `placido close pr-<n>` puts the host paths back before teardown
+  and deletes the branch once the pull request is settled with nothing left unpushed.
+- The confined modes were measured before being relied on, each against a fake
+  worktree: claude in `dontAsk` mode read the folders it was given and wrote in its own,
+  and was refused a write elsewhere, a shell command, and a read outside them; codex in
+  `workspace-write` was refused a write elsewhere and the network only once `/tmp` was
+  excluded, since its sandbox lets it write there by default. Herdr's `worktree create`
+  takes a remote ref as `--base`, checked on the sandbox.
+- The tests caught a real defect on the way: `git status --porcelain` read through a
+  helper that strips its output loses the first line's leading space, and with it a
+  character of the path, so `.placido/stack.sh` read as `placido/stack.sh` and escaped
+  the host-path check. `pr.changed_files` reads it unstripped. A second hole, found
+  reading the code back: the fix's gates run the pull request's tests after the fixer's
+  own check of the host paths, so a test could write there and ride into the fix's
+  commit; the host paths are verified again right before it. Seventeen deliberate
+  mutations of the new guards were each caught by the tests. 605 tests pass.
+

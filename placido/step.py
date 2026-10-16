@@ -142,8 +142,41 @@ class StepResult:
     failure: outcomes.Failure | None = None  # why the agent's turn failed, if it did
 
 
-def launch_args(spec: AgentSpec) -> list[str]:
+def launch_args(spec: AgentSpec, confined_to: Path | None = None, reads: tuple[Path, ...] = ()) -> list[str]:
+    if confined_to is not None:
+        return [*spec.args(), *confined_args(spec.agent, confined_to, reads)]
     return [*spec.args(), *UNATTENDED[spec.agent]]
+
+
+# Agents that can run confined: reading only their step folder and the folders they are
+# given, writing only in their step folder, with no shell (claude) or no network
+# (codex), and none of UNATTENDED's bypasses. For an agent that reads what nobody has
+# vetted yet, such as an outside contributor's pull request before `placido pr` runs
+# any of it. Measured on 2026-10-16 with a fake worktree: claude in dontAsk mode read
+# the folders it was given and wrote in its own, and was refused a write elsewhere, a
+# shell command, and a read outside them; codex in its workspace-write sandbox wrote in
+# its own folder and was refused a write elsewhere ("Read-only file system") and the
+# network. Codex's sandbox lets it write in /tmp unless told otherwise, so both
+# exclusions are set; it can still read anywhere, but has nowhere to send what it
+# reads. A dialog either shows, such as codex's review of changed hooks, goes to the
+# user as any other. pi has no sandbox.
+CONFINABLE = ("claude", "codex")
+
+
+def confined_args(agent: str, folder: Path, reads: tuple[Path, ...]) -> list[str]:
+    if agent == "claude":
+        args = ["--permission-mode", "dontAsk"]
+        for path in reads:
+            args += ["--add-dir", str(path)]
+        # An absolute path in a permission rule starts with //.
+        return [*args, "--allowedTools", f"Edit(/{folder}/**)"]
+    if agent == "codex":
+        return [
+            "-s", "workspace-write", "-a", "never",
+            "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
+            "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+        ]
+    raise ValueError(f"{agent} cannot run confined")
 
 
 def agent_name(role: str, pane_id: str) -> str:
@@ -214,6 +247,7 @@ class Step:
         check: Callable[[Path], list[str]] | None = None,
         keep_open: bool = False,
         ask: Callable[[Path], str | None] | None = None,
+        confined: tuple[Path, ...] | None = None,
     ) -> StepResult:
         """Run the step. An interactive step is a conversation with the user, so an idle
         agent is waiting for them rather than done. check, given the result file,
@@ -221,25 +255,30 @@ class Step:
         file, returns the question in it when the agent needs the user's decision: the
         user is brought to the agent's tab, and the step goes on once the agent writes
         its result again. The agent's tab is closed afterwards, once its output is safe,
-        unless keep_open."""
+        unless keep_open. confined, the folders the agent may read: it then starts in its
+        step folder, confined as CONFINABLE describes, rather than in the worktree."""
 
+        if confined is not None and spec.agent not in CONFINABLE:
+            raise ValueError(f"{spec.agent} cannot run confined")
         folder, prompt, result = self._new_step(name or role, task)
         began = self.clock()
         self.run.event("step.start", step=folder.name, role=role)
 
         # PLACIDO_STEP_DIR tells tools the agent runs, such as `placido mutate`, where to record.
         env = {**self.env, "PLACIDO_STEP_DIR": str(folder)}
-        pane = self.herdr.create_tab(self.workspace_id, self.cwd, folder.name, env)
+        cwd = folder if confined is not None else self.cwd
+        pane = self.herdr.create_tab(self.workspace_id, cwd, folder.name, env)
         agent = agent_name(role, pane)
         self.run.event(
             "agent.start", step=folder.name, agent=spec.agent, model=spec.model,
-            effort=spec.effort, pane=pane, name=agent,
+            effort=spec.effort, pane=pane, name=agent, **({"confined": True} if confined is not None else {}),
         )
         self._status(status.text(status.WORKING, status.label(folder.name)))
         if spec.agent == "codex":
             codexd.ensure(self.run)  # its shared daemon must not run from a worktree
+        args = launch_args(spec, folder, confined) if confined is not None else launch_args(spec)
         try:
-            self.herdr.start_agent(agent, spec.agent, pane, launch_args(spec))
+            self.herdr.start_agent(agent, spec.agent, pane, args)
         except HerdrError as error:
             # A dialog, such as a one-time warning, holds the agent before it is ready;
             # the readiness check before the first prompt gets the user for it.

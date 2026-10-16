@@ -16,6 +16,12 @@ placido run            slices built and committed, final checks, review, pull re
 placido close 439      after you merge: teardown, worktree removed, main pulled, branch deleted
 ```
 
+It also reviews pull requests other people send: `placido pr 602` has a Claude and a
+Codex reviewer each review the pull request on its own, cross-check each other, and a
+judge settle both into one review, with a drafted comment for the contributor. Nothing
+is posted, pushed, or merged until you pick it (see
+[Review a contributor's pull request](#review-a-contributors-pull-request)).
+
 ## How a run goes
 
 1. **Start.** `placido start <issue>` creates the branch `placido/<issue>` in a git
@@ -178,6 +184,8 @@ Each role has an agent, model, and effort, and a fallback chain:
 | `review` | codex, gpt-6.1-sol, max, fast tier |
 | `fix` | as `implement` |
 | `retro` | as `spec` |
+| `scan` (`placido pr`, confined) | claude, Opus, high |
+| `judge` (`placido pr`) | claude, Opus, xhigh |
 | fallback chain | claude Opus at max, then pi with DeepSeek through OpenRouter; an entry with the role's own model is skipped after a refusal |
 
 Change any of them per project:
@@ -211,6 +219,15 @@ final_rounds = 3       # review rounds; each one after the first must be earned
 stage_attempts = 3     # failed attempts at a slice before the run stops
 quota_wait     = "2h"  # wait this long for a quota reset before falling back
 ci_wait        = "1h"  # wait this long for CI on the pull request
+
+[pr]                   # placido pr: reviewing other people's pull requests
+reviewers = [          # each reviews on its own, in this order; each may name a fallback list
+  { agent = "claude", model = "opus", effort = "xhigh" },
+  { agent = "codex", model = "gpt-6.1-sol", effort = "max", tier = "fast" },
+]
+gates = []             # commands run once before the reviews; none named: the slice and final gates
+host_paths = [".placido", ".claude", ".codex", ".mcp.json"]  # changes wait for your approval
+contributor_share = 0.5  # fixes this big, against the pull request, go back to its author
 ```
 
 ### Your own settings
@@ -323,6 +340,51 @@ placido starts the daemon from your home folder before it launches Codex, and
 Restarting would cut off any Codex session running, so then placido only says how to
 do it later; `placido doctor` reports a daemon whose folder is gone.
 
+## Review a contributor's pull request
+
+`placido pr 602` (or `#602`, or its URL), from a Herdr pane in your project's checkout,
+reviews a pull request someone else sent, in a worktree and workspace of its own
+(`placido/pr-602`, with `PLACIDO_NAME` such as `goiabada-pr-602` for your setup's
+stack), unattended until it has something to show you:
+
+1. **A safety scan, before anything of it runs.** An agent reads the change and the
+   pull request's text, confined: it can read the change and write its own notes, and
+   nothing else (claude in `dontAsk` mode with no shell, or codex in its sandbox with no
+   network). It looks for code that would reach beyond the project when the setup or
+   the tests run, hidden content, new dependencies, and text aimed at agents. Any
+   concern stops the review until you say to go on.
+2. **Host paths.** The paths in `[pr] host_paths` run on your machine: your scripts and
+   the agents' project settings, whose hooks and MCP servers start with an agent in
+   the worktree. A pull request that changes them waits for your approval, and they
+   are checked again before every command placido runs from the worktree, since the
+   pull request's own tests can write to it. After every command and every agent the
+   worktree must be clean: what changed is kept as evidence and put back, and a change
+   under a host path stops the review.
+3. **Setup and gates.** Your setup, then the `[pr] gates`, once, for every reviewer.
+4. **Reviews.** Each reviewer, one after the other, reviews on its own: does it solve
+   its issue, gaps, bugs, security, the standards it touches (read from the source),
+   test coverage, and whether the tests are real: they fail without the fix, and
+   mutations of the fix (`placido mutate`) make them fail.
+5. **Cross-check.** Each reviewer, resumed, confirms or refutes the others' findings.
+6. **Judge.** One review: the findings kept and who found them, what was dropped and
+   why, a verdict, problems that were already there (for you only), and drafts of the
+   comment and the squash message. Fixes estimated at `contributor_share` of the pull
+   request or more go back to the contributor; smaller ones you make here.
+
+Then placido prints the review and a menu. Nothing happens that you do not pick, and
+pushing, merging, and closing ask again: edit the comment or the squash message, fix
+the findings here on the contributor's branch (committed locally by the `fix` role,
+with the gates), push them (never forced, and only when the contributor allows
+maintainers to), post the comment, approve CI runs GitHub holds for first-time
+contributors, squash-merge pinned to the commit the review covered, or close.
+
+`placido pr 602` again shows the menu again, or, once the contributor has pushed, starts
+a new round whose reviewers check each earlier finding. `placido close pr-602` removes
+the worktree and stack, putting the host paths back first, and deletes the branch once
+the pull request is merged or closed and nothing made here is left unpushed. Project
+notes for these agents go in `.placido/notes/pr.md` (all of them), `scan.md`,
+`review.md`, and `fix.md`, read from your main checkout, never from the pull request.
+
 ## Commands
 
 | Command | What it does |
@@ -334,6 +396,7 @@ do it later; `placido doctor` reports a daemon whose folder is gone.
 | `placido run` | Builds the slices, runs the final checks, reviews, opens the pull request; resumes |
 | `placido implement [slice]` | Builds one slice by hand |
 | `placido review` | Reviews the change and delivers it, as `run` does at its end |
+| `placido pr <number>` | Reviews a contributor's pull request with two reviewers and a judge, then acts as you pick; resumes |
 | `placido close [issue]` | Teardown, worktree, and workspace removed, base pulled, merged branch deleted; `--force` discards changes |
 | `placido status` | Every issue in progress, those needing you first |
 | `placido report [run]` | A run's steps, time, and tokens; `--runs` for trends, `--json` for data |

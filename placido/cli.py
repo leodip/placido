@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from placido import __version__, checks, config, doctor, driver, followups, github, implement, mutate, report, review, runlog, spec, start, status, step, summary
+from placido import __version__, checks, config, doctor, driver, followups, github, implement, mutate, pr, pragents, prgh, prmenu, report, review, runlog, spec, start, status, step, summary
 from placido import close as closing
 from placido import retro as retrospect
 from placido.herdr import Herdr, HerdrError
@@ -510,6 +510,99 @@ def cmd_mutate(args: argparse.Namespace) -> int:
     return mutate.main(args.file, args.replace, args.with_, args.test_command, args.timeout)
 
 
+def pr_number(text: str) -> int | None:
+    """602, #602, or a pull request's URL."""
+
+    value = text.strip().rstrip("/").lstrip("#")
+    if "/pull/" in value:
+        value = value.rsplit("/pull/", 1)[1].split("/", 1)[0]
+    return int(value) if value.isdigit() else None
+
+
+def _ask(question: str) -> bool | None:
+    """A yes-or-no question at the terminal; None when nobody is there to answer."""
+
+    if not sys.stdin.isatty():
+        return None
+    try:
+        return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return None
+
+
+def _read(prompt: str) -> str | None:
+    if not sys.stdin.isatty():
+        return None
+    try:
+        return input(prompt)
+    except EOFError:
+        return None
+
+
+def cmd_pr(args: argparse.Namespace) -> int:
+    """Review an outside contributor's pull request, then act on it as the user picks."""
+
+    number = pr_number(args.pr)
+    if number is None:
+        print(f"placido: {args.pr!r} is not a pull request number or URL", file=sys.stderr)
+        return 1
+    try:
+        root = start.project_root(Path.cwd())
+        settings = config.load(config.find_config(root))
+        repo = start.origin_repo(root)
+        if repo is None:
+            raise pr.PRStop(f"{root} has no GitHub remote, so it has no pull requests")
+        hub = prgh.Hub(repo)
+        pull = hub.pull_request(number)
+        runs_root = runlog.runs_dir()
+        path = pr.find_run(root, runs_root, number)
+        if pull.state != "OPEN" and path is None:
+            raise pr.PRStop(f"#{number} is {pull.state.lower()}; there is nothing to review")
+        herdr = Herdr()
+        if pull.state == "OPEN":
+            pr.fetch(root, pull.base, number)
+            if path is None:
+                path = pr.create_run(root, settings, pull, herdr, runs_root, echo=sys.stdout).path
+    except (start.StartError, config.ConfigError, prgh.PRError, pr.PRStop) as error:
+        print(f"placido: {error}", file=sys.stderr)
+        return 1
+    try:
+        created = start.ensure_workspace(path, herdr)
+    except HerdrError as error:
+        print(f"placido: the pull request's workspace is gone and could not be reopened: {error}", file=sys.stderr)
+        return 1
+    run = runlog.Run(path, echo=sys.stdout)
+    worktree = Path(created["path"])
+    env = start.env_of(path)
+    runner = step.Step(run, herdr, created["workspace"], worktree, env=env, quota_wait=settings.quota_wait)
+    ctx = pr.Context(run, runner, herdr, settings, root, worktree, env, hub, pull, ask=_ask)
+    try:
+        with driver.Lock(path):
+            if pull.state == "OPEN":
+                rnd = pragents.review(ctx)
+            else:
+                found = pr.rounds(path)
+                if not found or not pr.done(path, "pr.judged", found[-1].number):
+                    raise pr.PRStop(f"#{number} is {pull.state.lower()}; placido close pr-{number} ends its run")
+                rnd = found[-1]
+            print("\n" + prmenu.summary(ctx, rnd))
+            if not args.no_menu:
+                prmenu.menu(ctx, rnd, _read, _ask)
+    except driver.RunError as error:
+        print(f"placido: {error}", file=sys.stderr)
+        return 1
+    except (pr.PRStop, prgh.PRError, implement.ImplementError) as error:
+        run.event("pr.stopped", reason=str(error)[:500])
+        status.show(path, status.text(status.STOPPED, f"placido pr {number} to resume"))
+        print(f"placido: {error}", file=sys.stderr)
+        return 1
+    except HerdrError as error:
+        run.event("step.failed", error=str(error))
+        print(f"placido: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_trial(args: argparse.Namespace) -> int:
     """Scaffolding until `placido start`: make a run folder and log a pretend step."""
 
@@ -651,6 +744,12 @@ def build_parser() -> argparse.ArgumentParser:
     look.add_argument("--run", help="a run as `placido runs` lists it (default: the active run)")
     _override_options(look)
     look.set_defaults(func=cmd_retro)
+    contrib = commands.add_parser(
+        "pr", help="review an outside contributor's pull request, then act on it as you pick; resumes"
+    )
+    contrib.add_argument("pr", help="the pull request: 602, #602, or its URL")
+    contrib.add_argument("--no-menu", action="store_true", help="show the review and stop, with no actions")
+    contrib.set_defaults(func=cmd_pr)
     shut = commands.add_parser(
         "close", help="clean up an issue: teardown, worktree, workspace (the branch stays)"
     )

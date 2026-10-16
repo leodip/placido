@@ -913,3 +913,45 @@ class QuestionTest(StepTestCase):
         self.assertEqual(notes, ["placido · 01-x: 01-implement asks you"])
         self.assertIn(("status", "you · answer in implement"), self.fake.calls)
         self.assertNotIn("agent.nudge", self.events())
+
+
+class ConfinedTest(StepTestCase):
+    """An agent that reads what nobody has vetted, such as `placido pr`'s scan, starts in
+    its step folder, reading only what it is given, with none of UNATTENDED's bypasses."""
+
+    def test_a_confined_claude_starts_in_its_step_folder_reading_only_what_it_is_given(self):
+        reads = (self.tmp / "wt", self.tmp / "data")
+        self.step(confined=reads)
+        folder = self.run.path / "steps" / "01-implement"
+        tab = next(c for c in self.fake.calls if c[0] == "tab")
+        self.assertEqual(tab[2], str(folder))
+        args = next(c for c in self.fake.calls if c[0] == "start")[4]
+        self.assertEqual(args, [
+            "--model", "opus", "--effort", "high", "--permission-mode", "dontAsk",
+            "--add-dir", str(reads[0]), "--add-dir", str(reads[1]), "--allowedTools", f"Edit(/{folder}/**)",
+        ])
+        self.assertTrue(runlog.last_event(self.run.path, "agent.start")["confined"])
+
+    def test_an_unconfined_step_starts_in_the_worktree_with_the_bypass(self):
+        self.step()
+        tab = next(c for c in self.fake.calls if c[0] == "tab")
+        self.assertEqual(tab[2], str(self.tmp / "wt"))
+        self.assertIn("--dangerously-skip-permissions", next(c for c in self.fake.calls if c[0] == "start")[4])
+        self.assertNotIn("confined", runlog.last_event(self.run.path, "agent.start"))
+
+    def test_codex_runs_in_its_sandbox_without_network_or_tmp(self):
+        args = step.confined_args("codex", Path("/steps/01-scan"), (Path("/wt"),))
+        self.assertEqual(args, [
+            "-s", "workspace-write", "-a", "never",
+            "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
+            "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+        ])
+        for agent in ("claude", "codex"):
+            confined = step.confined_args(agent, Path("/s"), (Path("/wt"),))
+            self.assertFalse([a for a in confined if a.startswith("--dangerously")], agent)
+
+    def test_pi_cannot_run_confined(self):
+        runner = step.Step(self.run, self.fake, "w8", self.tmp / "wt", home=self.home, sleep=self.fake.sleep)
+        with self.assertRaisesRegex(ValueError, "pi cannot run confined"):
+            runner("scan", AgentSpec("pi", "deepseek/deepseek-v4.1-flash", "high"), "Scan.", confined=())
+        self.assertEqual(self.fake.calls, [])
