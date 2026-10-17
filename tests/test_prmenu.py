@@ -394,6 +394,33 @@ class ClosingTest(MenuTestCase):
         self.assertFalse(self.worktree.exists())
         self.assertIsInstance(config.load(None), config.Config)
 
+    def test_a_host_path_committed_by_hand_is_put_back_without_stopping_the_close(self):
+        from placido import close
+        from placido.herdr import Herdr
+
+        self.review()
+        (self.worktree / ".placido" / "stack.sh").write_text("echo by hand\n")
+        git_commit(self.worktree, "by hand")
+        settings = self.load('[project]\nteardown = "sh .placido/stack.sh > $OUT"\n')
+        with mock.patch.dict("os.environ", {"OUT": str(self.tmp / "teardown.out")}):
+            close.close(self.run, Herdr(self.fake), settings, force=False)
+        self.assertEqual((self.tmp / "teardown.out").read_text(), "stack\n")
+        self.assertEqual(runlog.last_event(self.run.path, "close.host_paths_restored")["files"], [".placido/stack.sh"])
+        self.assertFalse(self.worktree.exists())
+
+    def test_the_users_own_changes_still_stop_the_close_beside_a_restored_host_path(self):
+        from placido import close
+        from placido.herdr import Herdr
+
+        self.review()
+        (self.worktree / ".placido" / "stack.sh").write_text("echo by hand\n")
+        git_commit(self.worktree, "by hand")
+        (self.worktree / "greet.py").write_text("print('half done')\n")
+        (self.worktree / "wip.txt").write_text("half done\n")
+        with self.assertRaisesRegex(close.CloseError, r"uncommitted changes:\n M greet\.py\n\?\? wip\.txt\n"):
+            close.close(self.run, Herdr(self.fake), self.settings, force=False)
+        self.assertTrue(self.worktree.exists())
+
     def test_the_branch_goes_once_the_pull_request_is_settled_and_holds_nothing_unpushed(self):
         from placido import close
         from placido.proc import Result

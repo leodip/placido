@@ -25,7 +25,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from placido import codexd, config, driver, implement, pr, runlog, start, summary
+from placido import codexd, config, driver, pr, runlog, start, summary
 from placido.herdr import Herdr, HerdrError
 from placido.proc import Runner, run_command
 
@@ -155,15 +155,16 @@ def _close_lanes(run: runlog.Run, settings: config.Config) -> None:
             run.event("lane.remove_failed", letter=lane["letter"], error=(done.stderr or done.stdout).strip()[-300:])
 
 
-def _restore_host_paths(run: runlog.Run, worktree: Path, settings: config.Config, primary: bool = True) -> None:
+def _restore_host_paths(run: runlog.Run, worktree: Path, settings: config.Config, primary: bool = True) -> set[str]:
     """Put the host paths back as the review last trusted them, so the teardown that runs
-    from them is the project's, whatever the pull request's tests wrote. A lane never
-    has the base merged in, so its reference is the round's own."""
+    from them is the project's, whatever the pull request's tests wrote, and return the
+    files put back. A lane never has the base merged in, so its reference is the round's
+    own."""
 
     paths = settings.pr.host_paths
     rounds = pr.rounds(run.path)
     if not paths or not rounds:
-        return
+        return set()
     reference = pr.trusted(run.path, rounds[-1], primary)
     changed = set(_git(worktree, "diff", "--name-only", reference, "--", *paths).stdout.splitlines())
     loose = _git(worktree, "status", "--porcelain", "--untracked-files=all", "--", *paths).stdout
@@ -176,6 +177,7 @@ def _restore_host_paths(run: runlog.Run, worktree: Path, settings: config.Config
             _git(worktree, "rm", "-q", "--cached", "--ignore-unmatch", "--", name)
     if changed:
         run.event("close.host_paths_restored", files=sorted(changed), reference=reference)
+    return changed
 
 
 def _merged(run: runlog.Run, repo: Path, base: str, branch: str, gh: Runner) -> str | None:
@@ -224,9 +226,11 @@ def _close(
     if reviewed:
         _close_lanes(run, settings)
     if worktree.is_dir():
-        if reviewed:
-            _restore_host_paths(run, worktree, settings)
-        changes = implement.git(worktree, "status", "--porcelain")
+        restored = _restore_host_paths(run, worktree, settings) if reviewed else set()
+        # The files the restore put back differ from the branch by placido's doing, not the
+        # user's, as when a commit made by hand changed a host path placido never trusted.
+        changes = "\n".join(line for line in _git(worktree, "status", "--porcelain").stdout.splitlines()
+                            if line[3:] not in restored)
         if changes and not force:
             raise CloseError(
                 f"{worktree} has uncommitted changes:\n{changes}\n"
@@ -240,7 +244,8 @@ def _close(
                     " close again, or pass --force to remove the worktree anyway."
                 )
         codexd.before_removing(run, worktree)
-        _remove(run, herdr, worktree, workspace, force)
+        # The restored files leave the checkout dirty, and the check above found nothing else.
+        _remove(run, herdr, worktree, workspace, force or bool(restored))
     else:
         run.event("worktree.missing", path=str(worktree))
     if not runlog.last_event(run.path, "run.end"):

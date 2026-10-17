@@ -425,7 +425,8 @@ approve it; refused, the fixer undoes it and disputes the findings that needed i
 
 `placido pr 602` again shows the menu again, or, once the contributor has pushed, starts
 a new round whose reviewers check each earlier finding. `placido close pr-602` removes
-every lane's worktree and stack, putting the host paths back first, and deletes the
+every lane's worktree and stack, putting the host paths back first (only your own
+uncommitted changes stop it, not what that puts back), and deletes the
 branch once the pull request is merged or closed and nothing made here is left
 unpushed. Project
 notes for these agents go in `.placido/notes/pr.md` (all of them), `scan.md`,

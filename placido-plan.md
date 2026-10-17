@@ -705,6 +705,12 @@ them are the risk, not only the change's quality.
   by the fixer or by a gate, is asked again or stops the commit. Committed, the fix
   becomes what the host paths are checked against, and a later base merge is skipped,
   as for a pull request that changes them.
+- **Close does not count the host paths it puts back as the user's changes.** On
+  #596 the maintainer committed browser tests under `e2e/` by hand, so placido never
+  trusted them. Close put the old ones back before the teardown, as it should, then
+  refused its own restoration as uncommitted changes. Those files are now left out of
+  the check and the worktree is removed over them, since the branch keeps its own
+  version; anything else uncommitted still stops the close.
 - **Documentation for agents is a note, not a stop.** Contributors often add to
   `AGENTS.md` and `CLAUDE.md`, which agents in the worktree load by themselves, and a
   stop for every such paragraph trains the maintainer to answer yes. The scan sorts
