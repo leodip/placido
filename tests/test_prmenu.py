@@ -81,12 +81,16 @@ class OptionsTest(MenuTestCase):
         self.hub.waiting = [{"databaseId": 5, "conclusion": "action_required"}]
         self.assertIn("ci", self.keys(rnd))
 
-    def test_a_closed_pull_request_offers_nothing(self):
+    def test_a_merged_pull_request_says_how_to_end_the_run_and_asks_nothing(self):
         rnd = self.review()
         self.hub.pull = self.pull(self.head, state="MERGED")
-        listed, notes = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
-        self.assertEqual([k for k, _ in listed], ["quit"])
-        self.assertIn("placido close pr-7", notes[0])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            prmenu.menu(self.ctx, rnd, lambda prompt: self.fail(f"asked: {prompt}"), self.confirm)
+        self.assertEqual(out.getvalue(), (
+            f"\nThe pull request is merged. To end the run, in {self.repo.name}'s workspace (not this one):\n"
+            "  placido close pr-7\n"
+        ))
 
 
 class EditTest(MenuTestCase):

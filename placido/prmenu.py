@@ -236,8 +236,10 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
     """The actions open now, as (key, label), and notes on what is not."""
 
     if s.pull.state != "OPEN":
-        note = f"The pull request is {s.pull.state.lower()}: placido close pr-{s.pull.number} ends the run."
-        return [("quit", "Nothing more")], [note]
+        # Closing removes this workspace, so close refuses to run in it.
+        note = (f"The pull request is {s.pull.state.lower()}. To end the run, in {ctx.root.name}'s workspace"
+                f" (not this one):\n  placido close pr-{s.pull.number}")
+        return [], [note]
     out: list[tuple[str, str]] = []
     notes: list[str] = []
     out.append(("edit", f"Edit the comment ({rnd.folder / 'comment.md'})"))
@@ -285,6 +287,9 @@ def menu(ctx: Context, rnd: Round, read: Callable[[str], str | None], confirm: A
     while True:
         s = state(ctx, rnd)
         listed, notes = options(ctx, rnd, s)
+        if not listed:  # settled: nothing left to pick
+            print("\n" + "\n".join(notes))
+            return
         print(f"\nCI {s.ci}{_last_text(ctx, s)} · {'posted' if s.posted else 'not posted'} · "
               f"{s.ahead} commit(s) here not pushed · {len(s.waiting)} CI run(s) waiting")
         for note in notes:
@@ -449,7 +454,7 @@ def merge(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
     status.show(ctx.run.path, status.text(status.DONE, f"merged; placido close pr-{number}"))
     if later != "?":
         pr.notify(ctx, "merged", f"#{number} into {s.pull.base} once CI was green; placido close pr-{number}")
-    print(f"merged #{number}; placido close pr-{number} tears its worktree and stack down")
+    print(f"merged #{number}")  # the menu then says how to end the run
 
 
 def close_pr(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
