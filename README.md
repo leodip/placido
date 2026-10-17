@@ -162,6 +162,13 @@ scripts can find the run's resources:
 | `PLACIDO_NAME` | `goiabada-439`, unique per issue: a good Docker Compose project name |
 | `PLACIDO_WORKTREE` | the issue's worktree |
 | `PLACIDO_RUN_DIR` | the run's record folder |
+| `PLACIDO_REPO` | your main checkout |
+
+Point setup, teardown, and the gates at your main checkout's scripts with
+`$PLACIDO_REPO`, such as `setup = "$PLACIDO_REPO/.placido/stack.sh up"`, and have the
+scripts act on `$PLACIDO_WORKTREE`. A branch then runs them as they are today, not as
+they were when it was made, so a pull request branched before a fix to them still
+gets the fix.
 
 `placido config` prints the resolved configuration and the exact command each agent
 runs with.

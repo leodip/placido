@@ -340,14 +340,16 @@ class EnvTest(StartTestCase):
                 "PLACIDO_ISSUE=01-shout-flag",
                 "PLACIDO_ISSUE_NUMBER=",
                 "PLACIDO_NAME=proj-01-shout-flag",
+                f"PLACIDO_REPO={repo}",
                 f"PLACIDO_RUN_DIR={run.path}",
                 f"PLACIDO_WORKTREE={worktree}",
             ],
         )
         self.assertEqual(start.env_of(run.path)["PLACIDO_WORKTREE"], str(worktree))
+        self.assertEqual(start.env_of(run.path)["PLACIDO_REPO"], str(repo))
 
     def test_github_issue_name_uses_the_number(self):
-        env = start.run_env("Goiabada", "439-rate-limiter", 439, Path("/w"), Path("/r"))
+        env = start.run_env("Goiabada", "439-rate-limiter", 439, Path("/w"), Path("/r"), Path("/g"))
         self.assertEqual(env["PLACIDO_NAME"], "goiabada-439")
         self.assertEqual(env["PLACIDO_ISSUE_NUMBER"], "439")
 

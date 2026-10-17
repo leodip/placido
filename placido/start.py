@@ -166,7 +166,7 @@ def start(
     _name_repo_workspace(herdr, run, root)
     if settings.setup:
         _status(herdr, run, worktree.workspace_id, status.text(status.WORKING, "setting up"))
-        env = run_env(root.name, issue, found.number, worktree.path, run.path)
+        env = run_env(root.name, issue, found.number, worktree.path, run.path, root)
         code = run_setup(run, settings.setup, worktree.path, env)
         if code != 0:
             _status(herdr, run, worktree.workspace_id, status.text(status.STOPPED, "setup failed"))
@@ -306,8 +306,13 @@ def _reuse(run: runlog.Run, previous: Path, root: Path, issue: str, source: str,
     return worktree
 
 
-def run_env(project: str, issue: str, number: int | None, worktree: Path, run_dir: Path) -> dict[str, str]:
-    """What project commands and agents are told about the run, as PLACIDO_* variables."""
+def run_env(
+    project: str, issue: str, number: int | None, worktree: Path, run_dir: Path, repo: Path,
+) -> dict[str, str]:
+    """What project commands and agents are told about the run, as PLACIDO_* variables.
+    PLACIDO_REPO is the main checkout, so a command can run the project's scripts as they
+    are there, not as the branch has them: a pull request branched before a fix to its
+    setup script would otherwise run it without the fix (#598, 2026-10-17)."""
 
     name = re.sub(r"[^a-z0-9_-]+", "-", f"{project}-{number or issue}".lower()).strip("-")
     return {
@@ -316,6 +321,7 @@ def run_env(project: str, issue: str, number: int | None, worktree: Path, run_di
         "PLACIDO_NAME": name,
         "PLACIDO_WORKTREE": str(worktree),
         "PLACIDO_RUN_DIR": str(run_dir),
+        "PLACIDO_REPO": str(repo),
     }
 
 
@@ -326,7 +332,7 @@ def env_of(run_dir: Path) -> dict[str, str]:
     created = runlog.last_event(run_dir, "worktree.created") or {}
     return run_env(
         record.get("project", ""), record.get("issue", ""), record.get("issue_number"),
-        Path(created.get("path", "")), run_dir,
+        Path(created.get("path", "")), run_dir, Path(record.get("repo", "")),
     )
 
 
