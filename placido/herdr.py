@@ -179,6 +179,9 @@ class Herdr:
     def close_tab(self, tab_id: str) -> None:
         self.call("tab", "close", tab_id)
 
+    def focus_tab(self, tab_id: str) -> None:
+        self.call("tab", "focus", tab_id)
+
     def run_in_pane(self, pane_id: str, command: str) -> None:
         """Type a command into the pane's shell and press Enter."""
 

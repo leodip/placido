@@ -715,6 +715,14 @@ them are the risk, not only the change's quality.
   Typed again from elsewhere while a placido process holds the run's lock, it only
   switches there. `--here`, the worktree itself, or a terminal outside Herdr keep
   the old way. A closed pane gets a new tab in the workspace.
+- **The menu opens an agent to ask about the work.** After #595's fix the maintainer
+  wanted to ask the fixer about it, and its session was closed (2026-10-17). The
+  round's last fixer, else its judge, opens in a new tab of the workspace as a fork of
+  its session (`claude --resume --fork-session`, `codex fork`), so the session placido
+  resumes for a later fix is untouched, and read-only (Claude's plan mode, Codex's
+  read-only sandbox), since a change made there would skip the check a fix gets; the
+  user can lift that in the agent. A session whose log is gone, or a round with
+  neither, gets a new agent of the `fix` role's, told where the review's files are.
 - **Close does not count the host paths it puts back as the user's changes.** On
   #596 the maintainer committed browser tests under `e2e/` by hand, so placido never
   trusted them. Close put the old ones back before the teardown, as it should, then

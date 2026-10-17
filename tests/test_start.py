@@ -78,6 +78,8 @@ class FakeHerdr:
                 "worktree": {"path": opts["--path"], "branch": "placido/01-shout-flag"},
                 "workspace": {"workspace_id": "w3"}, "root_pane": {"pane_id": "w3:p1"},
             }}))
+        if command == "pane get":
+            return Result(0, json.dumps({"result": {"pane": {"pane_id": argv[3], "tab_id": argv[3].split(":")[0] + ":t1"}}}))
         if command == "workspace list":
             return Result(0, json.dumps({"result": {"type": "workspace_list", "workspaces": self.workspaces}}))
         return Result(0, json.dumps({"result": {"type": "ok"}}))

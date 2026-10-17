@@ -36,7 +36,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import config, decisions, fallback, github, implement, pr, pragents, prcheck, prgh, runlog, status
+from placido import config, decisions, fallback, github, implement, pr, pragents, prcheck, prgh, runlog, status, step
+from placido.herdr import HerdrError
 from placido.pr import Context, PRStop, Round
 
 NO_CHANGES = "No code changes"
@@ -44,7 +45,7 @@ PUSH_URL = "https://github.com/{repo}.git"  # where the contributor's branch is 
 RESOLUTIONS = ("fixed", "disputed")
 # The last gates run before the push, as in an issue run, so a failing one stops the
 # push, the post, and the merge picked with it.
-ORDER = ("edit", "edit-merge", "fix", "last", "push", "post", "ci", "merge", "close")
+ORDER = ("edit", "edit-merge", "fix", "last", "push", "post", "ci", "merge", "ask", "close")
 # How each verdict's comment is posted: the review's kind on GitHub, and in words.
 POSTED_AS = {
     "request-changes": ("request-changes", "as a review requesting changes"),
@@ -276,6 +277,9 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
         when = (f" once CI is green (placido waits up to {config.format_duration(ctx.settings.ci_wait)})"
                 if s.ci == "pending" else "")
         out.append(("merge", f"Squash-merge into {s.pull.base}{when}, pinned to {s.pull.head_sha[:12]} (CI {s.ci})"))
+    asked = to_ask(ctx, rnd)
+    if asked is not None:
+        out.append(("ask", f"Ask {_who(asked)} questions, read-only, in a new tab"))
     out.append(("close", "Close the pull request, posting the comment if it is not posted"))
     out.append(("quit", f"Nothing more now: placido pr {s.pull.number} shows this again"))
     return out, notes
@@ -335,6 +339,101 @@ def edit(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
 def edit_merge(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
     _edit(rnd.folder / "merge.md")
     ctx.run.event("pr.edited", round=rnd.number, file="merge.md")
+
+
+# ---- questions to an agent ------------------------------------------------------------
+
+# Whose session the user's questions go to: the round's last fixer, about its fixes, else
+# its judge, about the decision. The session is copied, so the one placido may resume
+# stays as it was, and the copy starts read-only, since a change made there would skip
+# the check a fix gets; the user can lift that in the agent. With neither session at
+# hand, a new agent of the fix role's is asked (decided 2026-10-17).
+ASKED = {"fix": "the fixer", "judge": "the judge"}
+FORK = {"claude": ["--resume", "{id}", "--fork-session"], "codex": ["fork", "{id}"]}
+READ_ONLY = {"claude": ["--permission-mode", "plan"], "codex": ["-s", "read-only", "-a", "on-request"]}
+ASK_COPY = "From here on the maintainer asks you about your work on pull request #{number}. Answer; change nothing."
+ASK_NEW = (
+    "The maintainer has questions about pull request #{number}, whose branch is checked out here. Placido"
+    " reviewed it: {folder} holds the review, final.json its decision and findings, comment.md the comment"
+    " to the contributor. Answer their questions; change nothing."
+)
+
+
+@dataclass(frozen=True)
+class Asked:
+    spec: config.AgentSpec
+    role: str = ""  # the step role whose session is copied; empty for a new agent
+    session: str = ""
+
+
+def _who(asked: Asked) -> str:
+    if asked.role:
+        return f"{ASKED[asked.role]} ({asked.spec.agent}, a copy of its session)"
+    return f"a new agent ({asked.spec.agent}, which knows only the review's files)"
+
+
+def to_ask(ctx: Context, rnd: Round) -> Asked | None:
+    """The agent the user's questions go to, as ASKED says; None when the fix role has
+    no agent that can be asked."""
+
+    roles: dict[str, str] = {}
+    started: dict[str, dict[str, Any]] = {}
+    found: dict[str, Asked] = {}
+    for event in runlog.read_events(ctx.run.path):
+        kind, name = event.get("event"), str(event.get("step", ""))
+        if kind == "step.start":
+            roles[name] = str(event.get("role", ""))
+        elif kind == "agent.start":
+            started[name] = event
+        elif (kind == "agent.session" and roles.get(name) in ASKED and f"-r{rnd.number}-" in name
+              and event.get("agent") in FORK and event.get("kind") == "id"):
+            role, value, start = roles[name], str(event.get("value", "")), started.get(name)
+            if start is not None and not start.get("confined"):
+                spec = config.AgentSpec(str(event["agent"]), str(start.get("model", "")), str(start.get("effort", "")))
+                found[role] = Asked(spec, role, value)
+            elif start is None and role in found and found[role].session != value:
+                found.pop(role)  # a resumed step whose session is not the one its agent started with
+    for role in ASKED:
+        if role in found and step.find_transcript(
+            {"agent": found[role].spec.agent, "kind": "id", "value": found[role].session}, Path.home()
+        ):
+            return found[role]
+    spec = next((s for s in fallback.entries(ctx.settings, "fix") if s.agent in FORK), None)
+    return Asked(spec) if spec else None
+
+
+def ask_command(ctx: Context, rnd: Round, asked: Asked) -> list[str]:
+    spec = asked.spec
+    if asked.session:
+        fork = [part.format(id=asked.session) for part in FORK[spec.agent]]
+        prompt = ASK_COPY.format(number=ctx.pr.number)
+    else:
+        fork, prompt = [], ASK_NEW.format(number=ctx.pr.number, folder=rnd.folder)
+    return [spec.agent, *fork, *spec.args(), *step.NO_MEMORY[spec.agent], *READ_ONLY[spec.agent], prompt]
+
+
+def ask(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
+    """Open the agent ASKED says in a new tab of the run's workspace and take the user
+    there; the menu stays in its own tab."""
+
+    asked = to_ask(ctx, rnd)
+    if asked is None:
+        raise PRStop("the fix role has no claude or codex agent to ask")
+    workspace = str((runlog.last_event(ctx.run.path, "worktree.created") or {}).get("workspace", ""))
+    label = f"ask-{asked.role}" if asked.role else "ask"
+    try:
+        pane = ctx.herdr.create_tab(workspace, ctx.worktree, label, ctx.env)
+        ctx.herdr.run_in_pane(pane, shlex.join(ask_command(ctx, rnd, asked)))
+    except HerdrError as error:
+        raise PRStop(f"could not open the agent's tab: {error}") from error
+    ctx.run.event("pr.asked", round=rnd.number, role=asked.role or None, agent=asked.spec.agent,
+                  session=asked.session or None, pane=pane)
+    try:
+        ctx.herdr.focus_tab(ctx.herdr.tab_of(pane))
+    except HerdrError as error:
+        ctx.run.event("herdr.warning", error=str(error))
+    who = _who(asked)
+    print(f"{who[0].upper()}{who[1:]} is in the tab {label} of this workspace, read-only. This menu stays here.")
 
 
 def _body(ctx: Context, rnd: Round) -> Path:
@@ -962,5 +1061,6 @@ ACTIONS: dict[str, Callable[[Context, Round, State, Ask], None]] = {
     "post": post,
     "ci": approve_ci,
     "merge": merge,
+    "ask": ask,
     "close": close_pr,
 }

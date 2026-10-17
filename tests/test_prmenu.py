@@ -1,6 +1,8 @@
 import io
 import json
+import shlex
 from contextlib import redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 from unittest import mock
@@ -68,7 +70,7 @@ class SummaryTest(MenuTestCase):
 class OptionsTest(MenuTestCase):
     def test_after_a_fix_here_review(self):
         rnd = self.review()
-        self.assertEqual(self.keys(rnd), ["edit", "edit-merge", "fix", "post", "close", "quit"])
+        self.assertEqual(self.keys(rnd), ["edit", "edit-merge", "fix", "post", "ask", "close", "quit"])
 
     def test_merge_is_offered_when_nothing_is_kept(self):
         self.runner.findings = {"A": [], "B": []}
@@ -148,7 +150,7 @@ class FixAndPushTest(MenuTestCase):
         self.assertTrue(message.startswith("Greet properly\n\nThe review asked for it."))
         self.assertIn("Placido-PR-Round: 1", message)
         self.assertEqual(runlog.last_event(self.run.path, "pr.fixed")["commit"], fix)
-        self.assertEqual(self.keys(rnd), ["edit", "edit-merge", "push", "post", "close", "quit"])
+        self.assertEqual(self.keys(rnd), ["edit", "edit-merge", "push", "post", "ask", "close", "quit"])
 
         self.act("push", rnd)  # declined
         self.assertEqual(self.fork_head(), self.head)
@@ -381,6 +383,75 @@ class MenuLoopTest(MenuTestCase):
         self.assertEqual(prmenu.check_resolutions(path, ["F1", "F2"]), [
             "finding F1 needs a status of fixed, disputed and a note.", "finding F2 has no resolution.",
         ])
+
+
+class AskTest(MenuTestCase):
+    """The agent the user can ask questions: a copy of the round's fixer's session, else
+    the judge's, else a new agent; read-only, in a new tab of the run's workspace."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.home = self.tmp / "home"
+        home = mock.patch.dict("os.environ", {"HOME": str(self.home)})
+        home.start()
+        self.addCleanup(home.stop)
+        self.rnd = self.review()
+
+    def session(self, step: str, role: str, agent: str, value: str, log: bool = True, resumed: bool = False) -> None:
+        """A step's agent as placido records it, and its session's log where the agent keeps it."""
+
+        self.run.event("step.start", step=step, role=role, **({"resumed": "x"} if resumed else {}))
+        if not resumed:
+            self.run.event("agent.start", step=step, agent=agent, model=f"{agent}-model", effort="high", pane="w2:p5")
+        self.run.event("agent.session", step=step, agent=agent, kind="id", value=value)
+        if log:
+            path = (self.home / ".claude" / "projects" / "-wt" / f"{value}.jsonl" if agent == "claude"
+                    else self.home / ".codex" / "sessions" / "2026" / "10" / "17" / f"rollout-2026-10-17T11-23-03-{value}.jsonl")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}\n")
+
+    def opened(self) -> tuple[list[str], str]:
+        """The agent's command and its tab's label, from what placido asked Herdr."""
+
+        with redirect_stdout(io.StringIO()):
+            self.act("ask", self.rnd)
+        tab = next(c for c in self.fake.calls if c[1:3] == ["tab", "create"])
+        run = next(c for c in self.fake.calls if c[1:3] == ["pane", "run"])
+        self.assertEqual(run[3], "w2:p9")
+        self.assertEqual(tab[tab.index("--cwd") + 1], str(self.worktree))
+        self.assertIn(["herdr", "tab", "focus"], [c[:3] for c in self.fake.calls])
+        return shlex.split(run[4]), tab[tab.index("--label") + 1]
+
+    def test_a_copy_of_the_fixers_session(self):
+        self.session("06-r1-judge", "judge", "claude", "judge-id")
+        self.session("07-r1-fix-1", "fix", "claude", "fix-id")
+        self.session("09-r1-fix-2", "fix", "claude", "fix-id", resumed=True)
+        command, label = self.opened()
+        self.assertEqual(label, "ask-fix")
+        self.assertEqual(command[:9], ["claude", "--resume", "fix-id", "--fork-session", "--model", "claude-model",
+                                       "--effort", "high", "--settings"])
+        self.assertEqual(command[10:], ["--permission-mode", "plan", prmenu.ASK_COPY.format(number=7)])
+        self.assertEqual(runlog.last_event(self.run.path, "pr.asked")["session"], "fix-id")
+
+    def test_the_judges_when_the_fixers_log_is_gone(self):
+        self.session("06-r1-judge", "judge", "codex", "judge-id")
+        self.session("07-r1-fix-1", "fix", "claude", "fix-id", log=False)
+        command, label = self.opened()
+        self.assertEqual(label, "ask-judge")
+        self.assertEqual(command[:4], ["codex", "fork", "judge-id", "-m"])
+        self.assertEqual(command[-7:-1], ["-c", "features.memories=false", "-s", "read-only", "-a", "on-request"])
+
+    def test_a_new_agent_when_no_session_of_the_round_can_be_copied(self):
+        self.session("02-r1-fix-1", "fix", "claude", "old-round")
+        self.rnd = replace(self.rnd, number=2)
+        self.session("04-r2-scan", "pr-scan", "claude", "scan-id")
+        listed, _ = prmenu.options(self.ctx, self.rnd, prmenu.state(self.ctx, self.rnd))
+        self.assertIn("a new agent (claude, which knows only the review's files)", dict(listed)["ask"])
+        command, label = self.opened()
+        self.assertEqual(label, "ask")
+        self.assertNotIn("--resume", command)
+        self.assertEqual(command[-1], prmenu.ASK_NEW.format(number=7, folder=self.rnd.folder))
+        self.assertIsNone(runlog.last_event(self.run.path, "pr.asked")["session"])
 
 
 class ClosingTest(MenuTestCase):
@@ -782,7 +853,7 @@ class LastGatesTest(MenuTestCase):
         s = prmenu.state(self.ctx, rnd)
         self.assertEqual(prmenu._last_text(self.ctx, s), " · last gates not run")
         listed, _ = prmenu.options(self.ctx, rnd, s)
-        self.assertEqual([k for k, _ in listed], ["edit", "edit-merge", "last", "push", "post", "close", "quit"])
+        self.assertEqual([k for k, _ in listed], ["edit", "edit-merge", "last", "push", "post", "ask", "close", "quit"])
         self.assertEqual(dict(listed)["last"], f"Run the last gates (e2e) on {fix[:12]}")
         shown = self.run_last(rnd)
         self.assertIn("the browser suite ran\n", shown)
@@ -960,7 +1031,7 @@ class DecisionsTest(MenuTestCase):
         self.assertIn("Fixes: the contributor, as you decided (about 10% of the pull request", text)
         self.assertIn("F2  significant gaps        `steps.go:9` close in the step helpers [decision 1: yours]\n", text)
         self.assertIn("F1  the greeting [A1, B1]: Your decision 1: narrow it", text)
-        self.assertEqual(self.keys(rnd), ["edit", "fix", "post", "close", "quit"])
+        self.assertEqual(self.keys(rnd), ["edit", "fix", "post", "ask", "close", "quit"])
         self.confirms = [True]
         self.act("post", rnd)
         self.assertEqual(self.hub.calls[-1][:2], ("review", "request-changes"))

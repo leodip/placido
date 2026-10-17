@@ -435,6 +435,11 @@ forced. A pull request that changes host paths, or whose fix did, is fixed on it
 base instead. A fix that needs a host path changed, such as a browser test under a
 folder the last gates run, shows you that change and runs none of it until you
 approve it; refused, the fixer undoes it and disputes the findings that needed it.
+To ask about the work, the menu opens the round's fixer, or its judge when nothing was
+fixed, in a new tab of the workspace: a copy of its session, so placido's own stays as
+it was, started read-only, since a change made there would skip the check a fix gets.
+With neither session at hand, it opens a new agent of the `fix` role's instead, pointed
+at the review's files.
 
 `placido pr 602` again shows the menu again, or, once the contributor has pushed, starts
 a new round whose reviewers check each earlier finding; typed outside its workspace, it
