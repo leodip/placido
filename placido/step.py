@@ -24,6 +24,18 @@ UNATTENDED = {
     "pi": [],
 }
 
+# Decided 2026-10-16: agents keep no memory across sessions. On #596 a fixer that had
+# read an outside contributor's pull request wrote a note into the project's Claude
+# memory, which every later session in the project loads, the user's own included. An
+# agent knows what its skill, its prompt, and the project's notes tell it. Measured
+# with claude 2.1.302: a session given this file saw no memory index, and one without
+# it saw the project's. Codex's memories are off by default; this keeps them off.
+NO_MEMORY = {
+    "claude": ["--settings", str(Path(__file__).with_name("claude-settings.json"))],
+    "codex": ["-c", "features.memories=false"],
+    "pi": [],
+}
+
 INSTRUCTION = "Read {prompt} and do what it asks."
 
 FOOTER = """
@@ -144,8 +156,8 @@ class StepResult:
 
 def launch_args(spec: AgentSpec, confined_to: Path | None = None, reads: tuple[Path, ...] = ()) -> list[str]:
     if confined_to is not None:
-        return [*spec.args(), *confined_args(spec.agent, confined_to, reads)]
-    return [*spec.args(), *UNATTENDED[spec.agent]]
+        return [*spec.args(), *NO_MEMORY[spec.agent], *confined_args(spec.agent, confined_to, reads)]
+    return [*spec.args(), *NO_MEMORY[spec.agent], *UNATTENDED[spec.agent]]
 
 
 # Agents that can run confined: reading only their step folder and the folders they are

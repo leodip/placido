@@ -417,6 +417,13 @@ issues:
   line ("press F2 to view") and blocks nothing; if the user opens the panel,
   placido waits for it to close rather than typing into it.
 
+Memory (decided 2026-10-16): agents keep none across sessions. claude gets
+`--settings` with `autoMemoryEnabled: false`, so it neither reads nor writes the
+project's auto-memory, and codex gets `features.memories=false`. On #596 a fixer that
+had read a stranger's pull request wrote a note into goiabada's Claude memory, which
+every later session there loads, the user's own included; an agent learns what it
+needs from its skill, its prompt, and the project's notes instead.
+
 Any other dialog, whether Herdr reports it `blocked` or shows dialog text on the
 screen, makes placido save the screen, notify the user, and wait.
 

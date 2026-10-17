@@ -307,7 +307,9 @@ class StepTest(StepTestCase):
         self.assertIn(("tab", "w8", str(self.tmp / "wt"), "01-implement"), self.fake.calls)
         start = next(c for c in self.fake.calls if c[0] == "start")
         self.assertEqual(start[1:4], ("implement-w8-p2", "claude", "w8:p2"))
-        self.assertEqual(start[4], ["--model", "opus", "--effort", "high", "--dangerously-skip-permissions"])
+        self.assertEqual(
+            start[4], ["--model", "opus", "--effort", "high", *step.NO_MEMORY["claude"], "--dangerously-skip-permissions"],
+        )
 
     def test_the_tab_gets_the_run_variables(self):
         self.step()
@@ -759,12 +761,22 @@ class NamesTest(unittest.TestCase):
         self.assertEqual(
             step.launch_args(AgentSpec("codex", "gpt-6.1-sol", "max", "fast")),
             ["-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=max", "-c", "service_tier=fast",
+             "-c", "features.memories=false",
              "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust"],
         )
         self.assertEqual(
             step.launch_args(AgentSpec("pi", "a/b", "low")),
             ["--provider", "openrouter", "--model", "a/b", "--thinking", "low"],
         )
+
+
+    def test_claude_and_codex_start_with_their_memory_off(self):
+        claude = step.launch_args(AgentSpec("claude", "opus", "high"))
+        settings = Path(claude[claude.index("--settings") + 1])
+        self.assertEqual(json.loads(settings.read_text(encoding="utf-8")), {"autoMemoryEnabled": False})
+        self.assertIn("--settings", step.launch_args(AgentSpec("claude", "opus", "high"), Path("/s"), ()))
+        for confined in (None, Path("/s")):
+            self.assertIn("features.memories=false", step.launch_args(AgentSpec("codex", "gpt-6.1-sol", "max"), confined))
 
 
 class ActiveRunTest(unittest.TestCase):
@@ -927,7 +939,7 @@ class ConfinedTest(StepTestCase):
         self.assertEqual(tab[2], str(folder))
         args = next(c for c in self.fake.calls if c[0] == "start")[4]
         self.assertEqual(args, [
-            "--model", "opus", "--effort", "high", "--permission-mode", "dontAsk",
+            "--model", "opus", "--effort", "high", *step.NO_MEMORY["claude"], "--permission-mode", "dontAsk",
             "--add-dir", str(reads[0]), "--add-dir", str(reads[1]), "--allowedTools", f"Edit(/{folder}/**)",
         ])
         self.assertTrue(runlog.last_event(self.run.path, "agent.start")["confined"])

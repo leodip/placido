@@ -70,7 +70,10 @@ resumes where it left off when you run the same command again.
 > `--dangerously-bypass-approvals-and-sandbox`), so an unattended run never stalls on
 > a permission prompt. The agents can run any command your user can. Use placido only
 > on code and machines where you accept that, such as a dedicated user, VM, or
-> container. Nothing is pushed until the review is done.
+> container. Nothing is pushed until the review is done. The agents keep no memory
+> between sessions: placido turns off Claude's auto-memory and Codex's memories for
+> every agent it starts, so what one agent read, such as a stranger's pull request,
+> never reaches the next, nor your own sessions in the project.
 
 ## Requirements
 
