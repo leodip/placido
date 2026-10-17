@@ -38,14 +38,19 @@ class FakeHerdr:
         self.worktrees = worktrees
         self.calls: list[list[str]] = []
         self.fail: dict[str, Result] = {}
+        self.fail_once: dict[str, Result] = {}  # failed the first time only
         self.statuses: list[str] = []  # each status placido kept for the run, in order
         self.workspaces: list[dict] = []  # what `workspace list` answers
 
     def __call__(self, argv: list[str], timeout: float | None = None) -> Result:
         self.calls.append(argv)
         command = " ".join(argv[1:3])
+        if command in self.fail_once:
+            return self.fail_once.pop(command)
         if command in self.fail:
             return self.fail[command]
+        if command == "tab create":
+            return Result(0, json.dumps({"result": {"root_pane": {"pane_id": "w2:p9"}}}))
         if command == "worktree create":
             opts = dict(zip(argv[3::2], argv[4::2]))
             path = self.worktrees / opts["--branch"].replace("/", "-")
@@ -89,6 +94,10 @@ class StartTestCase(unittest.TestCase):
         self.runs = self.tmp / "runs"
         (self.tmp / "worktrees").mkdir()
         self.fake = FakeHerdr(self.tmp / "worktrees")
+        # The suite may run in a Herdr pane, whose id would decide where a run goes on.
+        outside = mock.patch.dict(os.environ, {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")}, clear=True)
+        outside.start()
+        self.addCleanup(outside.stop)
         patch = mock.patch.object(doctor, "tool_versions", return_value={"herdr": "0.9.3"})
         patch.start()
         self.addCleanup(patch.stop)
@@ -96,9 +105,9 @@ class StartTestCase(unittest.TestCase):
         shown.start()
         self.addCleanup(shown.stop)
 
-    def start(self, arg: str, repo: Path, cwd: Path | None = None, gh=None) -> runlog.Run:
+    def start(self, arg: str, repo: Path, cwd: Path | None = None, gh=None, hand_off: bool = False) -> runlog.Run:
         return start.start(
-            arg, cwd or repo, herdr=Herdr(self.fake), runs_root=self.runs, gh=gh or self.no_gh
+            arg, cwd or repo, herdr=Herdr(self.fake), runs_root=self.runs, gh=gh or self.no_gh, hand_off=hand_off,
         )
 
     @staticmethod
@@ -601,6 +610,76 @@ class HerdrCallTest(unittest.TestCase):
         self.assertEqual(tree, Worktree(Path("/w/p"), "placido/x", "w9", "w9:p1"))
 
 
+class HandOffTest(StartTestCase):
+    """Typed in Herdr outside the issue's worktree, start makes the run and its worktree,
+    then hands setup and the interview to the issue's own workspace."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.repo = make_repo(self.tmp, setup="touch setup-ran")
+        self.worktree = self.tmp / "worktrees" / "placido-01-shout-flag"
+
+    def typed(self) -> list[list[str]]:
+        return [argv[3:] for argv in self.fake.calls if argv[1:3] == ["pane", "run"]]
+
+    def test_setup_and_the_interview_go_on_in_the_issues_workspace(self):
+        run = self.start("01", self.repo, hand_off=True)
+        self.assertEqual(self.typed(), [["w2:p1", "placido start 01 && placido spec"]])
+        self.assertEqual(self.fake.calls[-1][1:], ["workspace", "focus", "w2"])
+        self.assertFalse((self.worktree / "setup-ran").exists())
+        self.assertNotIn("run.ready", self.events(run.path))
+        self.assertEqual(
+            start.next_steps(run),
+            f"Herdr has switched to the issue's workspace, setup goes on in the worktree ({self.worktree}),"
+            " then placido spec.\n",
+        )
+
+    def test_there_it_sets_up_the_same_run_and_leaves_the_interview_to_the_command(self):
+        run = self.start("01", self.repo, hand_off=True)
+        again = self.start("01", self.repo, cwd=self.worktree, hand_off=True)
+        self.assertEqual(again.path, run.path)
+        self.assertTrue((self.worktree / "setup-ran").exists())
+        self.assertIn("run.ready", self.events(run.path))
+        self.assertEqual(len(self.typed()), 1)  # the interview is the handed command's own `&& placido spec`
+        self.assertEqual(start.next_steps(again), "Next, here: placido spec\n")
+        self.assertFalse((run.path / "lock").exists())
+
+    def test_typed_again_elsewhere_while_setup_goes_on_only_switches_there(self):
+        run = self.start("01", self.repo, hand_off=True)
+        (run.path / "lock").write_text(f"{os.getpid()}\n")
+        self.start("01", self.repo, hand_off=True)
+        self.assertEqual(len(self.typed()), 1)
+        self.assertEqual(self.fake.calls[-1][1:], ["workspace", "focus", "w2"])
+        self.assertFalse((self.worktree / "setup-ran").exists())
+
+    def test_typed_again_elsewhere_when_nothing_works_on_it_hands_it_over_again(self):
+        self.start("01", self.repo, hand_off=True)
+        self.start("01", self.repo, hand_off=True)
+        self.assertEqual(len(self.typed()), 2)
+        self.assertFalse((self.worktree / "setup-ran").exists())
+
+    def test_a_closed_pane_gets_a_new_tab_in_the_workspace(self):
+        self.fake.fail_once["pane run"] = Result(1, '{"error":{"code":"pane_not_found","message":"gone"}}')
+        run = self.start("01", self.repo, hand_off=True)
+        self.assertEqual(self.typed()[-1], ["w2:p9", "placido start 01 && placido spec"])
+        self.assertEqual(runlog.last_event(run.path, "run.handed_off")["pane"], "w2:p9")
+
+    def test_when_herdr_cannot_take_it_setup_goes_on_where_it_was_typed(self):
+        self.fake.fail["pane run"] = Result(1, '{"error":{"code":"pane_not_found","message":"gone"}}')
+        run = self.start("01", self.repo, hand_off=True)
+        self.assertTrue((self.worktree / "setup-ran").exists())
+        self.assertIn("herdr.warning", self.events(run.path))
+        self.assertNotIn("run.handed_off", self.events(run.path))
+
+    def test_the_workspaces_own_pane_counts_as_there(self):
+        created = {"pane": "w2:p1", "path": str(self.tmp / "elsewhere")}
+        with mock.patch.dict(os.environ, {"HERDR_PANE_ID": "w2:p1"}):
+            self.assertTrue(start.stays(created, self.repo))
+        with mock.patch.dict(os.environ, {"HERDR_PANE_ID": "w1:p1"}):
+            self.assertFalse(start.stays(created, self.repo))
+            self.assertFalse(start.stays({"pane": "w2:p1"}, self.repo))  # no worktree recorded
+
+
 class StartCommandTest(StartTestCase):
     def test_cli_reports_errors_without_a_traceback(self):
         err, out = io.StringIO(), io.StringIO()
@@ -611,6 +690,13 @@ class StartCommandTest(StartTestCase):
         self.assertEqual(code, 1)
         self.assertIn("placido: ", err.getvalue())
         self.assertIn("not inside a git repository", err.getvalue())
+
+    def test_inside_herdr_runs_go_on_in_their_workspace_unless_here(self):
+        with mock.patch.dict(os.environ, {"HERDR_PANE_ID": "w1:p1"}):
+            self.assertTrue(cli._hands_off(cli.build_parser().parse_args(["start", "01"])))
+            self.assertFalse(cli._hands_off(cli.build_parser().parse_args(["pr", "602", "--here"])))
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(cli._hands_off(cli.build_parser().parse_args(["pr", "602"])))
 
 
 if __name__ == "__main__":

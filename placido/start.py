@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import time
 from pathlib import Path
 from typing import TextIO
 
-from placido import __version__, alerts, config, doctor, issues, runlog, spec, status
+from placido import __version__, alerts, config, doctor, driver, issues, runlog, spec, status
 from placido.herdr import Herdr, HerdrError, Worktree
 from placido.proc import Runner, run_command
 
@@ -100,8 +101,11 @@ def start(
     runs_root: Path | None = None,
     echo: TextIO | None = None,
     gh: Runner = run_command,
+    hand_off: bool = False,
 ) -> runlog.Run:
-    """Prepare a run for one issue; everything placido does is logged as it happens."""
+    """Prepare a run for one issue; everything placido does is logged as it happens.
+    With hand_off, typed outside the issue's worktree, only the run and its worktree
+    are made here: setup and the interview go on in the issue's own workspace."""
 
     herdr = herdr or Herdr()
     root = project_root(cwd)
@@ -113,6 +117,9 @@ def start(
     issue = found.id
     branch = branch_name(issue)
     runs_root = runs_root or runlog.runs_dir()
+    waiting = handed_off(root, runs_root, issue)
+    if waiting is not None:
+        return _go_on(runlog.Run(waiting, echo=echo), herdr, settings, root, found.number, arg, cwd, hand_off)
     retry = None
     if git(root, "branch", "--list", branch):
         retry = failed_setup(root, runs_root, issue, branch, settings.base)
@@ -164,9 +171,48 @@ def start(
         worktree = _reuse(run, retry, root, issue, found.source, settings.base)
 
     _name_repo_workspace(herdr, run, root)
+    created = runlog.last_event(run.path, "worktree.created") or {}
+    if hand_off and hand_over(run, herdr, created, f"placido start {shlex.quote(arg)} && {SPEC}"):
+        return run
+    _set_up(run, herdr, settings, root, found.number, worktree, arg, launch=True)
+    return run
+
+
+def _go_on(
+    run: runlog.Run, herdr: Herdr, settings: config.Config, root: Path, number: int | None, arg: str,
+    cwd: Path, hand_off: bool,
+) -> runlog.Run:
+    """Go on with a run handed to its workspace before its setup finished: there, set it
+    up; from anywhere else, switch to it, or hand it over again if nothing works on it."""
+
+    created = runlog.last_event(run.path, "worktree.created") or {}
+    there = stays(created, cwd)
+    if hand_off and not there and hand_over(run, herdr, created, f"placido start {shlex.quote(arg)} && {SPEC}"):
+        return run
+    worktree = Worktree(
+        path=Path(created["path"]), branch=str(created.get("branch", "")),
+        workspace_id=str(created.get("workspace", "")), pane_id=str(created.get("pane", "")),
+    )
+    try:
+        with driver.Lock(run.path):
+            # In the issue's own pane the interview follows the handed-off command itself.
+            _set_up(run, herdr, settings, root, number, worktree, arg, launch=not there)
+    except driver.RunError as error:
+        raise StartError(str(error)) from None
+    return run
+
+
+def _set_up(
+    run: runlog.Run, herdr: Herdr, settings: config.Config, root: Path, number: int | None,
+    worktree: Worktree, arg: str, launch: bool,
+) -> None:
+    """Run the project's setup in the worktree; then, with launch, switch to the issue's
+    workspace and start the interview in its pane."""
+
+    issue = run.path.parent.name
     if settings.setup:
         _status(herdr, run, worktree.workspace_id, status.text(status.WORKING, "setting up"))
-        env = run_env(root.name, issue, found.number, worktree.path, run.path, root)
+        env = run_env(root.name, issue, number, worktree.path, run.path, root)
         code = run_setup(run, settings.setup, worktree.path, env)
         if code != 0:
             _status(herdr, run, worktree.workspace_id, status.text(status.STOPPED, "setup failed"))
@@ -178,15 +224,61 @@ def start(
             )
     _status(herdr, run, worktree.workspace_id, status.text(status.READY, "run placido spec"))
     run.event("run.ready", worktree=str(worktree.path))
+    if not launch:
+        return
     # Herdr opens the workspace without moving the user there; once setup is done,
     # switch to it, where the pane is already in the worktree (the user's ask).
+    show_workspace(run, herdr, {"workspace": worktree.workspace_id})
+    _launch_spec(herdr, run, worktree.pane_id)
+
+
+def stays(created: dict, cwd: Path) -> bool:
+    """Whether a command typed in cwd goes on where it was typed: in the run's worktree,
+    or in its workspace's own pane, rather than in the run's workspace."""
+
+    if created.get("pane") and os.environ.get("HERDR_PANE_ID") == created["pane"]:
+        return True
+    if not created.get("path"):
+        return False
     try:
-        herdr.focus_workspace(worktree.workspace_id)
-        run.event("workspace.focused", workspace=worktree.workspace_id)
+        top = Path(git(cwd, "rev-parse", "--show-toplevel"))
+    except StartError:
+        return False
+    return top.resolve() == Path(created["path"]).resolve()
+
+
+def hand_over(run: runlog.Run, herdr: Herdr, created: dict, command: str) -> str | None:
+    """Go on with the run in its own workspace, switching the user there: "going" when a
+    placido process already works on it, "handed" once the command is typed into the
+    workspace's pane, whose shell is in the worktree. The terminal it was typed in is
+    free at once, and Herdr's sidebar shows each run once, under its repository (the
+    user's ask, 2026-10-17). None when Herdr cannot, so the command goes on where it
+    was typed."""
+
+    if driver.holder(run.path) is not None:
+        show_workspace(run, herdr, created)
+        return "going"
+    pane = str(created.get("pane", ""))
+    try:
+        try:
+            herdr.run_in_pane(pane, command)
+        except HerdrError:  # the pane was closed: a new tab in the workspace
+            pane = herdr.create_tab(str(created.get("workspace", "")), Path(created["path"]), run.path.parent.name)
+            herdr.run_in_pane(pane, command)
     except HerdrError as error:
         run.event("herdr.warning", error=str(error))
-    _launch_spec(herdr, run, worktree.pane_id)
-    return run
+        return None
+    run.event("run.handed_off", pane=pane, command=command)
+    show_workspace(run, herdr, created)
+    return "handed"
+
+
+def show_workspace(run: runlog.Run, herdr: Herdr, created: dict) -> None:
+    try:
+        herdr.focus_workspace(str(created.get("workspace", "")))
+        run.event("workspace.focused", workspace=created.get("workspace"))
+    except HerdrError as error:
+        run.event("herdr.warning", error=str(error))
 
 
 SPEC = "placido spec"
@@ -244,6 +336,12 @@ def next_steps(run: runlog.Run) -> str:
     created = runlog.last_event(run.path, "worktree.created") or {}
     following = "placido run" if spec.sealed(spec.issue_dir(run.path)) else SPEC
     focused = runlog.last_event(run.path, "workspace.focused")
+    if runlog.last_event(run.path, "run.handed_off"):
+        if not runlog.last_event(run.path, "run.ready"):
+            place = "Herdr has switched to the issue's workspace" if focused else "In the issue's workspace in Herdr"
+            return f"{place}, setup goes on in the worktree ({created.get('path', '?')}), then {SPEC}.\n"
+        if not runlog.last_event(run.path, "spec.launched"):
+            return f"Next, here: {following}\n"
     if following == SPEC and runlog.last_event(run.path, "spec.launched"):
         place = "Herdr has switched to the issue's workspace" if focused else "In the issue's workspace in Herdr"
         return f"{place}, {SPEC} is starting in the worktree ({created.get('path', '?')}).\n"
@@ -257,11 +355,7 @@ def failed_setup(root: Path, runs_root: Path, issue: str, branch: str, base: str
     not closed, its worktree still there, and no commits on the branch beyond the
     base. Starting the issue again retries setup in that worktree."""
 
-    mine = [
-        run for run in runlog.all_runs(runs_root)
-        if run.parent.parent.name == root.name and run.parent.name == issue
-        and runlog.read_record(run).get("repo") in (None, str(root))
-    ]
+    mine = _issue_runs(root, runs_root, issue)
     if not mine:
         return None
     latest = mine[0]
@@ -276,6 +370,31 @@ def failed_setup(root: Path, runs_root: Path, issue: str, branch: str, base: str
     ):
         return None
     return latest
+
+
+def handed_off(root: Path, runs_root: Path, issue: str) -> Path | None:
+    """The issue's latest run when a start handed it to its workspace and its setup has
+    not finished there: never ready, never ended, its worktree still there."""
+
+    mine = _issue_runs(root, runs_root, issue)
+    if not mine:
+        return None
+    events = {e.get("event") for e in runlog.read_events(mine[0])}
+    created = runlog.last_event(mine[0], "worktree.created") or {}
+    if (
+        "run.handed_off" not in events or events & {"run.ready", "run.end", "run.closed"}
+        or not created.get("path") or not Path(created["path"]).is_dir()
+    ):
+        return None
+    return mine[0]
+
+
+def _issue_runs(root: Path, runs_root: Path, issue: str) -> list[Path]:
+    return [
+        run for run in runlog.all_runs(runs_root)
+        if run.parent.parent.name == root.name and run.parent.name == issue
+        and runlog.read_record(run).get("repo") in (None, str(root))
+    ]
 
 
 def _reuse(run: runlog.Run, previous: Path, root: Path, issue: str, source: str, base: str) -> Worktree:

@@ -2,10 +2,12 @@ import contextlib
 import copy
 import io
 import json
+import os
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
-from placido import config, pr, pragents, prcheck, prgh, runlog
+from placido import cli, config, pr, pragents, prcheck, prgh, runlog
 from placido.herdr import Herdr
 from placido.outcomes import Failure
 from placido.step import StepResult
@@ -736,3 +738,49 @@ class ReviewCheckTest(PRTestCase):
         self.assertIn("B1 is a duplicate: name which of yours in 'duplicate_of' (A1).", problems)
         self.assertIn("B2 needs exactly one verdict; it has 0.", problems)
         self.assertIn("C1 needs exactly one verdict; it has 2.", problems)
+
+
+class HandOffTest(PRTestCase):
+    """Typed in Herdr outside the pull request's worktree, `placido pr` goes on in the
+    pull request's own workspace."""
+
+    def placido_pr(self, cwd: Path, *flags: str) -> tuple[int, str]:
+        out = io.StringIO()
+        args = cli.build_parser().parse_args(["pr", "7", *flags])
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.dict(os.environ, {"HERDR_PANE_ID": "w1:p1", "PLACIDO_RUNS_DIR": str(self.runs)}))
+            stack.enter_context(mock.patch.object(Path, "cwd", return_value=cwd))
+            stack.enter_context(mock.patch.object(cli.config, "find_config", return_value=self.tmp / "pr.toml"))
+            stack.enter_context(mock.patch.object(cli.start, "origin_repo", return_value="o/proj"))
+            stack.enter_context(mock.patch.object(cli.prgh, "Hub", return_value=self.hub))
+            stack.enter_context(mock.patch.object(cli, "Herdr", return_value=Herdr(self.fake)))
+            stack.enter_context(mock.patch.object(cli.pragents, "review", side_effect=pr.PRStop("reviewed here")))
+            stack.enter_context(contextlib.redirect_stdout(out))
+            stack.enter_context(mock.patch("sys.stderr", out))
+            code = cli.cmd_pr(args)
+        return code, out.getvalue()
+
+    def typed(self) -> list[list[str]]:
+        return [argv[3:] for argv in self.fake.calls if argv[1:3] == ["pane", "run"]]
+
+    def test_from_the_main_checkout_it_goes_on_in_its_workspace(self):
+        code, out = self.placido_pr(self.repo, "--no-menu")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.typed(), [["w2:p1", "placido pr 7 --no-menu"]])
+        self.assertEqual(self.fake.calls[-1][1:], ["workspace", "focus", "w2"])
+        self.assertIn("#7 goes on in its own workspace, pr-7", out)
+        self.assertNotIn("reviewed here", out)
+
+    def test_while_it_is_going_there_it_only_switches_there(self):
+        (self.run.path / "lock").write_text(f"{os.getpid()}\n")
+        code, out = self.placido_pr(self.repo)
+        self.assertEqual((code, self.typed()), (0, []))
+        self.assertIn("#7 is already going in its own workspace, pr-7", out)
+
+    def test_in_its_worktree_or_with_here_it_goes_on_where_it_was_typed(self):
+        for cwd, flags in ((self.worktree, ()), (self.repo, ("--here",))):
+            code, out = self.placido_pr(cwd, *flags)
+            self.assertEqual(code, 1)
+            self.assertIn("reviewed here", out)
+        self.assertEqual(self.typed(), [])
+

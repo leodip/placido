@@ -26,10 +26,12 @@ is posted, pushed, or merged until you pick it (see
 ## How a run goes
 
 1. **Start.** `placido start <issue>` creates the branch `placido/<issue>` in a git
-   worktree, opens it as a Herdr workspace, and runs your project's setup command
-   (for example, a Docker stack of its own for this issue). Then Herdr switches to
-   that workspace, and placido types `placido spec` into its pane, which is in the
-   worktree.
+   worktree and opens it as a Herdr workspace. Herdr switches to that workspace, where
+   placido types `placido start <issue> && placido spec` into its pane, in the
+   worktree: your project's setup command runs there (for example, a Docker stack of
+   its own for this issue), then the interview. The terminal you typed it in is free
+   at once, and Herdr's sidebar shows each issue once, under your repository.
+   `--here` keeps it all in your terminal, as does starting outside Herdr.
 2. **Interview.** `placido spec` opens an agent that reads the issue and the code,
    then asks you one question at a time until no decision is left open. It also looks
    for adjacent work (problems next to the change, open issues on the same area) and
@@ -360,7 +362,11 @@ do it later; `placido doctor` reports a daemon whose folder is gone.
 `placido pr 602` (or `#602`, or its URL), from a Herdr pane in your project's checkout,
 reviews a pull request someone else sent, in a worktree and workspace of its own
 (`placido/pr-602`, with `PLACIDO_NAME` such as `goiabada-pr-602` for your setup's
-stack), unattended until it has something to show you:
+stack), unattended until it has something to show you. As with `placido start`, the
+review goes on in that workspace, where Herdr switches you: placido types
+`placido pr 602` into its pane, and your terminal is free for the next one (`--here`
+keeps it in yours).
+
 
 1. **A safety scan, before anything of it runs.** An agent reads the change and the
    pull request's text, confined: it can read the change and write its own notes, and
@@ -431,7 +437,8 @@ folder the last gates run, shows you that change and runs none of it until you
 approve it; refused, the fixer undoes it and disputes the findings that needed it.
 
 `placido pr 602` again shows the menu again, or, once the contributor has pushed, starts
-a new round whose reviewers check each earlier finding. `placido close pr-602` removes
+a new round whose reviewers check each earlier finding; typed outside its workspace, it
+goes on there, or only switches you there while the review is still going. `placido close pr-602` removes
 every lane's worktree and stack, putting the host paths back first (only your own
 uncommitted changes stop it, not what that puts back), and deletes the
 branch once the pull request is merged or closed and nothing made here is left

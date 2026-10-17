@@ -705,6 +705,16 @@ them are the risk, not only the change's quality.
   by the fixer or by a gate, is asked again or stops the commit. Committed, the fix
   becomes what the host paths are checked against, and a later base merge is skipped,
   as for a pull request that changes them.
+- **A run goes on in its own workspace.** Typed from the main checkout, `placido pr`
+  kept that terminal through the whole review and menu, so a second pull request
+  needed a second terminal on the checkout, and Herdr's sidebar showed the
+  repository twice, both pull requests under one of them (#598 and #599,
+  2026-10-17). Now, inside Herdr, `placido pr` and `placido start` make the run and
+  its worktree, type the same command into the workspace's pane, which is in the
+  worktree, and switch the user there; the command goes on there, setup and all.
+  Typed again from elsewhere while a placido process holds the run's lock, it only
+  switches there. `--here`, the worktree itself, or a terminal outside Herdr keep
+  the old way. A closed pane gets a new tab in the workspace.
 - **Close does not count the host paths it puts back as the user's changes.** On
   #596 the maintainer committed browser tests under `e2e/` by hand, so placido never
   trusted them. Close put the old ones back before the teardown, as it should, then

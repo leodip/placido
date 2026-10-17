@@ -289,6 +289,13 @@ class Lock:
             return None
 
 
+def holder(run_dir: Path) -> int | None:
+    """The live placido process working on the run, or None."""
+
+    pid = Lock(run_dir)._holder()
+    return pid if pid and _alive(pid) else None
+
+
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)

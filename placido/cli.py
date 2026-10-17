@@ -45,9 +45,16 @@ def cmd_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def _hands_off(args: argparse.Namespace) -> bool:
+    """Whether a run goes on in its own Herdr workspace rather than in the terminal the
+    command was typed in: inside Herdr, unless --here."""
+
+    return bool(os.environ.get("HERDR_PANE_ID")) and not args.here
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     try:
-        run = start.start(args.issue, Path.cwd(), echo=sys.stdout)
+        run = start.start(args.issue, Path.cwd(), echo=sys.stdout, hand_off=_hands_off(args))
     except (start.StartError, config.ConfigError) as error:
         print(f"placido: {error}", file=sys.stderr)
         return 1
@@ -572,6 +579,14 @@ def cmd_pr(args: argparse.Namespace) -> int:
         print(f"placido: the pull request's workspace is gone and could not be reopened: {error}", file=sys.stderr)
         return 1
     run = runlog.Run(path, echo=sys.stdout)
+    if _hands_off(args) and not start.stays(created, Path.cwd()):
+        command = f"placido pr {number}" + (" --no-menu" if args.no_menu else "")
+        went = start.hand_over(run, herdr, created, command)
+        if went is not None:
+            doing = "is already going" if went == "going" else "goes on"
+            print(f"\n#{number} {doing} in its own workspace, {path.parent.name}, where Herdr has switched you."
+                  " This terminal is free.")
+            return 0
     worktree = Path(created["path"])
     env = start.env_of(path)
     workspace = created["workspace"]
@@ -731,6 +746,8 @@ def build_parser() -> argparse.ArgumentParser:
         "start", help="start work on an issue: a worktree and Herdr workspace, then setup"
     )
     begin.add_argument("issue", help="an issue file in issues/, by name or unique prefix")
+    begin.add_argument("--here", action="store_true",
+                       help="go on in this terminal, not in the issue's own Herdr workspace")
     begin.set_defaults(func=cmd_start)
     interview = commands.add_parser(
         "spec", help="interview the user about the issue, then seal the agreement and slices"
@@ -756,6 +773,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contrib.add_argument("pr", help="the pull request: 602, #602, or its URL")
     contrib.add_argument("--no-menu", action="store_true", help="show the review and stop, with no actions")
+    contrib.add_argument("--here", action="store_true",
+                         help="go on in this terminal, not in the pull request's own Herdr workspace")
     contrib.set_defaults(func=cmd_pr)
     shut = commands.add_parser(
         "close", help="clean up an issue: teardown, worktree, workspace (the branch stays)"
