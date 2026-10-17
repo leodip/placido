@@ -28,8 +28,11 @@ where one differs from anything else you read, the decision wins.
   and passes after.
 - **Everything the project's standards ask beside a change:** regenerated files, docs,
   translations, for what you changed.
-- **Never change** the paths that run on this machine (placido refuses the result), and
-  never commit, merge, rebase, or reset.
+- **Change the paths that run on this machine** (your prompt names them) only when a finding
+  needs it, such as a browser test under one. Placido shows your change to them to the
+  user before anything runs it. If the user refuses it, undo it and dispute the
+  findings that needed it, saying so; do not ask the user yourself.
+- **Never** commit, merge, rebase, or reset.
 - **The base is merged in already** when it had moved on: placido merges it into the
   branch before you, as a commit of its own, so you fix what will land, and your prompt
   names that commit. A finding that asks for a rebase or a merge is answered by it; fix

@@ -418,7 +418,10 @@ did, while each check is a fresh one. The push says whether the fixes passed.
 When the base branch has moved on, the fix first merges it into the branch, as a commit
 of its own, so the fixes are made and gated on what will land; the `fix` role resolves
 any conflict, and only the conflicts. A merge, not a rebase, since the push is never
-forced. A pull request that changes host paths is fixed on its own base instead.
+forced. A pull request that changes host paths, or whose fix did, is fixed on its own
+base instead. A fix that needs a host path changed, such as a browser test under a
+folder the last gates run, shows you that change and runs none of it until you
+approve it; refused, the fixer undoes it and disputes the findings that needed it.
 
 `placido pr 602` again shows the menu again, or, once the contributor has pushed, starts
 a new round whose reviewers check each earlier finding. `placido close pr-602` removes

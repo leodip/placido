@@ -92,7 +92,7 @@ def state(ctx: Context, rnd: Round) -> State:
     ahead = int(pr.git(ctx.worktree, "rev-list", "--count", "--first-parent", f"{pr.pr_ref(number)}..HEAD") or 0)
     merges_base = (
         pull.state == "OPEN" and not pr.is_ancestor(ctx.worktree, pr.base_ref(pull.base), "HEAD")
-        and not pr.host_changes(ctx, rnd)
+        and not pr.branch_changes_host_paths(ctx, rnd)
     )
     try:
         waiting = ctx.hub.waiting_runs(pull.head_sha) if pull.state == "OPEN" else []
@@ -522,9 +522,9 @@ def merge_base_in(ctx: Context, rnd: Round) -> None:
     tip = pr.git(wt, "rev-parse", pr.base_ref(base))
     if pr.is_ancestor(wt, tip, "HEAD"):
         return
-    if pr.host_changes(ctx, rnd):
+    if pr.branch_changes_host_paths(ctx, rnd):
         run.event("pr.base_merge_skipped", round=rnd.number, tip=tip, reason="host paths")
-        print(f"{base} has moved on, but the pull request changes host paths, so placido does not merge"
+        print(f"{base} has moved on, but the branch changes host paths, so placido does not merge"
               f" {base} into it: the fixes are made on its own base.")
         return
     pr.verify_host_paths(ctx, rnd, f"the merge of {base}")
@@ -712,7 +712,12 @@ def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: 
             return problems
         host = pr.changed_files(wt, *ctx.settings.pr.host_paths) if ctx.settings.pr.host_paths else []
         if host:
-            return [f"you changed {', '.join(host)}, which run on this machine; undo those changes."]
+            # Asked before the gates below run any of it.
+            answer = pr.approve_host_change(ctx, rnd, f"fix {attempt_no}")
+            if not answer:
+                who = "the user refused" if answer is False else "nobody was at the terminal to approve"
+                return [f"{who} your change to {', '.join(host)}, which run on this machine; undo it,"
+                        " and dispute the findings that needed it, saying so."]
         if result.read_text(encoding="utf-8").strip().splitlines()[:1] == [NO_CHANGES]:
             return [f"the result says '{NO_CHANGES}', but the worktree has changes."] if pr.git(wt, "status", "--porcelain") else []
         return implement.check(result, wt, head, entry, settings, ctx.env, run)
@@ -757,7 +762,10 @@ def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: 
         # The gates in the check ran the pull request's tests after the fixer's own check
         # of the host paths: whatever they wrote there must not ride into the commit.
         pr.verify_host_paths(ctx, rnd, "the fix's commit")
+        approved = pr.untrusted_host_files(ctx, rnd, pr.primary_lane(ctx))
         commit = _commit(wt, implement.message(result), run, rnd)
+        if approved:
+            run.event("pr.host_change_committed", round=rnd.number, commit=commit, files=approved)
     run.event("pr.fixed", round=rnd.number, attempt=attempt_no, commit=commit, step=step.path.name, **counts)
     pr.settle(ctx, rnd, f"fix {attempt_no}")
     print(f"\nfix {attempt_no}: {counts['fixed']} fixed, {counts['disputed']} disputed"
@@ -888,7 +896,10 @@ def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path, resumed: bo
             " or a merge is answered by it: fix what remains, such as tests the base's changes broke."
         )
     gates = ", ".join(ctx.settings.pr.gates) or "none"
+    host = ", ".join(ctx.settings.pr.host_paths) or "none"
     lines += [
+        f"- **Paths that run on this machine:** {host}. Change them only when a finding needs it:"
+        " placido shows the change to the user, who approves it before anything runs it.",
         f"- **Gates:** {gates}. Placido runs them after you and commits only when they pass, so"
         " run only the narrow tests for what you change.",
         decisions.prompt_line(ctx.run.path, pragents.OVER),

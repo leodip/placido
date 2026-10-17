@@ -445,15 +445,20 @@ def pr_text(ctx: Context, rnd: Round) -> str:
 # ---- the worktree stays as the pull request has it -----------------------------------
 
 
-def trusted(run_dir: Path, rnd: Round, primary: bool = True) -> str:
-    """What the host paths must match. In the pull request's own worktree, the base
-    branch's tip once placido merged it in, which it does only into a pull request that
-    changes no host path. Otherwise the round's head once the user approved its changes
-    to them, or else the merge base."""
+# The events after which the pull request's own worktree trusts a commit made here.
+TRUSTED_HERE = ("pr.base_merged", "pr.host_change_committed")
 
-    merged = done(run_dir, "pr.base_merged", rnd.number) if primary else None
-    if merged:
-        return merged["tip"]
+
+def trusted(run_dir: Path, rnd: Round, primary: bool = True) -> str:
+    """What the host paths must match. In the pull request's own worktree, the latest
+    of: the base branch's tip once placido merged it in, which it does only into a pull
+    request that changes no host path, and a fix's commit whose change to them the user
+    approved. Otherwise the round's head once the user approved its changes to them, or
+    else the merge base."""
+
+    made = [e for e in runlog.read_events(run_dir) if e.get("event") in TRUSTED_HERE and e.get("round") == rnd.number]
+    if primary and made:
+        return made[-1]["tip"] if made[-1]["event"] == "pr.base_merged" else made[-1]["commit"]
     return rnd.head if done(run_dir, "pr.trust_approved", rnd.number, head=rnd.head) else rnd.base
 
 
@@ -483,16 +488,23 @@ def host_changes(ctx: Context, rnd: Round) -> list[str]:
     return git(ctx.worktree, "diff", "--name-only", rnd.base, rnd.head, "--", *paths).splitlines() if paths else []
 
 
-def verify_host_paths(ctx: Context, rnd: Round, before: str, lane: Lane | None = None) -> None:
-    """Stop unless the host paths hold what was trusted, right before `before` runs."""
+def branch_changes_host_paths(ctx: Context, rnd: Round) -> bool:
+    """Whether the branch changes host paths: the pull request itself, or a fix made
+    here whose change to them the user approved."""
 
-    paths = ctx.settings.pr.host_paths
-    if not paths:
+    return bool(host_changes(ctx, rnd)) or done(ctx.run.path, "pr.host_change_committed", rnd.number) is not None
+
+
+def verify_host_paths(ctx: Context, rnd: Round, before: str, lane: Lane | None = None) -> None:
+    """Stop unless the host paths hold what was trusted, right before `before` runs: in
+    the pull request's own worktree, a change the user approved counts as trusted."""
+
+    if not ctx.settings.pr.host_paths:
         return
-    wt = (lane or primary_lane(ctx)).worktree
-    changed = git(wt, "diff", "--name-only", trust_reference(ctx, rnd, lane), "--", *paths).splitlines()
-    files = sorted(set(changed) | set(changed_files(wt, *paths)))
-    if files:
+    lane = lane or primary_lane(ctx)
+    wt = lane.worktree
+    files = untrusted_host_files(ctx, rnd, lane)
+    if files and not (lane.primary and approved_here(ctx, rnd, host_state(wt, files))):
         ctx.run.event("pr.host_paths_changed", round=rnd.number, before=before, files=files)
         notify(ctx, "host paths changed", f"{', '.join(files)[:160]}; nothing more runs")
         raise PRStop(
@@ -500,6 +512,68 @@ def verify_host_paths(ctx: Context, rnd: Round, before: str, lane: Lane | None =
             f" git -C {wt} status and diff; once they are as the pull request has them,"
             " run placido pr again"
         )
+
+
+def untrusted_host_files(ctx: Context, rnd: Round, lane: Lane) -> list[str]:
+    """The host paths in the lane that are not as trusted, committed or not."""
+
+    paths, wt = ctx.settings.pr.host_paths, lane.worktree
+    changed = git(wt, "diff", "--name-only", trust_reference(ctx, rnd, lane), "--", *paths).splitlines()
+    return sorted(set(changed) | set(changed_files(wt, *paths)))
+
+
+def host_state(wt: Path, files: list[str]) -> dict[str, str]:
+    """Each file's content as git names it, or "" for a file that is gone: what an
+    approval holds to, so that a later edit needs one of its own."""
+
+    return {name: git(wt, "hash-object", "--", name) if (wt / name).is_file() else "" for name in files}
+
+
+def approved_here(ctx: Context, rnd: Round, state: dict[str, str]) -> bool:
+    """Whether the user approved exactly this change to the host paths, made here by
+    placido's own agent, since the worktree last trusted a commit."""
+
+    approved = []
+    for event in runlog.read_events(ctx.run.path):
+        if event.get("round") != rnd.number:
+            continue
+        if event.get("event") in TRUSTED_HERE:
+            approved = []
+        elif event.get("event") == "pr.host_change_approved":
+            approved.append(event.get("state"))
+    return bool(state) and state in approved
+
+
+def approve_host_change(ctx: Context, rnd: Round, by: str) -> bool | None:
+    """Put a change placido's own agent made to the host paths to the user, before
+    anything runs it, as a pull request's own change is (decided 2026-10-16: on #596
+    the fix role could not add the browser tests a finding asked for, since e2e/ runs
+    here, and went round in circles). True once they approved this very content, False
+    when they refused it, None with nobody to ask."""
+
+    wt, paths = ctx.worktree, ctx.settings.pr.host_paths
+    files = untrusted_host_files(ctx, rnd, primary_lane(ctx))
+    state = host_state(wt, files)
+    if approved_here(ctx, rnd, state):
+        return True
+    text = git(wt, "diff", trust_reference(ctx, rnd), "--", *paths) + "\n"
+    for name in git(wt, "ls-files", "--others", "--exclude-standard", "--", *paths).splitlines():
+        text += f"\n--- new file {name}\n{_read(wt / name)}"
+    evidence = rnd.folder / f"host-paths-{_slug(by)}.diff"
+    evidence.write_text(text, encoding="utf-8")
+    print(f"\n{by} changed files that run on this machine ({', '.join(paths)}):")
+    for name in files:
+        print(f"  {name}")
+    print(f"The whole change to them: {evidence}")
+    status.show(ctx.run.path, status.text(status.YOU, f"{by} changed host paths: approve or refuse"))
+    notify(ctx, "host paths changed", f"{by} changed {', '.join(files)[:140]}; approve or refuse")
+    answer = ctx.ask("Have you read that change, and may it run here?")
+    status.show(ctx.run.path, status.text(status.WORKING, by))
+    if answer:
+        ctx.run.event("pr.host_change_approved", round=rnd.number, by=by, files=files, state=state)
+    else:
+        ctx.run.event("pr.host_change_refused", round=rnd.number, by=by, files=files, asked=answer is not None)
+    return answer
 
 
 def settle(ctx: Context, rnd: Round, after: str, lane: Lane | None = None) -> list[str]:

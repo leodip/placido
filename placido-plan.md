@@ -695,6 +695,16 @@ them are the risk, not only the change's quality.
   because an agent started in the worktree runs their hooks and servers on this
   machine. Reviewers still run with approvals bypassed: they need Docker for the tests,
   and Docker is root on the host anyway.
+- **A fix may change a host path, with the user's approval.** On #596 a finding asked
+  for browser tests under `e2e/`, which the project lists as a host path because its
+  last gate runs them here. The fixer was refused, undid them, was told by the check
+  that the finding stayed open, asked the user, and was refused again. Now a fix's
+  change to a host path goes to the user as a pull request's own does, before the
+  gates run any of it: the files, and the whole change in the round's folder. The
+  approval holds for that content only (each file's git object), so an edit after it,
+  by the fixer or by a gate, is asked again or stops the commit. Committed, the fix
+  becomes what the host paths are checked against, and a later base merge is skipped,
+  as for a pull request that changes them.
 - **Documentation for agents is a note, not a stop.** Contributors often add to
   `AGENTS.md` and `CLAUDE.md`, which agents in the worktree load by themselves, and a
   stop for every such paragraph trains the maintainer to answer yes. The scan sorts

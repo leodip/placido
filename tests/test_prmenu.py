@@ -1,6 +1,8 @@
 import io
 import json
 from contextlib import redirect_stdout
+from pathlib import Path
+from typing import Callable
 from unittest import mock
 
 from placido import decisions, pr, pragents, prcheck, prgh, prmenu, runlog
@@ -172,14 +174,59 @@ class FixAndPushTest(MenuTestCase):
         self.assertNotIn("push", [k for k, _ in listed])
         self.assertIn("does not let maintainers push", notes[0])
 
-    def test_a_fix_that_touches_a_host_path_is_refused(self):
+    def write_spec(self, text: str) -> Callable[[Path], None]:
+        def write(wt: Path) -> None:
+            (wt / ".placido").mkdir(exist_ok=True)
+            (wt / ".placido" / "spec.ts").write_text(text)
+        return write
+
+    def test_a_fix_s_change_to_a_host_path_the_user_refuses_is_sent_back(self):
         rnd = self.review()
-        self.runner.during["r1-fix-1"] = lambda wt: (wt / ".placido" / "stack.sh").write_text("evil\n")
+        self.runner.during["r1-fix-1"] = self.write_spec("test('no')\n")
+        self.answers = [False]
         with self.assertRaisesRegex(pr.PRStop, "the fix did not finish"):
             self.act("fix", rnd)
-        self.assertIn("which run on this machine; undo those changes", self.runner.problems[-1][1][0])
+        self.assertIn("the user refused your change to .placido/spec.ts", self.runner.problems[-1][1][0])
+        self.assertIn("dispute the findings that needed it", self.runner.problems[-1][1][0])
+        self.assertEqual(self.asked, ["Have you read that change, and may it run here?"])
+        self.assertEqual(runlog.last_event(self.run.path, "pr.host_change_refused")["files"], [".placido/spec.ts"])
         self.assertEqual(sh(self.worktree, "git", "status", "--porcelain"), "")  # set aside in a stash
         self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD"), self.head)
+
+    def test_with_nobody_to_approve_it_a_fix_s_change_to_a_host_path_is_sent_back(self):
+        rnd = self.review()
+        self.runner.during["r1-fix-1"] = self.write_spec("test('no')\n")
+        with self.assertRaisesRegex(pr.PRStop, "the fix did not finish"):
+            self.act("fix", rnd)
+        self.assertIn("nobody was at the terminal to approve", self.runner.problems[-1][1][0])
+
+    def test_a_fix_s_change_to_a_host_path_the_user_approves_is_committed_and_trusted(self):
+        rnd = self.review()
+        self.runner.during["r1-fix-1"] = self.write_spec("test('declines')\n")
+        self.answers = [True]
+        self.act("fix", rnd)
+        head = sh(self.worktree, "git", "rev-parse", "HEAD")
+        self.assertEqual(sh(self.worktree, "git", "show", "HEAD:.placido/spec.ts"), "test('declines')")
+        self.assertEqual(len(self.asked), 1)
+        self.assertIn("test('declines')", (rnd.folder / "host-paths-fix-1.diff").read_text())
+        committed = runlog.last_event(self.run.path, "pr.host_change_committed")
+        self.assertEqual((committed["commit"], committed["files"]), (head, [".placido/spec.ts"]))
+        self.assertEqual(pr.trusted(self.run.path, rnd), head)
+        pr.verify_host_paths(self.ctx, rnd, "the last gates")  # what comes next runs on it
+        self.assertNotIn("pr.host_paths_changed", self.kinds())
+
+    def test_an_approval_holds_for_that_content_only(self):
+        rnd = self.review()
+        self.write_spec("test('declines')\n")(self.worktree)
+        self.answers = [True, False]
+        self.assertTrue(pr.approve_host_change(self.ctx, rnd, "fix 1"))
+        self.assertTrue(pr.approve_host_change(self.ctx, rnd, "fix 1"))  # not asked again
+        pr.verify_host_paths(self.ctx, rnd, "the gates")
+        self.write_spec("test('declines'); fetch('https://evil')\n")(self.worktree)
+        with self.assertRaisesRegex(pr.PRStop, "changed since they were trusted"):
+            pr.verify_host_paths(self.ctx, rnd, "the gates")
+        self.assertFalse(pr.approve_host_change(self.ctx, rnd, "fix 1"))
+        self.assertEqual(len(self.asked), 2)
 
 
 class MergeTest(MenuTestCase):
@@ -644,6 +691,18 @@ class BaseMergeTest(MenuTestCase):
         self.assertEqual(runlog.last_event(self.run.path, "pr.base_merge_skipped")["reason"], "host paths")
         self.assertNotIn("pr.base_merged", self.kinds())
         self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD^"), head)
+
+    def test_a_branch_whose_fix_changed_host_paths_is_fixed_on_its_own_base(self):
+        rnd = self.review()
+        self.runner.during["r1-fix-1"] = lambda wt: (wt / ".placido" / "stack.sh").write_text("echo approved\n")
+        self.answers = [True]
+        self.act("fix", rnd)
+        fixed = sh(self.worktree, "git", "rev-parse", "HEAD")
+        self.advance_main({"later.txt": "later\n"})
+        self.assertFalse(prmenu.state(self.ctx, rnd).merges_base)
+        self.act("fix", rnd)
+        self.assertEqual(runlog.last_event(self.run.path, "pr.base_merge_skipped")["reason"], "host paths")
+        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD^"), fixed)
 
     def test_an_up_to_date_branch_is_fixed_without_a_merge(self):
         rnd = self.review()
