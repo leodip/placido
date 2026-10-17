@@ -723,6 +723,17 @@ them are the risk, not only the change's quality.
   read-only sandbox), since a change made there would skip the check a fix gets; the
   user can lift that in the agent. A session whose log is gone, or a round with
   neither, gets a new agent of the `fix` role's, told where the review's files are.
+- **Every behaviour gets a test, the fixes' included.** On #606 a fix added a row
+  lock, a re-read under it, and a transaction's rerun; its tests were real (the check
+  killed five mutations), but the behaviours its answer claimed beyond the finding
+  (the audit's old values from the locked row, the rerun, a vanished row, a claim
+  waiting on a save) had none, and the maintainer had them written by hand
+  (2026-10-17). The fixer, asked for one failing test per finding, now tests each
+  behaviour its fix adds; the check lists those behaviours, finds the test behind
+  each, and makes an uncovered one a finding, significant when it guards security,
+  stored data, or concurrency, so it goes back to the fixer. Reviewers list the
+  change's behaviours the same way before proving its tests real. Whether a change
+  needs a browser test is the project's to say, in its notes.
 - **Commits made in the worktree are the user's, and join the round.** On #595 the
   maintainer had the agent the menu opened add an end-to-end test, commit, and push.
   Placido knew only the heads it reviewed and its own commits, so the next `placido

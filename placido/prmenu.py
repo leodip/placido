@@ -1041,7 +1041,7 @@ def verify_prompt(ctx: Context, rnd: Round, listed: Path, fix_folder: Path, befo
         decisions.prompt_line(ctx.run.path, pragents.OVER),
         "- **Mutations:** `placido mutate <file> --replace \"<old>\" --with \"<new>\" -- <narrow test"
         " command>`, which restores the file however it ends.",
-        f"- **Write:** {folder / 'verify.json'} (new problems as V1, V2, …).",
+        f"- **Write:** {folder / 'verify.json'} (new problems and untested behaviour as V1, V2, …).",
     ]
     menu_ = config.command_menu(ctx.settings)
     return "\n".join(lines) + "\n\n" + (menu_ or "The project defines no commands.\n")

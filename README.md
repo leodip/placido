@@ -425,7 +425,8 @@ will go out), approve CI runs GitHub holds
 for first-time contributors, squash-merge pinned to the commit the review covered, or
 close. A fix is the `fix` role's, committed locally once the gates pass, then checked
 by the `verify` role, another vendor by default: each finding's fix with a test that
-fails without it, and the fixes for new problems. What the check leaves open goes back
+fails without it, the fixes for new problems, and a test behind every behaviour the
+fixes add, the fixer's claims included. What the check leaves open goes back
 to the fixer, up to `fix_rounds` times: the same session, resumed, which knows what it
 did, while each check is a fresh one. The push says whether the fixes passed.
 When the base branch has moved on, the fix first merges it into the branch, as a commit

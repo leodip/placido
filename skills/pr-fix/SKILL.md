@@ -26,6 +26,11 @@ where one differs from anything else you read, the decision wins.
   finding; no rewrite, no unrelated cleanup. It is still their pull request.
 - **Tests first where a finding is about behaviour:** a test that fails before your fix
   and passes after.
+- **A test for every behaviour your fix adds,** not only the one the finding names:
+  each branch, error path, and retry your code adds, and each thing your answer says
+  it does, such as "the audit records the row read under the lock". A claim no test
+  checks is not done: the check after you looks for the test behind each one and sends
+  the fix back without it.
 - **Everything the project's standards ask beside a change:** regenerated files, docs,
   translations, for what you changed.
 - **Change the paths that run on this machine** (your prompt names them) only when a finding
@@ -48,7 +53,8 @@ where one differs from anything else you read, the decision wins.
   still wrong: the `check` says how. Fix what it says, or dispute it with evidence.
 
 For each finding, one answer: **fixed** (what changed, and the test that covers it), or
-**disputed** (it does not hold; the evidence: a test run, the code, the standard).
+**disputed** (it does not hold; the evidence: a test run, the code, the standard). A fixed
+answer names the test behind each behaviour it adds.
 
 ### Asking the maintainer
 
@@ -70,7 +76,7 @@ it, and carry on.
 `resolutions.json` where your prompt says:
 
 ```json
-{"resolutions": [{"id": "F1", "status": "fixed", "note": "what changed, and the test"}]}
+{"resolutions": [{"id": "F1", "status": "fixed", "note": "what changed, and the test behind each behaviour"}]}
 ```
 
 Then the result file. When you changed code, its first line is a commit subject of at

@@ -40,6 +40,16 @@ a weakened check, a test that asserts nothing. Each new problem is a finding, id
 `V2`, …, with the review skill's areas, severities, and sizes. Blocking and significant
 ones send the fixes back; minor ones are reported and do not.
 
+Then whether tests cover what the fixes add, beyond each finding's own test. List it:
+each branch, error path, and retry the fixes add, and each thing the fixer's answers
+say the code does ("the audit records the row read under the lock"). For each, find
+the test that would fail without it; prove the ones that matter with `placido mutate`
+on that line and the narrowest test command. A behaviour no test catches is a finding
+in `tests`, with the mutation that survived as its evidence and the test that should
+catch it as its fix: significant when it guards security, stored data, or
+concurrency, so it goes back to the fixer; minor otherwise. One finding can list
+several.
+
 Run the project's commands from your prompt, in the foreground, and nothing that
 installs packages or builds outside them. Leave the worktree exactly as you found it:
 placido checks.
