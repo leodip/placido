@@ -723,6 +723,16 @@ them are the risk, not only the change's quality.
   read-only sandbox), since a change made there would skip the check a fix gets; the
   user can lift that in the agent. A session whose log is gone, or a round with
   neither, gets a new agent of the `fix` role's, told where the review's files are.
+- **Commits made in the worktree are the user's, and join the round.** On #595 the
+  maintainer had the agent the menu opened add an end-to-end test, commit, and push.
+  Placido knew only the heads it reviewed and its own commits, so the next `placido
+  pr` took the push for the contributor's and started a new round of scan, trust,
+  gates, and reviews (2026-10-17). A contributor's commits reach the worktree only
+  through placido following the pull request, so a commit on top of where placido
+  left it was made there: it is adopted into the round, as a fix is, and its change
+  to a host path is trusted. The menu says nothing has checked it, and the merge is
+  offered once it is pushed. A contributor's push on top of unpushed commits still
+  stops, as for unpushed fixes.
 - **Close does not count the host paths it puts back as the user's changes.** On
   #596 the maintainer committed browser tests under `e2e/` by hand, so placido never
   trusted them. Close put the old ones back before the teardown, as it should, then

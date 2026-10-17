@@ -385,6 +385,19 @@ class MenuLoopTest(MenuTestCase):
         ])
 
 
+class YoursTest(MenuTestCase):
+    def test_your_pushed_commit_is_noted_and_can_be_merged(self):
+        rnd = self.review()
+        (self.worktree / "greet.py").write_text("print('hi there, all')\n")
+        mine = git_commit(self.worktree, "mine")
+        self.publish(mine)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(self.review().number, rnd.number)
+        listed, notes = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
+        self.assertIn(f"Your 1 commit(s) made in the worktree, up to {mine[:12]}, are part of this round", notes[0])
+        self.assertIn(f"pinned to {mine[:12]}", dict(listed)["merge"])
+
+
 class AskTest(MenuTestCase):
     """The agent the user can ask questions: a copy of the round's fixer's session, else
     the judge's, else a new agent; read-only, in a new tab of the run's workspace."""

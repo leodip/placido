@@ -442,7 +442,9 @@ With neither session at hand, it opens a new agent of the `fix` role's instead, 
 at the review's files.
 
 `placido pr 602` again shows the menu again, or, once the contributor has pushed, starts
-a new round whose reviewers check each earlier finding; typed outside its workspace, it
+a new round whose reviewers check each earlier finding. Commits made in the worktree
+itself, by you or an agent you ran there, are yours: they join the round, pushed or
+not, and the menu says nothing has checked them. Typed outside its workspace, it
 goes on there, or only switches you there while the review is still going. `placido close pr-602` removes
 every lane's worktree and stack, putting the host paths back first (only your own
 uncommitted changes stop it, not what that puts back), and deletes the

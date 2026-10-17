@@ -72,6 +72,7 @@ class State:
     fixed: bool  # the fix ran this round, whether or not it changed code
     fixes: list[str]  # commits made here this round: the base merged in, and the fixes
     verified: bool | None  # the latest check of the fixes passed; None: never checked
+    yours: list[str]  # the user's own commits made in the worktree this round, which nothing checked
     ahead: int  # commits made here that the pull request's branch lacks, the base's own not counted
     merges_base: bool  # a fix merges the base in first: it moved past the branch, which changes no host path
     pushed: bool
@@ -108,6 +109,7 @@ def state(ctx: Context, rnd: Round) -> State:
         fixed=bool(pr.round_events(run_dir, "pr.fixed", rnd.number)),
         fixes=fixes,
         verified=(pr.done(run_dir, "pr.verified", rnd.number) or {}).get("passed"),
+        yours=[c for e in pr.round_events(run_dir, "pr.adopted", rnd.number) for c in e.get("commits", [])],
         ahead=ahead,
         merges_base=merges_base,
         pushed=bool(pr.round_events(run_dir, "pr.pushed", rnd.number)),
@@ -243,6 +245,9 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
         return [], [note]
     out: list[tuple[str, str]] = []
     notes: list[str] = []
+    if s.yours:
+        notes.append(f"Your {len(s.yours)} commit(s) made in the worktree, up to {s.yours[-1][:12]}, are part of"
+                     " this round: no review or check has read them, and the comment does not mention them.")
     out.append(("edit", f"Edit the comment ({rnd.folder / 'comment.md'})"))
     if (rnd.folder / "merge.md").is_file():
         out.append(("edit-merge", f"Edit the squash message ({rnd.folder / 'merge.md'})"))
@@ -261,7 +266,8 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
     if s.ahead and s.pull.can_modify:
         target = f"{s.pull.head_repo}:{s.pull.head_ref}"
         if s.verified:
-            out.append(("push", f"Push the {s.ahead} commit(s) made here, checked, to {target}"))
+            checked = "the fixes checked, yours not" if s.yours else "checked"
+            out.append(("push", f"Push the {s.ahead} commit(s) made here, {checked}, to {target}"))
         elif s.verified is False:
             out.append(("push", f"Push anyway: the check left {len(open_items(rnd))} item(s) open ({target})"))
         else:
@@ -273,7 +279,7 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
         out.append(("post", f"Post the comment {POSTED_AS[s.verdict][1]}"))
     if s.waiting:
         out.append(("ci", f"Approve the {len(s.waiting)} CI run(s) waiting for a maintainer"))
-    if not s.ahead and (s.verdict == "merge" or s.pushed or (s.fixed and not s.fixes)):
+    if not s.ahead and (s.verdict == "merge" or s.pushed or s.yours or (s.fixed and not s.fixes)):
         when = (f" once CI is green (placido waits up to {config.format_duration(ctx.settings.ci_wait)})"
                 if s.ci == "pending" else "")
         out.append(("merge", f"Squash-merge into {s.pull.base}{when}, pinned to {s.pull.head_sha[:12]} (CI {s.ci})"))

@@ -614,6 +614,63 @@ class RoundTest(PRTestCase):
         self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD"), fix)
 
 
+class AdoptTest(PRTestCase):
+    """Commits made in the worktree on top of placido's are the user's: they join the
+    round rather than read as the contributor's and start a new one."""
+
+    def yours(self, files: dict[str, str]) -> str:
+        for name, text in files.items():
+            (self.worktree / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.worktree / name).write_text(text)
+        return git_commit(self.worktree, "mine")
+
+    def publish(self, commit: str) -> None:
+        sh(self.repo, "git", "push", "-q", "-f", str(self.origin), f"{commit}:refs/pull/7/head")
+        pr.fetch(self.repo, "main", 7)
+        self.hub.pull = self.pull(commit)
+        self.ctx.pr = self.hub.pull
+
+    def test_your_pushed_commit_joins_the_round(self):
+        rnd = pragents.review(self.ctx)
+        mine = self.yours({"greet.py": "mine\n"})
+        self.publish(mine)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            again = pragents.review(self.ctx)
+        self.assertEqual(again.number, rnd.number)
+        self.assertEqual(runlog.last_event(self.run.path, "pr.adopted")["commits"], [mine])
+        self.assertEqual(pr.commits_here(self.run.path, 1), [mine])
+        self.assertIn("are yours: they join round 1", out.getvalue())
+        self.assertEqual(len(pr.rounds(self.run.path)), 1)
+
+    def test_your_commit_on_a_pushed_fix_waits_to_be_pushed(self):
+        rnd = pragents.review(self.ctx)
+        fix = self.yours({"greet.py": "fixed here\n"})
+        self.run.event("pr.fixed", round=1, commit=fix, step="x")
+        self.publish(fix)
+        mine = self.yours({"greet.py": "mine\n"})
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(pragents.review(self.ctx).number, rnd.number)
+        self.assertEqual(pr.commits_here(self.run.path, 1), [fix, mine])
+        self.assertEqual(pragents.review(self.ctx).number, rnd.number)  # adopted once
+        self.assertEqual(len(pr.round_events(self.run.path, "pr.adopted", 1)), 1)
+
+    def test_your_unpushed_commit_and_a_contributor_push_stop_rather_than_lose_either(self):
+        pragents.review(self.ctx)
+        mine = self.yours({"greet.py": "mine\n"})
+        self.push_new_head({"greet.py": "theirs\n"}, self.head)
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(pr.PRStop, "not pushed yet"):
+            pragents.review(self.ctx)
+        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD"), mine)
+
+    def test_your_change_to_a_host_path_is_trusted(self):
+        rnd = pragents.review(self.ctx)
+        mine = self.yours({".placido/notes/pr.md": "Run the browser suite too.\n"})
+        with contextlib.redirect_stdout(io.StringIO()):
+            pragents.review(self.ctx)
+        self.assertEqual(runlog.last_event(self.run.path, "pr.adopted")["host_files"], [".placido/notes/pr.md"])
+        self.assertEqual(pr.trusted(self.run.path, rnd), mine)
+
+
 class CreateRunTest(PRTestCase):
     def test_the_run_belongs_to_the_pull_request(self):
         record = runlog.read_record(self.run.path)

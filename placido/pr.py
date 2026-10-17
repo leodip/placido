@@ -292,12 +292,13 @@ def done(run_dir: Path, kind: str, number: int, **match: Any) -> dict[str, Any] 
     return found[-1] if found else None
 
 
-MADE_HERE = ("pr.base_merged", "pr.fixed")  # the events that commit on the branch here
+# The events that commit on the branch here: placido's, and the user's it adopted.
+MADE_HERE = ("pr.base_merged", "pr.fixed", "pr.adopted")
 
 
 def commits_here(run_dir: Path, number: int) -> list[str]:
     """The commits made on the branch here in the round, in order: the base merged in,
-    and the fixes."""
+    the fixes, and the user's own."""
 
     return [e["commit"] for e in runlog.read_events(run_dir)
             if e.get("event") in MADE_HERE and e.get("round") == number and e.get("commit")]
@@ -322,12 +323,13 @@ def current_round(ctx: Context) -> Round:
     latest = rounds(run.path)
     if latest:
         last = latest[-1]
-        fixes = commits_here(run.path, last.number)
         local = git(ctx.worktree, "rev-parse", "HEAD")
+        adopt(ctx, last, local)
+        fixes = commits_here(run.path, last.number)
         if fixes and local == fixes[-1] and not is_ancestor(ctx.worktree, local, head):
-            if head != last.head:
+            if head != last.head and head not in fixes:
                 raise PRStop(
-                    f"the contributor pushed {head[:12]} while the fixes made here ({local[:12]}) are not"
+                    f"the contributor pushed {head[:12]} while the commits made here ({local[:12]}) are not"
                     " pushed yet. Look at both, then push the fixes by hand or drop them"
                     f" (git -C {ctx.worktree} reset --hard {head[:12]}), and run placido pr again"
                 )
@@ -342,6 +344,27 @@ def current_round(ctx: Context) -> Round:
     event = run.event("pr.round", round=number, head=head, base=base, previous=judged[-1] if judged else None)
     close_agents(ctx)  # agents a stopped round left open
     return _round(run.path, event)
+
+
+def adopt(ctx: Context, rnd: Round, local: str) -> None:
+    """Take the commits made in the worktree on top of placido's into the round, as the
+    fixes made here are. They are the user's, or an agent's the user ran there, such as
+    one the menu opened to answer questions: a contributor's arrive by fetch, and only
+    follow() brings the worktree to them. Before, such a commit, once pushed, read as
+    the contributor's and started a new round of reviews (#595, 2026-10-17). Their
+    change to a host path is the user's, so it is trusted as an approved fix's is."""
+
+    wt, expected = ctx.worktree, expected_head(ctx, rnd)
+    if local == expected or not is_ancestor(wt, expected, local):
+        return
+    commits = git(wt, "rev-list", "--reverse", f"{expected}..{local}").splitlines()
+    paths = ctx.settings.pr.host_paths
+    host = git(wt, "diff", "--name-only", expected, local, "--", *paths).splitlines() if paths else []
+    ctx.run.event("pr.adopted", round=rnd.number, commit=local, commits=commits, host_files=host)
+    if host:
+        ctx.run.event("pr.host_change_committed", round=rnd.number, commit=local, files=host, by="user")
+    print(f"placido: {len(commits)} commit(s) made in the worktree, up to {local[:12]}, are yours: they join"
+          f" round {rnd.number} rather than start a new one")
 
 
 def follow(ctx: Context, head: str) -> None:
