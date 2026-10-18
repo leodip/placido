@@ -63,11 +63,12 @@ class HubTest(unittest.TestCase):
             body = Path(tmp) / "b.md"
             body.write_text("x")
             hub.merge(602, "abc123", "Refuse it (#602)", body)
-            hub.review(602, "request-changes", body)
+            hub.review(602, "approve", body)
         self.assertEqual(gh.calls[0][:9], ["gh", "pr", "merge", "602", "-R", "o/r", "--squash", "--match-head-commit", "abc123"])
-        self.assertIn("--request-changes", gh.calls[1])
-        with self.assertRaises(ValueError):
-            hub.review(602, "dismiss", body)
+        self.assertIn("--approve", gh.calls[1])
+        for event in ("dismiss", "request-changes"):
+            with self.assertRaises(ValueError):
+                hub.review(602, event, body)
 
     def test_a_failing_call_says_which(self):
         hub, _ = self.hub(gh_pr_close=Result(1, "GraphQL: not allowed"))

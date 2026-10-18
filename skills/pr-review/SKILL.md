@@ -95,11 +95,24 @@ anything left behind.
 
 ### 4. Earlier rounds
 
-When your prompt names the round before, the contributor has pushed since the
-maintainer's review. For each of its kept findings, say whether this head addresses
-it (`addressed`, `partly`, `not-addressed`), checking the code and the tests, in
-`earlier`. Then review what changed since (`since.patch`) as above, and anything else
-in the whole change that is still wrong.
+When your prompt names the round before, the branch changed since its review: the
+contributor pushed, or the maintainer answered the review here, on their branch, with
+a fixer's changes or their own (your prompt says which, and where the fixer's answers
+are). For each of its kept findings, say whether this head addresses it (`addressed`,
+`partly`, `not-addressed`), checking the code and the tests, in `earlier`:
+
+- **A fix** addresses its finding only when the code does what the finding asked and a
+  test fails with the fix taken back (`placido mutate` on the fix, or the file checked
+  out from before it, then restored) and passes with it. A fix whose test passes either
+  way is `partly`.
+- **A dispute,** the fixer's answer that the finding does not hold, is `addressed` when
+  its evidence holds, saying so in the note, and `not-addressed` when it does not,
+  saying why.
+
+Then review what changed since (`since.patch`) as above. Changes made here are new
+code in someone else's pull request, as open to every problem as the rest: their own
+tests included, each behaviour they add and each thing the fixer's answers say they
+do. Then anything else in the whole change that is still wrong.
 
 ### 5. Write
 

@@ -2,7 +2,9 @@
 
 First the scan, confined, before anything of the pull request runs (a concern waits
 for the user); while it reads, the lanes' stacks come up, when the pull request
-changes no host path. Then, once placido's own gates have run (placido/pr.py), every
+changes no host path. A round on the changes made here has no scan: the contributor's
+code is as its own round scanned it, and the rest is the maintainer's. Then, once
+placido's own gates have run (placido/pr.py), every
 reviewer in `[pr] reviewers` on its own, all at once in lanes of their own; each,
 resumed, then checks the others' findings, again all at once; the extra lanes' stacks
 go down; and a judge settles them into the final review, told which findings the
@@ -28,9 +30,9 @@ from typing import Any, Callable
 
 from placido import config, decisions, fallback, prcheck, status
 from placido.pr import (
-    Context, Lane, PRStop, Round, close_agents, close_orphans, current_round, done, gates, host_changes,
-    lane_for, letter, notify, open_agents, primary_lane, release_lanes, round_by_number, settle, setup, together,
-    trust, write_data,
+    Context, Lane, PRStop, Round, close_agents, close_orphans, contributor_round, current_round, done, gates,
+    host_changes, lane_for, letter, notify, open_agents, primary_lane, release_lanes, round_by_number, settle, setup,
+    together, trust, write_data,
 )
 from placido.step import CONFINABLE, Step, StepResult
 
@@ -64,9 +66,16 @@ def _paths_block(ctx: Context, rnd: Round, lane: Lane | None = None) -> list[str
         f" {rnd.folder / 'commits.txt'}. Your worktree, {wt}, is at its head {rnd.head[:12]};"
         f" it starts from {rnd.base[:12]}.",
     ]
-    if rnd.previous is not None:
+    if rnd.here:
+        lines.append(
+            f"- **What changed since the round before:** {rnd.folder / 'since.patch'}, commit by commit (a merge"
+            " of the base shows only how its conflicts were resolved): changes the maintainer made here, on"
+            f" the contributor's branch, since the round before's review. The contributor's own head is"
+            f" {contributor_round(ctx.run.path, rnd).head[:12]}."
+        )
+    elif rnd.previous is not None:
         lines.append(f"- **What changed since the round before:** {rnd.folder / 'since.patch'}")
-    scanned = done(ctx.run.path, "pr.scan", rnd.number)
+    scanned = done(ctx.run.path, "pr.scan", contributor_round(ctx.run.path, rnd).number)
     if scanned:
         accepted = " (concerns the user read and accepted)" if scanned["verdict"] == "concerns" else ""
         if scanned.get("notes"):
@@ -151,7 +160,7 @@ def prepare(ctx: Context, rnd: Round) -> None:
 
 def run_scan(ctx: Context, rnd: Round) -> None:
     run = ctx.run
-    if done(run.path, "pr.scan", rnd.number):
+    if rnd.here or done(run.path, "pr.scan", rnd.number):
         return
     chain = _chain(ctx, "scan", tuple(s for s in fallback.entries(ctx.settings, "scan") if s.agent in CONFINABLE))
     if not chain.entries:
@@ -298,6 +307,22 @@ def earlier_ids(ctx: Context, rnd: Round) -> list[str]:
     return [f["id"] for f in data.get("findings", []) if isinstance(f, dict) and f.get("decision") == "keep"]
 
 
+def fix_answers(ctx: Context, rnd: Round) -> Path | None:
+    """The fixer's answers to the round before's findings, in a round on the changes
+    made here."""
+
+    fixed = done(ctx.run.path, "pr.fixed", rnd.previous) if rnd.here and rnd.previous is not None else None
+    return ctx.run.path / "steps" / fixed["step"] / "resolutions.json" if fixed else None
+
+
+def answered_line(ctx: Context, rnd: Round) -> list[str]:
+    if not rnd.here:
+        return []
+    answers = fix_answers(ctx, rnd)
+    how = f"a fixer's, whose answer to each of its findings is in {answers}" if answers else "the maintainer's own commits"
+    return [f"- **How the round before was answered:** {how}. Check each answer as the skill's section 4 says."]
+
+
 def reviewer_prompt(ctx: Context, rnd: Round, code: str, folder: Path, lane: Lane | None = None) -> str:
     total = len(ctx.settings.pr.reviewers)
     earlier = earlier_ids(ctx, rnd)
@@ -318,6 +343,7 @@ def reviewer_prompt(ctx: Context, rnd: Round, code: str, folder: Path, lane: Lan
             f"- **The round before:** {previous / 'final.json'}; say for each"
             f" of its kept findings whether this head addresses it: {', '.join(earlier)}."
         )
+    lines += answered_line(ctx, rnd)
     lines += [
         "- **Mutations:** `placido mutate <file> --replace \"<old>\" --with \"<new>\" -- <narrow test"
         " command>`, which restores the file however it ends.",
@@ -456,14 +482,13 @@ def judge(ctx: Context, rnd: Round) -> None:
     chain = _chain(ctx, "judge", fallback.entries(ctx.settings, "judge"))
     ids = [i for code, _ in reviewers(ctx) for i in _ids(review_folder(ctx, rnd, code))]
     earlier = earlier_ids(ctx, rnd)
-    share = ctx.settings.pr.contributor_share
     name = f"r{rnd.number}-judge"
 
     def start(spec: config.AgentSpec) -> StepResult:
         folder = run.new_step_dir(name)
         return ctx.runner(
             "judge", spec, judge_prompt(ctx, rnd, folder), name=name, folder=folder,
-            check=lambda r: prcheck.check_final(r.parent, ids, earlier, share),
+            check=lambda r: prcheck.check_final(r.parent, ids, earlier),
         )
 
     step = attempt(ctx, chain, start)
@@ -476,14 +501,13 @@ def judge(ctx: Context, rnd: Round) -> None:
     (rnd.folder / "final.md").write_text(prcheck.render_final(data), encoding="utf-8")
     kept = [f for f in data["findings"] if f["decision"] == "keep"]
     run.event(
-        "pr.judged", round=rnd.number, verdict=data["verdict"], route=data["routing"]["route"],
-        kept=len(kept), dropped=len(data["findings"]) - len(kept), step=step.path.name,
+        "pr.judged", round=rnd.number, verdict=data["verdict"], kept=len(kept),
+        dropped=len(data["findings"]) - len(kept), step=step.path.name,
     )
     settle(ctx, rnd, "the judge")
 
 
 def judge_prompt(ctx: Context, rnd: Round, folder: Path) -> str:
-    share = ctx.settings.pr.contributor_share
     lines = [
         f"# Settle the review of pull request #{ctx.pr.number}",
         "",
@@ -522,9 +546,15 @@ def judge_prompt(ctx: Context, rnd: Round, folder: Path) -> str:
             f"- **The round before:** {previous / 'final.json'}; report on each of its kept findings:"
             f" {', '.join(earlier)}."
         )
+    lines += answered_line(ctx, rnd)
+    first = contributor_round(ctx.run.path, rnd)
+    if first.head != rnd.head:
+        lines.append(
+            f"- **The changes made here:** `git -C {ctx.worktree} log -p --first-parent --remerge-diff"
+            f" {first.head[:12]}..{rnd.head[:12]}`, on the contributor's branch since the head they pushed;"
+            " the comment and the squash message say what they changed, as the skill's section 4 does."
+        )
     lines += [
-        f"- **Who fixes:** fixes estimated at {share:.0%} of the pull request's own size or more go"
-        " back to the contributor, all of them; smaller ones are made here, by the maintainer.",
         f"- **Write:** {folder / 'final.json'}, {folder / 'comment.md'}, and, when the verdict is"
         f" merge or fix-here, {folder / 'merge.md'}.",
     ]
@@ -620,8 +650,9 @@ def decide_prompt(ctx: Context, rnd: Round, folder: Path, final: dict[str, Any])
 # ---- the whole review -----------------------------------------------------------------------------
 
 
-def review(ctx: Context) -> Round:
-    """Every phase of the current round that is not done yet; the round, judged."""
+def review(ctx: Context, quiet: bool = False) -> Round:
+    """Every phase of the current round that is not done yet; the round, judged. Quiet,
+    the user hears of it only for decisions to take."""
 
     close_orphans(ctx)
     rnd = current_round(ctx)
@@ -637,8 +668,9 @@ def review(ctx: Context) -> Round:
         verdict = done(ctx.run.path, "pr.judged", rnd.number) or {}
         count = open_decisions(ctx, rnd)
         waiting = f"; {count} decision(s) wait for you in the r{rnd.number}-decide tab" if count else ""
-        notify(ctx, "the review is ready" + (", with decisions for you" if count else ""),
-               f"#{ctx.pr.number}: {verdict.get('verdict', '?')}{waiting}; placido pr {ctx.pr.number}")
+        if count or not quiet:
+            notify(ctx, "the review is ready" + (", with decisions for you" if count else ""),
+                   f"#{ctx.pr.number}: {verdict.get('verdict', '?')}{waiting}; placido pr {ctx.pr.number}")
     decide(ctx, rnd)
     status.show(ctx.run.path, status.text(status.YOU, f"review ready: placido pr {ctx.pr.number}"))
     return rnd

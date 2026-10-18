@@ -199,7 +199,6 @@ Each role has an agent, model, and effort, and a fallback chain:
 | `retro` | as `spec` |
 | `scan` (`placido pr`, confined) | claude, Opus, high |
 | `judge` (`placido pr`) | claude, Opus, high |
-| `verify` (`placido pr`, checks the fixes) | as `review` |
 | `decide` (`placido pr`, takes you through the review's open questions) | as `judge` |
 | fallback chain | claude Opus at max, then pi with DeepSeek through OpenRouter; an entry with the role's own model is skipped after a refusal |
 
@@ -242,9 +241,8 @@ reviewers = [          # each reviews on its own, in this order; each may name a
 ]
 gates = []             # commands run once before the reviews; none named: the slice and final gates
 host_paths = [".placido", ".claude", ".codex", ".mcp.json"]  # changes wait for your approval
-contributor_share = 0.5  # fixes this big, against the pull request, go back to its author
 parallel   = true      # reviewers at once, each in a worktree and stack of its own
-fix_rounds = 2         # times a failed check of the fixes sends them back to the fixer
+fix_rounds = 3         # fixes, each reviewed in full in a round of its own, before the menu asks again
 ```
 
 ### Your own settings
@@ -400,9 +398,11 @@ keeps it in yours).
 6. **Judge.** One review, told which findings the cross-checks settled so it verifies
    only the rest: the findings kept and who found them, what was dropped and why, a
    verdict, problems that were already there (for you only), and drafts of the comment
-   and the squash message. Fixes estimated at `contributor_share` of the pull request
-   or more go back to the contributor; smaller ones you make here. The agents write
-   JSON, and placido renders it (`review.md`, `final.md`).
+   and the squash message. The verdict is merge (nothing kept), fix-here (anything
+   kept, which you fix here, however much it is), or close: nothing goes back to the
+   contributor, and the comment says the change is good, or what you are changing or
+   changed on their branch. The agents write JSON, and placido renders it
+   (`review.md`, `final.md`).
 
 7. **Your decisions.** What the judge left to you, such as a design choice the
    contributor made or scope the issue did not settle, you decide before anything
@@ -423,12 +423,14 @@ stops the push or merge picked with them), push them (never forced, and only whe
 the contributor allows maintainers to), post the comment (shown in full first, as it
 will go out), approve CI runs GitHub holds
 for first-time contributors, squash-merge pinned to the commit the review covered, or
-close. A fix is the `fix` role's, committed locally once the gates pass, then checked
-by the `verify` role, another vendor by default: each finding's fix with a test that
-fails without it, the fixes for new problems, and a test behind every behaviour the
-fixes add, the fixer's claims included. What the check leaves open goes back
-to the fixer, up to `fix_rounds` times: the same session, resumed, which knows what it
-did, while each check is a fresh one. The push says whether the fixes passed.
+close. A fix is the `fix` role's, committed locally once the gates pass. Then a new
+round reviews the branch with it in full, as the contributor's head was: every
+reviewer, the cross-checks, and the judge, checking each finding's fix with a test
+that fails without it, each dispute against its evidence, and the fixes like any new
+code, with a test behind every behaviour they add. What that round keeps is fixed and
+reviewed again, up to `fix_rounds` times before the menu asks you. Push and merge are
+offered only at the head the latest round reviewed, with nothing left from its
+review but minor findings, which the offer names.
 When the base branch has moved on, the fix first merges it into the branch, as a commit
 of its own, so the fixes are made and gated on what will land; the `fix` role resolves
 any conflict, and only the conflicts. A merge, not a rebase, since the push is never
@@ -438,14 +440,16 @@ folder the last gates run, shows you that change and runs none of it until you
 approve it; refused, the fixer undoes it and disputes the findings that needed it.
 To ask about the work, the menu opens the round's fixer, or its judge when nothing was
 fixed, in a new tab of the workspace: a copy of its session, so placido's own stays as
-it was, started read-only, since a change made there would skip the check a fix gets.
+it was, started read-only, since a change made there skips the gates a fix gets; what
+it commits once you let it waits for a full review like any change made here.
 With neither session at hand, it opens a new agent of the `fix` role's instead, pointed
 at the review's files.
 
 `placido pr 602` again shows the menu again, or, once the contributor has pushed, starts
 a new round whose reviewers check each earlier finding. Commits made in the worktree
-itself, by you or an agent you ran there, are yours: they join the round, pushed or
-not, and the menu says nothing has checked them. Typed outside its workspace, it
+itself, by you or an agent you ran there, are yours, pushed or not: nothing goes out
+until a new round has reviewed them in full, which the menu offers, and `placido pr`
+starts. Changes left uncommitted stop it, rather than be put back by its agents. Typed outside its workspace, it
 goes on there, or only switches you there while the review is still going. `placido close pr-602` removes
 every lane's worktree and stack, putting the host paths back first (only your own
 uncommitted changes stop it, not what that puts back), and deletes the

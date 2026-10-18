@@ -720,8 +720,9 @@ them are the risk, not only the change's quality.
   round's last fixer, else its judge, opens in a new tab of the workspace as a fork of
   its session (`claude --resume --fork-session`, `codex fork`), so the session placido
   resumes for a later fix is untouched, and read-only (Claude's plan mode, Codex's
-  read-only sandbox), since a change made there would skip the check a fix gets; the
-  user can lift that in the agent. A session whose log is gone, or a round with
+  read-only sandbox), since a change made there skips the gates a fix gets; the user
+  can lift that in the agent, and what it commits waits for a full review like any
+  change made here. A session whose log is gone, or a round with
   neither, gets a new agent of the `fix` role's, told where the review's files are.
 - **Every behaviour gets a test, the fixes' included.** On #606 a fix added a row
   lock, a re-read under it, and a transaction's rerun; its tests were real (the check
@@ -729,10 +730,9 @@ them are the risk, not only the change's quality.
   (the audit's old values from the locked row, the rerun, a vanished row, a claim
   waiting on a save) had none, and the maintainer had them written by hand
   (2026-10-17). The fixer, asked for one failing test per finding, now tests each
-  behaviour its fix adds; the check lists those behaviours, finds the test behind
-  each, and makes an uncovered one a finding, significant when it guards security,
-  stored data, or concurrency, so it goes back to the fixer. Reviewers list the
-  change's behaviours the same way before proving its tests real. Whether a change
+  behaviour its fix adds, and reviewers list a change's behaviours, the fixes' and
+  the fixer's claims included, find the test behind each, and make an uncovered one
+  a finding, before proving the tests real. Whether a change
   needs a browser test is the project's to say, in its notes.
 - **Commits made in the worktree are the user's, and join the round.** On #595 the
   maintainer had the agent the menu opened add an end-to-end test, commit, and push.
@@ -741,9 +741,9 @@ them are the risk, not only the change's quality.
   gates, and reviews (2026-10-17). A contributor's commits reach the worktree only
   through placido following the pull request, so a commit on top of where placido
   left it was made there: it is adopted into the round, as a fix is, and its change
-  to a host path is trusted. The menu says nothing has checked it, and the merge is
-  offered once it is pushed. A contributor's push on top of unpushed commits still
-  stops, as for unpushed fixes.
+  to a host path is trusted. The next round reviews it in full, as it does a fix
+  (below). A contributor's push on top of unpushed commits still stops, as for
+  unpushed fixes.
 - **Close does not count the host paths it puts back as the user's changes.** On
   #596 the maintainer committed browser tests under `e2e/` by hand, so placido never
   trusted them. Close put the old ones back before the teardown, as it should, then
@@ -783,15 +783,27 @@ them are the risk, not only the change's quality.
   check then work from the decided review, so nothing has to reconcile a recommendation
   with a contrary decision. A session that ends unfinished asks again on the next
   `placido pr`; the menu never opens with a question open.
-- **Fixes are checked before they are pushed.** A fix made here goes to the `verify`
-  role, by default another vendor than the fixer's, which judges each finding's fix and
-  reads the fixes for new problems; what it leaves open goes back to the fixer, up to
-  `[pr] fix_rounds` times, and the push says whether the fixes passed. The fixer is kept
-  open and resumed for those rounds, since what is left open is its own work; every
-  check is a fresh session, whose value is fresh eyes.
+- **Every change made here is reviewed in full, in a round of its own.** On #611 the
+  fixes were as large as the pull request, and one agent, the `verify` role, read them
+  before the push, while the contributor's own code had had two reviewers, their
+  cross-checks, and a judge (2026-10-17). "I want any change that I ask to be made to
+  be reviewed, possibly in multiple rounds if there is need." Now a round's review,
+  once answered here (a fix, with code or disputes alone, or the user's own commits),
+  starts a new round on the worktree's head, as a push of the contributor's does: no
+  scan, since the contributor's code is as its round scanned it, and the host paths
+  trusted as the round before left them, but the gates, every reviewer, the
+  cross-checks, and the judge. Its reviewers check each earlier finding's answer (a
+  fix only with a test that fails without it, a dispute only on its evidence) and
+  review the whole change again, the changes made here as new code. What it keeps is
+  fixed and reviewed again, on its own, up to `[pr] fix_rounds` (3) times before the
+  menu asks; those rounds notify the user only for decisions. Push and merge are
+  offered only at the head the latest round reviewed, with nothing it kept but minor
+  findings, and refuse otherwise; changes left uncommitted stop the next round rather
+  than be put back by its agents. The `verify` role is gone: the round does its work,
+  with more eyes.
 - **Fixes land on the base as it is now.** When the base has moved past the branch, the
   fix first merges it in, as a commit of its own, so the fixes are made, gated, and
-  checked on what the squash merge will land. The `fix` role resolves the conflicts and
+  reviewed on what the squash merge will land. The `fix` role resolves the conflicts and
   nothing else, and placido refuses a resolution that leaves a marker, touches a file
   that merged cleanly, or changes a host path. A merge, never a rebase, because the push
   is never forced. Once merged, the host paths are held to the base's tip, which the
@@ -803,11 +815,15 @@ them are the risk, not only the change's quality.
   here), shown as they run and logged in the round's folder. They run before a push
   picked with them, so a failure stops it. Whatever such a gate runs from the
   worktree on this machine belongs among the host paths.
-- **Who fixes is a rule, not a mood.** Fixes estimated at `contributor_share` (0.5) of
-  the pull request's own size or more go back to the contributor, all of them;
-  smaller ones are made here, on the contributor's branch, so the pull request stays
-  the way the change lands and keeps its author. The judge's verdict must follow the
-  rule, or its result is sent back.
+- **The maintainer fixes everything; nothing goes back to the contributor.** Fixes
+  estimated at half the pull request's size or more once went back to its author as a
+  request for changes. The maintainer never used that (2026-10-17): on #611 they
+  fixed all seven findings here, then posted the comment, which asked the contributor
+  to make them. The verdict is now merge, fix-here, or close, following the findings
+  kept, and the comment either says the change is good or what the maintainer is
+  changing, or changed, on the contributor's branch, so the pull request stays the way
+  the change lands and keeps its author. `[pr] contributor_share` is gone. A review
+  from before that still says request-changes reads as fix-here.
 - **Nothing outward without the user.** Posting, pushing (never forced), approving CI
   runs, merging (pinned to the head the review covered), and closing happen only from
   the menu, and pushing, merging, and closing ask again. Problems found outside the

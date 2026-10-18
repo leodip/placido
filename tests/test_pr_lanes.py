@@ -118,7 +118,6 @@ class LanesTest(LaneTestCase):
         self.with_setup()
         pragents.review(self.ctx)
         self.push_new_head({"greet.py": "print('hi again')\n"}, self.head)
-        self.runner.earlier.append("F1")  # in place: lane B's runner is a copy sharing the list
         pragents.review(self.ctx)
         self.assertEqual(self.setups().count("proj-pr-7-b"), 2)
         self.assertEqual(self.teardowns(), ["down proj-pr-7-b"] * 2)

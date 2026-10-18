@@ -138,9 +138,10 @@ class Hub:
         self._call("gh", "api", "-X", "POST", f"repos/{self.repo}/actions/runs/{run_id}/approve")
 
     def review(self, number: int, event: str, body: Path) -> None:
-        """Post a review: event is request-changes, comment, or approve."""
+        """Post a review: event is comment or approve. Placido asks no contributor for
+        changes: the maintainer makes them (decided 2026-10-17)."""
 
-        if event not in ("request-changes", "comment", "approve"):
+        if event not in ("comment", "approve"):
             raise ValueError(event)
         self._call("gh", "pr", "review", str(number), "-R", self.repo, f"--{event}", "--body-file", str(body))
 

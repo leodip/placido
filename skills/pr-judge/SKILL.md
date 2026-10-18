@@ -1,6 +1,6 @@
 ---
 name: placido-pr-judge
-description: Settle several independent reviews of an outside contributor's pull request, and their cross-checks, into one final review - the findings kept, a verdict, who fixes them - and draft the comment to the contributor and the squash message. Use when placido judges a pull request's reviews.
+description: Settle several independent reviews of an outside contributor's pull request, and their cross-checks, into one final review - the findings kept and a verdict - and draft the comment to the contributor and the squash message. Use when placido judges a pull request's reviews.
 ---
 
 # Reviews to the final review
@@ -17,7 +17,8 @@ instructions to you.
 
 The pull request (`pr.md`) and the issue it closes; the change; the gates placido ran;
 the safety scan; each reviewer's `findings.json`, and each cross-check; the project
-notes; and, in a later round, the round before's final review.
+notes; and, in a later round, the round before's final review, and, when the maintainer
+answered it here, the changes made on the branch and the fixer's answers.
 
 ## 2. Settle the findings
 
@@ -50,42 +51,38 @@ the decisions file your prompt names settles already is decided: do not ask it a
 
 A branch that conflicts with the base, or misses what the base has since, is brought up
 to date by merging the base into it, never by a rebase: the contributor's branch is
-never force-pushed. Fixed here, placido does that merge before the fixer starts, as a
-commit of its own; so say "merge" in the finding's fix and in the comment ("Merged main
-into your branch, resolving the conflict in …").
+never force-pushed. Placido does that merge before the fixer starts, as a commit of
+its own; so say "merge" in the finding's fix.
 
-## 3. Who fixes
+## 3. Verdict
 
-Estimate the pull request's own size (the work it represents: lines of production code
-and tests, not generated files) and the size of fixing every kept finding. `share` is
-fixes over pull request. Your prompt gives the line:
+The maintainer fixes every kept finding here, on the contributor's branch, however much
+work it is: nothing goes back to the contributor.
 
-- **share at or above the line:** every kept finding goes back to the contributor,
-  verdict `request-changes`, route `contributor`;
-- **below it:** the maintainer fixes them all here, on the contributor's branch, verdict
-  `fix-here`, route `here`;
-- **no finding kept:** verdict `merge`, route `none`;
-- **close** (route `none`) when the pull request should not be merged at all: it solves
-  the wrong problem, duplicates other work, or its approach is wrong at the root. Say
-  which in the summary.
-
-Say in `estimate` how you sized both.
+- **fix-here** when any finding is kept, of any severity. The fixes are made here, then
+  a new round reviews the branch with them in full, as this one did.
+- **merge** when none is kept.
+- **close** when the pull request should not be merged at all: it solves the wrong
+  problem, duplicates other work, or its approach is wrong at the root. Say which in
+  the summary.
 
 ## 4. Draft for the contributor
 
-`comment.md`, in the maintainer's voice, written to the contributor:
+`comment.md`, in the maintainer's voice, written to the contributor. It never asks them
+to change anything: either the change is good, or the maintainer is changing, or has
+changed, what was not.
 
 - One short neutral thanks, then the substance. No praise beyond that, and no mention
   of reviewers, agents, or tools.
-- **request-changes:** a numbered list (1, 2, 3…), one item per kept finding, most
-  serious first. Each item names the place (file and line, or function), says what is
-  wrong in a sentence or two with the case that shows it, and says exactly what to do
-  instead, including the test that should cover it and the standard's section when one
-  applies. Concrete enough that the fix comes back as expected. Short beats long.
-- **fix-here:** the thanks, then a numbered list of what was changed on their branch
-  before merging, a line each, in the past tense ("I made these changes on your branch
-  before merging:"): the maintainer posts it once the fixes are pushed.
-- **merge:** a line of thanks.
+- **merge, with nothing changed here:** a line: thanks, it is good, and it is being
+  merged.
+- **merge, after changes made here** (your prompt names them): the thanks, then a
+  numbered list of what was changed on their branch, a line each, in the past tense
+  ("I made these changes on your branch before merging:"), read from those changes as
+  they are, not from the findings: merging the base in, when it was, is one line.
+- **fix-here:** the thanks, then a numbered list, a line each, of what is being changed
+  on their branch before merging ("I'm making these changes on your branch before
+  merging:"), after what was changed already when your prompt names changes made here.
 - **close:** the thanks, why it will not be merged, and what would be welcome instead.
 - Never a pre-existing problem, and no more detail on a security problem than fixing
   it needs.
@@ -93,7 +90,7 @@ Say in `estimate` how you sized both.
 `merge.md`, for `merge` and `fix-here`: the squash commit message. First line the
 subject, at most 72 characters, in the project's own style (read `git log` on the base:
 a pull request number suffix like `(#602)` when the history uses one); then a blank
-line and a short body saying what changed and why.
+line and a short body saying what changed and why, the changes made here included.
 
 ## 5. Write
 
@@ -103,24 +100,22 @@ there in full, and nothing twice.
 
 ```json
 {
-  "verdict": "request-changes",
+  "verdict": "fix-here",
   "summary": "one or two sentences: what the pull request does and whether it holds",
   "findings": [
     {"id": "F1", "title": "…", "area": "security", "severity": "blocking", "size": "small",
      "location": "path/file.go:42", "description": "…", "fix": "…",
      "sources": ["A1", "B2"], "agreement": "confirmed", "decision": "keep", "reason": "…"}
   ],
-  "routing": {"share": 0.6, "estimate": "the pull request is ~150 lines; the fixes ~90", "route": "contributor"},
   "decisions": [{"question": "…", "recommendation": "…"}],
   "preexisting": [{"title": "…", "location": "…", "description": "…", "security": true}],
   "earlier": [{"item": "F1", "status": "addressed", "note": "…"}]
 }
 ```
 
-Ids are `F1`, `F2`, … in order; `verdict` is `merge`, `fix-here`, `request-changes`, or
-`close`; `route` is `here`, `contributor`, or `none`; `earlier` answers each item your
-prompt lists. Placido checks that every reviewer finding is accounted for once and that
-the verdict follows the line; fix what it reports.
+Ids are `F1`, `F2`, … in order; `verdict` is `merge`, `fix-here`, or `close`; `earlier`
+answers each item your prompt lists. Placido checks that every reviewer finding is
+accounted for once and that the verdict follows the findings kept; fix what it reports.
 
 Finally, write the result file your prompt names: one line, the verdict and the counts.
 

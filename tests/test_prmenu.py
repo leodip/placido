@@ -8,7 +8,7 @@ from typing import Callable
 from unittest import mock
 
 from placido import decisions, pr, pragents, prcheck, prgh, prmenu, runlog
-from tests.test_pr import CONFIG, PRTestCase, git_commit, sh
+from tests.test_pr import CONFIG, PRTestCase, finding, git_commit, sh
 
 
 class MenuTestCase(PRTestCase):
@@ -37,8 +37,16 @@ class MenuTestCase(PRTestCase):
         self.confirmed.append(question)
         return self.confirms.pop(0) if self.confirms else False
 
-    def act(self, key: str, rnd: pr.Round) -> None:
-        prmenu.ACTIONS[key](self.ctx, rnd, prmenu.state(self.ctx, rnd), self.confirm)
+    def act(self, key: str, rnd: pr.Round) -> pr.Round | None:
+        """The action, as the menu runs it; the round it ended in, for a fix or a review."""
+
+        return prmenu.ACTIONS[key](self.ctx, rnd, prmenu.state(self.ctx, rnd), self.confirm)
+
+    def fixed(self) -> pr.Round:
+        """Round 1 reviewed, its finding fixed here, and the branch with the fix reviewed in
+        full in round 2, which keeps nothing."""
+
+        return self.act("fix", self.review())
 
     def keys(self, rnd: pr.Round) -> list[str]:
         listed, _ = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
@@ -59,7 +67,8 @@ class SummaryTest(MenuTestCase):
         rnd = self.review()
         text = prmenu.summary(self.ctx, rnd)
         self.assertIn("Verdict: fix-here. It greets, nearly.", text)
-        self.assertIn("Fixes: here, by you (about 10% of the pull request; the line is 50%)", text)
+        self.assertNotIn("Fixes:", text)
+        self.assertIn("Scan: clear\n", text)
         self.assertIn("F1  significant bugs        `greet.py:1` the greeting [A1, B1: all]", text)
         self.assertIn("Found outside this change (for you only, never in the comment):\n  - old bug (x.py) [security]", text)
         self.assertIn("Gates: unit pass · lint pass", text)
@@ -112,19 +121,19 @@ class EditTest(MenuTestCase):
 
 
 class PostTest(MenuTestCase):
-    def test_a_request_for_changes_is_posted_as_one_with_placidos_marker(self):
-        rnd = self.review(verdict="request-changes", routing={"share": 0.7, "estimate": "x", "route": "contributor"})
+    def test_a_fix_here_comment_is_posted_as_a_comment_with_placidos_marker(self):
+        rnd = self.review()
         self.confirms = [True]
         self.act("post", rnd)
-        self.assertEqual(self.confirmed, ["Post this on #7 as a review requesting changes?"])
+        self.assertEqual(self.confirmed, ["Post this on #7 as a comment?"])
         kind, body = self.hub.calls[-1][1:]
-        self.assertEqual(kind, "request-changes")
+        self.assertEqual(kind, "comment")
         self.assertTrue(body.startswith("Thanks for this.\n\n1. Fix greet.py."))
         self.assertIn(prgh.marker(1, self.head), body)
         self.assertNotIn("post", self.keys(rnd))
 
     def test_the_comment_is_shown_as_it_will_be_posted(self):
-        rnd = self.review(verdict="request-changes", routing={"share": 0.7, "estimate": "x", "route": "contributor"})
+        rnd = self.review()
         (rnd.folder / "comment.md").write_text("Thanks.\n\n1. Changed after the summary.\n")
         shown = io.StringIO()
         with redirect_stdout(shown):
@@ -133,35 +142,54 @@ class PostTest(MenuTestCase):
                       shown.getvalue())
         self.assertEqual(self.hub.calls, [])
 
-    def test_a_fix_here_comment_before_the_push_asks_first(self):
-        rnd = self.review()
-        self.act("post", rnd)
+    def test_a_comment_on_changes_not_pushed_yet_says_so(self):
+        reviewed = self.fixed()
+        with redirect_stdout(io.StringIO()):
+            self.act("post", reviewed)
         self.assertEqual(self.hub.calls, [])
-        self.assertIn("nothing is pushed yet", self.confirmed[0])
+        self.assertEqual(self.confirmed[0], "Post this on #7 as an approving review? It may say what was changed on"
+                                            " the branch, which is not pushed yet.")
+
+    def test_a_review_that_asked_the_contributor_for_changes_reads_as_fixed_here(self):
+        rnd = self.review()
+        data = json.loads((rnd.folder / "final.json").read_text())
+        data.update(verdict="request-changes", routing={"share": 0.7, "estimate": "x", "route": "contributor"})
+        (rnd.folder / "final.json").write_text(json.dumps(data))
+        listed, notes = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
+        self.assertIn("fix", dict(listed))
+        self.assertEqual(dict(listed)["post"], "Post the comment as a comment")
+        self.assertIn("its comment asks the contributor for them", notes[0])
+        self.assertIn("Verdict: fix-here. It greets", prmenu.summary(self.ctx, rnd))
 
 
 class FixAndPushTest(MenuTestCase):
-    def test_the_fix_is_committed_here_and_pushed_only_when_confirmed(self):
+    def test_the_fix_is_reviewed_in_full_then_pushed_only_when_confirmed(self):
         rnd = self.review()
-        self.act("fix", rnd)
+        reviewed = self.act("fix", rnd)
         fix = sh(self.worktree, "git", "rev-parse", "HEAD")
         self.assertNotEqual(fix, self.head)
         message = sh(self.worktree, "git", "log", "-1", "--format=%B")
         self.assertTrue(message.startswith("Greet properly\n\nThe review asked for it."))
         self.assertIn("Placido-PR-Round: 1", message)
         self.assertEqual(runlog.last_event(self.run.path, "pr.fixed")["commit"], fix)
-        self.assertEqual(self.keys(rnd), ["edit", "edit-merge", "push", "post", "ask", "close", "quit"])
+        self.assertEqual((reviewed.number, reviewed.head, reviewed.here, reviewed.previous), (2, fix, True, 1))
+        self.assertEqual(self.runner.names()[6:], ["r1-fix-1", "r2-review-a", "r2-review-b", "r2-crosscheck-a",
+                                                   "r2-crosscheck-b", "r2-judge"])
+        self.assertEqual(self.keys(reviewed), ["edit", "edit-merge", "push", "post", "ask", "close", "quit"])
+        self.assertEqual(dict(prmenu.options(self.ctx, reviewed, prmenu.state(self.ctx, reviewed))[0])["push"],
+                         "Push the 1 commit(s) made here, reviewed in full in round 2, to alice/proj:greeting")
 
-        self.act("push", rnd)  # declined
+        self.act("push", reviewed)  # declined
         self.assertEqual(self.fork_head(), self.head)
+        self.assertEqual(self.confirmed[-1], "Push 1 commit(s) to alice/proj:greeting, reviewed in full in round 2?"
+                                             " (never forced)")
         self.confirms = [True]
-        self.act("push", rnd)
+        self.act("push", reviewed)
         self.assertEqual(self.fork_head(), fix)
         self.assertEqual(runlog.last_event(self.run.path, "pr.pushed")["commit"], fix)
 
     def test_a_push_never_overwrites_what_the_contributor_pushed_meanwhile(self):
-        rnd = self.review()
-        self.act("fix", rnd)
+        rnd = self.fixed()
         sh(self.repo, "git", "checkout", "-q", "-B", "theirs", self.head)
         (self.repo / "theirs.txt").write_text("theirs\n")
         theirs = git_commit(self.repo, "theirs")
@@ -173,8 +201,7 @@ class FixAndPushTest(MenuTestCase):
         self.assertEqual(self.fork_head(), theirs)
 
     def test_no_push_when_maintainers_may_not_modify_the_branch(self):
-        rnd = self.review()
-        self.act("fix", rnd)
+        rnd = self.fixed()
         self.hub.pull = self.pull(self.head, can_modify=False)
         listed, notes = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
         self.assertNotIn("push", [k for k, _ in listed])
@@ -210,10 +237,12 @@ class FixAndPushTest(MenuTestCase):
         rnd = self.review()
         self.runner.during["r1-fix-1"] = self.write_spec("test('declines')\n")
         self.answers = [True]
-        self.act("fix", rnd)
+        reviewed = self.act("fix", rnd)
         head = sh(self.worktree, "git", "rev-parse", "HEAD")
         self.assertEqual(sh(self.worktree, "git", "show", "HEAD:.placido/spec.ts"), "test('declines')")
-        self.assertEqual(len(self.asked), 1)
+        self.assertEqual(len(self.asked), 1)  # the round reviewing the fix trusts what the user approved
+        self.assertEqual(runlog.last_event(self.run.path, "pr.trust_approved")["carried"], 1)
+        self.assertEqual(pr.trusted(self.run.path, reviewed), head)
         self.assertIn("test('declines')", (rnd.folder / "host-paths-fix-1.diff").read_text())
         committed = runlog.last_event(self.run.path, "pr.host_change_committed")
         self.assertEqual((committed["commit"], committed["files"]), (head, [".placido/spec.ts"]))
@@ -237,8 +266,7 @@ class FixAndPushTest(MenuTestCase):
 
 class MergeTest(MenuTestCase):
     def fixed_and_pushed(self) -> tuple[pr.Round, str]:
-        rnd = self.review()
-        self.act("fix", rnd)
+        rnd = self.fixed()
         self.confirms = [True]
         self.act("push", rnd)
         fix = sh(self.worktree, "git", "rev-parse", "HEAD")
@@ -321,6 +349,13 @@ class MergeTest(MenuTestCase):
             self.act("merge", rnd)
         self.assertNotIn("merge", [c[0] for c in self.hub.calls])
 
+    def test_findings_kept_that_are_not_minor_are_never_merged(self):
+        rnd = self.review()  # the head reviewed, nothing made here, F1 kept
+        self.assertNotIn("merge", self.keys(rnd))
+        with self.assertRaisesRegex(pr.PRStop, "nothing is merged: round 1 kept F1, which are not minor"):
+            self.act("merge", rnd)
+        self.assertEqual(self.hub.calls, [])
+
     def test_no_ci_asks_first(self):
         self.runner.findings = {"A": [], "B": []}
         rnd = self.review()
@@ -331,7 +366,7 @@ class MergeTest(MenuTestCase):
 
 class CloseAndCITest(MenuTestCase):
     def test_close_posts_the_comment_then_closes(self):
-        rnd = self.review(verdict="close", routing={"share": 1, "estimate": "x", "route": "none"})
+        rnd = self.review(verdict="close")
         self.confirms = [True]
         shown = io.StringIO()
         with redirect_stdout(shown):
@@ -359,7 +394,7 @@ class CloseAndCITest(MenuTestCase):
 
 class MenuLoopTest(MenuTestCase):
     def test_picked_actions_run_in_a_safe_order_and_the_loop_ends_on_enter(self):
-        rnd = self.review(verdict="request-changes", routing={"share": 0.7, "estimate": "x", "route": "contributor"})
+        rnd = self.review()
         self.hub.waiting = [{"databaseId": 9}]
         listed, _ = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
         numbers = {key: str(n) for n, (key, _) in enumerate(listed, 1)}
@@ -367,6 +402,22 @@ class MenuLoopTest(MenuTestCase):
         self.confirms = [True]
         prmenu.menu(self.ctx, rnd, lambda prompt: next(answers), self.confirm)
         self.assertEqual([c[0] for c in self.hub.calls], ["review", "approve"])
+
+    def test_a_fix_goes_on_with_the_round_that_reviewed_it(self):
+        rnd = self.review()
+        listed, _ = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
+        numbers = {key: str(n) for n, (key, _) in enumerate(listed, 1)}
+        answers = iter([f"{numbers['fix']} {numbers['post']}", ""])
+        shown = io.StringIO()
+        with redirect_stdout(shown):
+            prmenu.menu(self.ctx, rnd, lambda prompt: next(answers), self.confirm)
+        fix = sh(self.worktree, "git", "rev-parse", "HEAD")
+        self.assertIn(f"round 2, head {fix[:12]}", shown.getvalue())
+        self.assertIn(f"Reviewed here: the branch with the 1 commit(s) made here since round 1's review, on"
+                      f" {self.head[:12]}, the contributor's head", shown.getvalue())
+        self.assertIn("Scan: clear (round 1's)", shown.getvalue())
+        self.assertEqual(self.hub.calls, [])  # the post picked with the fix waits for the menu on round 2
+        self.assertIn(f"Push the 1 commit(s) made here, reviewed in full in round 2", shown.getvalue())
 
     def test_merge_and_close_together_are_refused(self):
         self.runner.findings = {"A": [], "B": []}
@@ -386,16 +437,116 @@ class MenuLoopTest(MenuTestCase):
 
 
 class YoursTest(MenuTestCase):
-    def test_your_pushed_commit_is_noted_and_can_be_merged(self):
-        rnd = self.review()
+    def test_your_commit_waits_for_a_full_review_before_anything_goes_out(self):
+        reviewed = self.fixed()
         (self.worktree / "greet.py").write_text("print('hi there, all')\n")
         mine = git_commit(self.worktree, "mine")
-        self.publish(mine)
+        listed, notes = prmenu.options(self.ctx, reviewed, prmenu.state(self.ctx, reviewed))
+        self.assertIn(f"Your 1 commit(s) in the worktree, up to {mine[:12]}, wait for a full review", notes[0])
+        self.assertEqual(dict(listed)["review"], "Review the branch with your 1 commit(s) in full, in round 3: every"
+                                                 " reviewer, the cross-checks, and the judge")
+        self.assertNotIn("push", dict(listed))
+        with self.assertRaisesRegex(pr.PRStop, "nothing is pushed: the changes made here since round 2's review"
+                                               " wait for a full review of their own"):
+            self.act("push", reviewed)
+        self.publish(mine)  # pushed from outside placido
+        with self.assertRaisesRegex(pr.PRStop, "which this review did not cover"):
+            self.act("merge", reviewed)
         with redirect_stdout(io.StringIO()):
-            self.assertEqual(self.review().number, rnd.number)
-        listed, notes = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
-        self.assertIn(f"Your 1 commit(s) made in the worktree, up to {mine[:12]}, are part of this round", notes[0])
-        self.assertIn(f"pinned to {mine[:12]}", dict(listed)["merge"])
+            again = self.act("review", reviewed)
+        self.assertEqual((again.number, again.head, again.here), (3, mine, True))
+        self.assertIn(f"pinned to {mine[:12]}", dict(prmenu.options(self.ctx, again, prmenu.state(self.ctx, again))[0])["merge"])
+
+    def test_uncommitted_changes_are_noted(self):
+        rnd = self.review()
+        (self.worktree / "greet.py").write_text("half done\n")
+        _, notes = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
+        self.assertIn("The worktree has uncommitted changes: commit them to have them reviewed", notes[0])
+
+
+class FixLoopTest(MenuTestCase):
+    """A fix and the full review of it, again, until a round keeps nothing."""
+
+    def notes(self) -> list[tuple[str, str]]:
+        return [(argv[3], argv[5]) for argv in self.fake.calls if argv[1:3] == ["notification", "show"]]
+
+    def test_what_a_round_keeps_is_fixed_and_reviewed_again(self):
+        self.runner.findings_in = {2: {"A": [finding("A", 1, title="the fix broke es-MX")], "B": []}}
+        rnd = self.review()
+        reviewed = self.act("fix", rnd)
+        self.assertEqual(self.runner.names()[6:], [
+            "r1-fix-1", "r2-review-a", "r2-review-b", "r2-crosscheck-a", "r2-crosscheck-b", "r2-judge",
+            "r2-fix-1", "r3-review-a", "r3-review-b", "r3-crosscheck-a", "r3-crosscheck-b", "r3-judge",
+        ])
+        self.assertEqual((reviewed.number, reviewed.previous), (3, 2))
+        self.assertEqual(self.runner.problems, [])
+        second = next(c["task"] for c in self.runner.calls if c["name"] == "r2-fix-1")
+        self.assertIn(str(self.run.path / "rounds" / "2" / "final.md"), second)
+        judge = next(c["task"] for c in self.runner.calls if c["name"] == "r3-judge")
+        self.assertIn(f"--remerge-diff {self.head[:12]}..{reviewed.head[:12]}`", judge)  # every change made here
+        self.assertIn("push", self.keys(reviewed))
+        self.assertEqual([n for n in self.notes() if "ready" in n[0] or "reviewed" in n[0]], [
+            ("placido · pr-7: the review is ready", "#7: fix-here; placido pr 7"),
+            ("placido · pr-7: the fixes are reviewed", "#7: round 3, merge; placido pr 7"),
+        ])  # rounds 2 and 3 waited for nobody
+
+    def test_after_fix_rounds_the_menu_asks_again_and_nothing_goes_out(self):
+        self.settings = self.load(CONFIG_WITH_ROUNDS.format(rounds=1))
+        self.ctx = self.context()
+        self.runner.findings_in = {2: {"A": [finding("A", 1)], "B": []}}
+        reviewed = self.act("fix", self.review())
+        self.assertEqual(reviewed.number, 2)
+        self.assertNotIn("r2-fix-1", self.runner.names())
+        listed = dict(prmenu.options(self.ctx, reviewed, prmenu.state(self.ctx, reviewed))[0])
+        self.assertTrue(listed["fix"].startswith("Fix the 1 kept finding(s) here"), listed["fix"])
+        self.assertNotIn("push", listed)
+        with self.assertRaisesRegex(pr.PRStop, "nothing is pushed: round 2 kept F1, which are not minor"):
+            self.act("push", reviewed)
+        self.assertIn(("placido · pr-7: the fixes are reviewed",
+                       "#7: round 2, fix-here; still fix-here after 1 fix(es): placido pr 7 fixes again"), self.notes())
+        self.runner.findings_in = {}
+        self.assertEqual(self.act("fix", reviewed).number, 3)
+
+    def test_minor_findings_left_can_go_out_saying_so(self):
+        self.settings = self.load(CONFIG_WITH_ROUNDS.format(rounds=1))
+        self.ctx = self.context()
+        self.runner.findings_in = {2: {"A": [finding("A", 1, severity="minor")], "B": []}}
+        reviewed = self.act("fix", self.review())
+        listed = dict(prmenu.options(self.ctx, reviewed, prmenu.state(self.ctx, reviewed))[0])
+        self.assertEqual(listed["push"], "Push the 1 commit(s) made here, reviewed in full in round 2, leaving 1 minor"
+                                         " finding(s), to alice/proj:greeting")
+        self.act("push", reviewed)  # declined
+        self.assertTrue(self.confirmed[-1].endswith("Round 2 leaves 1 minor finding(s) unfixed."))
+
+    def test_a_round_that_closes_ends_the_fixes(self):
+        self.runner.findings_in = {2: {"A": [finding("A", 1)], "B": []}}
+        self.runner.during["r2-judge"] = lambda wt: setattr(self.runner, "final", {
+            **self.runner.default_final(2), "verdict": "close"})
+        reviewed = self.act("fix", self.review())
+        self.assertEqual(reviewed.number, 2)
+        self.assertNotIn("r2-fix-1", self.runner.names())
+        self.assertEqual(self.keys(reviewed), ["edit", "edit-merge", "post", "ask", "close", "quit"])
+
+    def test_a_fix_whose_review_stopped_is_reviewed_from_the_menu(self):
+        rnd = self.review()
+        self.runner.failures["r2-review-a"] = ["invalid"]
+        with self.assertRaisesRegex(pr.PRStop, "reviewer A did not finish"):
+            self.act("fix", rnd)
+        listed = dict(prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0])
+        self.assertEqual(listed["review"], "Review the branch with the fix in full, in round 2: every reviewer, the"
+                                           " cross-checks, and the judge")
+        self.assertNotIn("push", listed)
+        with self.assertRaisesRegex(pr.PRStop, "round 1's review was answered here already"):
+            self.act("fix", rnd)
+        reviewed = self.act("review", rnd)
+        self.assertEqual((reviewed.number, self.runner.names().count("r2-review-a")), (2, 2))
+        self.assertIn("push", self.keys(reviewed))
+
+    def test_a_fix_that_changed_no_code_is_reviewed_in_full_too(self):
+        self.runner.fix_change = False
+        reviewed = self.fixed()
+        self.assertEqual((reviewed.number, reviewed.head), (2, self.head))
+        self.assertIn("merge", self.keys(reviewed))
 
 
 class AskTest(MenuTestCase):
@@ -538,125 +689,6 @@ class FixGatesTest(MenuTestCase):
         self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD"), self.head)
 
 
-class VerifyTest(MenuTestCase):
-    def failing(self, note: str = "ru still gets the sr copy") -> dict:
-        return {
-            "verdicts": [{"id": "F1", "verdict": "unresolved", "note": note}],
-            "findings": [{
-                "id": "V1", "area": "bugs", "severity": "significant", "size": "small", "location": "greet.py:1",
-                "title": "the fix broke es-MX", "description": "d", "evidence": "a test", "fix": "f",
-            }],
-        }
-
-    def test_a_fix_is_checked_by_another_vendor_before_it_is_offered(self):
-        rnd = self.review()
-        self.act("fix", rnd)
-        checked = runlog.last_event(self.run.path, "pr.verified")
-        self.assertEqual((checked["passed"], checked["agent"]), (True, "codex"))
-        verify = next(c for c in self.runner.calls if c["name"] == "r1-verify-1")
-        self.assertEqual(verify["spec"].agent, "codex")
-        self.assertIn("resolutions.json", verify["task"])
-        self.assertIn(f"log -p --first-parent --remerge-diff {self.head[:12]}..", verify["task"])
-        listed, _ = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
-        self.assertIn(("push", "Push the 1 commit(s) made here, checked, to alice/proj:greeting"), listed)
-        self.assertNotIn("fix", [k for k, _ in listed])
-
-    def test_what_the_check_leaves_open_goes_back_to_the_fixer(self):
-        rnd = self.review()
-        self.runner.verify = [self.failing()]
-        self.act("fix", rnd)
-        self.assertEqual([c["name"] for c in self.runner.calls if "fix" in c["name"] or "verify" in c["name"]],
-                         ["r1-fix-1", "r1-verify-1", "r1-fix-2", "r1-verify-2"])
-        second = json.loads((rnd.folder / "fix-findings-2.json").read_text())["findings"]
-        self.assertEqual([f["id"] for f in second], ["F1", "V1-1"])
-        self.assertEqual(second[0]["check"], "unresolved: ru still gets the sr copy")
-        verdicts = [e["passed"] for e in runlog.read_events(self.run.path) if e["event"] == "pr.verified"]
-        self.assertEqual(verdicts, [False, True])
-        self.assertIn("checked", dict(prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0])["push"])
-
-    def kept_fixer(self, step: str) -> str:
-        return next(e["name"] for e in runlog.read_events(self.run.path)
-                    if e["event"] == "pr.kept_open" and e.get("role") == "fix" and e["step"].endswith(step))
-
-    def test_the_fixer_is_resumed_for_what_the_check_of_its_work_left_open(self):
-        rnd = self.review()
-        self.runner.verify = [self.failing()]
-        self.act("fix", rnd)
-        fixes = [c for c in self.runner.calls if c["name"].startswith("r1-fix")]
-        self.assertEqual([(c["how"], c["name"]) for c in fixes], [("start", "r1-fix-1"), ("resume", "r1-fix-2")])
-        fixer = self.kept_fixer("r1-fix-1")
-        self.assertEqual((fixes[0]["keep_open"], fixes[1]["agent"], fixes[1]["keep_open"]), (True, fixer, True))
-        self.assertTrue(fixes[1]["task"].startswith("# The check of your fix to pull request #7 left items open"))
-        self.assertIn("fix-findings-2.json", fixes[1]["task"])
-        checks = [c["how"] for c in self.runner.calls if c["name"].startswith("r1-verify")]
-        self.assertEqual(checks, ["start", "start"])  # each check a fresh session
-        self.assertEqual(self.runner.closed.count(fixer), 1)  # once, when the fix is done
-        self.assertEqual(pr.open_agents(self.run.path), [])
-
-    def test_a_fixer_that_cannot_be_resumed_gives_way_to_a_fresh_one(self):
-        rnd = self.review()
-        self.runner.verify = [self.failing()]
-        self.runner.failures["r1-fix-2"] = ["agent-exited"]
-        self.act("fix", rnd)
-        fixes = [(c["how"], c["name"]) for c in self.runner.calls if c["name"].startswith("r1-fix")]
-        self.assertEqual(fixes, [("start", "r1-fix-1"), ("resume", "r1-fix-2"), ("start", "r1-fix-2")])
-        self.assertNotEqual(self.kept_fixer("r1-fix-2"), self.kept_fixer("r1-fix-1"))
-        self.assertIn(self.kept_fixer("r1-fix-1"), self.runner.closed)
-        self.assertIn(self.kept_fixer("r1-fix-2"), self.runner.closed)
-        self.assertEqual(pr.open_agents(self.run.path), [])
-
-    def test_the_fixer_is_closed_when_its_check_stops_the_fix(self):
-        rnd = self.review()
-        self.runner.failures["r1-verify-1"] = ["invalid"]
-        with self.assertRaisesRegex(pr.PRStop, "the check of fix 1 did not finish"):
-            self.act("fix", rnd)
-        self.assertIn(self.kept_fixer("r1-fix-1"), self.runner.closed)
-        self.assertEqual(pr.open_agents(self.run.path), [])
-
-    def test_a_minor_new_problem_does_not_send_the_fix_back(self):
-        rnd = self.review()
-        data = self.failing()
-        data["verdicts"][0]["verdict"] = "resolved"
-        data["findings"][0]["severity"] = "minor"
-        self.runner.verify = [data]
-        self.act("fix", rnd)
-        self.assertNotIn("r1-fix-2", self.runner.names())
-        self.assertTrue(runlog.last_event(self.run.path, "pr.verified")["passed"])
-
-    def test_with_no_round_left_the_push_says_the_check_failed(self):
-        rnd = self.review()
-        self.settings = self.load(
-            CONFIG_WITH_ROUNDS.format(rounds=0)
-        )
-        self.ctx = self.context()
-        self.runner.verify = [self.failing()]
-        self.act("fix", rnd)
-        self.assertNotIn("r1-fix-2", self.runner.names())
-        listed = dict(prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0])
-        self.assertEqual(listed["push"], "Push anyway: the check left 2 item(s) open (alice/proj:greeting)")
-        self.assertEqual(listed["fix"], "Send the 2 item(s) the check left open back to the fixer, then check again")
-        self.act("push", rnd)  # declined
-        self.assertIn("The check of the fixes left items open.", self.confirmed[-1])
-        self.act("fix", rnd)  # the open items, once more
-        third = json.loads((rnd.folder / "fix-findings-2.json").read_text())["findings"]
-        self.assertEqual([f["id"] for f in third], ["F1", "V1-1"])
-        self.assertTrue(runlog.last_event(self.run.path, "pr.verified")["passed"])
-
-    def test_check_verify(self):
-        from placido import prcheck
-
-        path = self.tmp / "verify.json"
-        path.write_text(json.dumps({"verdicts": [
-            {"id": "F1", "verdict": "resolved", "note": "ok"},
-            {"id": "F9", "verdict": "fixed", "note": "?"},
-        ], "findings": [{"id": "V2", "area": "bugs", "severity": "minor", "size": "small",
-                         "title": "t", "description": "d", "evidence": "e", "fix": "f"}]}))
-        problems = prcheck.check_verify(path, ["F1", "F2"])
-        self.assertIn("F2 needs exactly one verdict; it has 0.", problems)
-        self.assertTrue(any("needs an id, a verdict of resolved, unresolved" in p for p in problems))
-        self.assertIn("finding 1 has id 'V2'; it should be V1.", problems)
-
-
 class BaseMergeTest(MenuTestCase):
     """The base branch moved on after the pull request started from it."""
 
@@ -675,8 +707,9 @@ class BaseMergeTest(MenuTestCase):
         rnd = self.review()
         tip = self.advance_main({"later.txt": "later\n", ".placido/notes/pr.md": "Run every engine, twice.\n"})
         self.assertEqual(self.fix_label(rnd), "Merge main into the branch, then fix the 1 kept finding(s) here, on the"
-                         " contributor's branch, and have the fixes checked: committed locally, nothing pushed")
-        self.act("fix", rnd)
+                         " contributor's branch, then review the branch with the fixes in full, in a new round; what"
+                         " it keeps is fixed and reviewed in turn, up to 3 times. Committed locally, nothing pushed")
+        reviewed = self.act("fix", rnd)
         merged = runlog.last_event(self.run.path, "pr.base_merged")
         self.assertEqual((merged["tip"], merged["conflicts"]), (tip, []))
         self.assertEqual(sh(self.worktree, "git", "rev-list", "--parents", "-n1", merged["commit"]).split()[1:],
@@ -689,15 +722,19 @@ class BaseMergeTest(MenuTestCase):
         self.assertEqual((self.worktree / ".placido/notes/pr.md").read_text(), "Run every engine, twice.\n")
         fixer = next(c for c in self.runner.calls if c["name"] == "r1-fix-1")
         self.assertIn(f"placido merged main ({tip[:12]}) into the branch before you", fixer["task"])
-        verify = next(c for c in self.runner.calls if c["name"] == "r1-verify-1")
-        self.assertIn(f"--remerge-diff {self.head[:12]}..{fix[:12]}", verify["task"])
+        since = (reviewed.folder / "since.patch").read_text()
+        self.assertIn("Merge branch 'main' into greeting", since)
+        self.assertIn("hello r1 fix-1", since)
+        self.assertNotIn("later.txt", since)  # main's own changes were reviewed when they landed there
+        self.assertEqual(reviewed.base, tip)  # what the squash merge lands
         self.assertNotIn("r1-merge", self.runner.names())
-        listed = dict(prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0])
-        self.assertEqual(listed["push"], "Push the 2 commit(s) made here, checked, to alice/proj:greeting")
+        listed = dict(prmenu.options(self.ctx, reviewed, prmenu.state(self.ctx, reviewed))[0])
+        self.assertEqual(listed["push"], "Push the 2 commit(s) made here, reviewed in full in round 2, to"
+                                         " alice/proj:greeting")
         self.assertIn(f"Merged main ({tip[:12]}) into the branch here as {merged['commit'][:12]}\n",
                       prmenu.summary(self.ctx, rnd))
         self.confirms = [True]
-        self.act("push", rnd)
+        self.act("push", reviewed)
         self.assertEqual(self.fork_head(), fix)
 
     def test_a_merge_outlives_a_fix_that_did_not_finish(self):
@@ -707,6 +744,10 @@ class BaseMergeTest(MenuTestCase):
         with self.assertRaisesRegex(pr.PRStop, "the fix did not finish"):
             self.act("fix", rnd)
         merge = runlog.last_event(self.run.path, "pr.base_merged")["commit"]
+        self.assertNotIn("push", self.keys(rnd))
+        with self.assertRaisesRegex(pr.PRStop, f"nothing is pushed: the worktree is at {merge[:12]}, not at"
+                                               f" {self.head[:12]}, the head round 1 reviewed"):
+            self.act("push", rnd)
         rnd = pragents.review(self.ctx)  # placido pr again: the same round, the merge kept
         self.assertEqual((rnd.number, sh(self.worktree, "git", "rev-parse", "HEAD")), (1, merge))
         self.act("fix", rnd)
@@ -724,8 +765,8 @@ class BaseMergeTest(MenuTestCase):
         resolver = next(c for c in self.runner.calls if c["name"] == "r1-merge")
         self.assertEqual(resolver["role"], "fix")
         self.assertIn("git stopped on conflicts in: greet.py.", resolver["task"])
-        self.assertEqual([n for n in self.runner.names() if n.startswith(("r1-merge", "r1-fix", "r1-verify"))],
-                         ["r1-merge", "r1-fix-1", "r1-verify-1"])
+        self.assertEqual([n for n in self.runner.names() if n.startswith(("r1-merge", "r1-fix"))],
+                         ["r1-merge", "r1-fix-1"])
         self.assertIn(", resolving greet.py", prmenu.summary(self.ctx, rnd))
 
     def unfinished(self, rnd: pr.Round) -> list[str]:
@@ -810,14 +851,15 @@ class BaseMergeTest(MenuTestCase):
     def test_a_branch_whose_fix_changed_host_paths_is_fixed_on_its_own_base(self):
         rnd = self.review()
         self.runner.during["r1-fix-1"] = lambda wt: (wt / ".placido" / "stack.sh").write_text("echo approved\n")
+        self.runner.during["r2-judge"] = lambda wt: self.advance_main({"later.txt": "later\n"})
+        self.runner.findings_in = {2: {"A": [finding("A", 1)], "B": []}}
         self.answers = [True]
-        self.act("fix", rnd)
-        fixed = sh(self.worktree, "git", "rev-parse", "HEAD")
-        self.advance_main({"later.txt": "later\n"})
-        self.assertFalse(prmenu.state(self.ctx, rnd).merges_base)
-        self.act("fix", rnd)
-        self.assertEqual(runlog.last_event(self.run.path, "pr.base_merge_skipped")["reason"], "host paths")
-        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD^"), fixed)
+        reviewed = self.act("fix", rnd)
+        first = pr.round_by_number(self.run.path, 2).head
+        skipped = runlog.last_event(self.run.path, "pr.base_merge_skipped")
+        self.assertEqual((skipped["round"], skipped["reason"]), (2, "host paths"))
+        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD^"), first)
+        self.assertEqual((reviewed.number, len(self.asked)), (3, 1))  # each later round trusts the approved change
 
     def test_an_up_to_date_branch_is_fixed_without_a_merge(self):
         rnd = self.review()
@@ -860,8 +902,7 @@ class LastGatesTest(MenuTestCase):
         return shown.getvalue()
 
     def test_they_run_on_the_worktree_as_it_is_and_say_how_it_went(self):
-        rnd = self.review()
-        self.act("fix", rnd)
+        rnd = self.fixed()
         fix = self.local_head()
         s = prmenu.state(self.ctx, rnd)
         self.assertEqual(prmenu._last_text(self.ctx, s), " · last gates not run")
@@ -878,8 +919,7 @@ class LastGatesTest(MenuTestCase):
         self.assertIn(f"Last gates on {fix[:12]}: e2e pass", prmenu.summary(self.ctx, rnd))
 
     def test_a_failing_one_stops_the_push_picked_with_it(self):
-        rnd = self.review()
-        self.act("fix", rnd)
+        rnd = self.fixed()
         listed, _ = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
         numbers = {key: str(n) for n, (key, _) in enumerate(listed, 1)}
         answers = iter([f"{numbers['push']} {numbers['last']}", ""])
@@ -1011,43 +1051,42 @@ class DecisionsTest(MenuTestCase):
         self.assertIn("  2. question 2 → narrow it (the recommendation was: Widen it.)", text)
         self.assertIn("the greeting [A1, B1: all] (fix: your decision 2)", text)
         self.assertIn("1. Narrowed the guard's promise.", text)
+        self.runner.final = None  # round 2's judge keeps nothing
         self.act("fix", rnd)
         listed = json.loads((rnd.folder / "fix-findings-1.json").read_text())["findings"]
         self.assertEqual(listed[0]["fix"], "Narrow the doc comment to a later statement.")
-        for name in ("r1-fix-1", "r1-verify-1"):
+        for name in ("r1-fix-1", "r2-review-a", "r2-review-b", "r2-judge"):
             task = next(c["task"] for c in self.runner.calls if c["name"] == name)
             self.assertIn(f"{decisions.path(self.run.path)}. Read them; where one differs from the review, the"
                           " decision wins.", task)
 
-    def test_a_decision_can_drop_a_finding_add_work_and_send_it_back_to_the_contributor(self):
+    def test_a_decision_can_drop_a_finding_add_work_and_change_the_verdict(self):
         added = {"title": "close in the step helpers", "area": "gaps", "severity": "significant", "size": "medium",
                  "location": "steps.go:9", "description": "each step keeps its connection", "fix": "close it first",
                  "id": "X1"}
         self.runner.decided = {"answers": [answer(1, drop=["F1"], add=[added]), answer(2, as_recommended=True)],
-                               "verdict": "request-changes"}
-        self.runner.drafts = {"comment.md": "Thanks.\n\n1. Please close in the step helpers.\n"}
+                               "verdict": "close"}
+        self.runner.drafts = {"comment.md": "Thanks.\n\nThis is not the way to fix it.\n"}
         rnd = self.review(decisions=TWO)
         final = self.final(rnd)
-        self.assertEqual((final["verdict"], final["routing"]["route"], final["routing"]["judge_verdict"]),
-                         ("request-changes", "contributor", "fix-here"))
+        self.assertEqual((final["verdict"], final["judge_verdict"]), ("close", "fix-here"))
         f1, f2 = final["findings"]
         self.assertEqual((f1["decision"], f1["reason"]), ("drop", "Your decision 1: narrow it"))
         self.assertEqual((f2["id"], f2["sources"], f2["agreement"], f2["decision"], f2["fix"], f2["decided_by"]),
                          ("F2", ["decision 1"], "yours", "keep", "close it first", 1))
         decided = runlog.last_event(self.run.path, "pr.decided")
         self.assertEqual((decided["verdict"], decided["changed"], decided["dropped"], decided["added"]),
-                         ("request-changes", [], ["F1"], ["F2"]))
+                         ("close", [], ["F1"], ["F2"]))
         self.assertFalse((rnd.folder / "merge.md").exists())
-        self.assertIn("# Verdict: request-changes (yours; the judge's was fix-here)", (rnd.folder / "final.md").read_text())
+        self.assertIn("# Verdict: close (yours; the judge's was fix-here)", (rnd.folder / "final.md").read_text())
         text = prmenu.summary(self.ctx, rnd)
-        self.assertIn("Verdict: request-changes (yours; the judge's was fix-here). It greets", text)
-        self.assertIn("Fixes: the contributor, as you decided (about 10% of the pull request", text)
+        self.assertIn("Verdict: close (yours; the judge's was fix-here). It greets", text)
         self.assertIn("F2  significant gaps        `steps.go:9` close in the step helpers [decision 1: yours]\n", text)
         self.assertIn("F1  the greeting [A1, B1]: Your decision 1: narrow it", text)
-        self.assertEqual(self.keys(rnd), ["edit", "fix", "post", "ask", "close", "quit"])
+        self.assertEqual(self.keys(rnd), ["edit", "post", "ask", "close", "quit"])
         self.confirms = [True]
         self.act("post", rnd)
-        self.assertEqual(self.hub.calls[-1][:2], ("review", "request-changes"))
+        self.assertEqual(self.hub.calls[-1][:2], ("review", "comment"))
 
     def test_questions_left_unanswered_are_asked_again_until_they_are_answered(self):
         self.runner.failures["r1-decide"] = ["agent-exited"]
@@ -1109,13 +1148,14 @@ class DecisionsTest(MenuTestCase):
         self.assertEqual(problems(a1={"add": [{"title": "t", "area": "gaps", "severity": "huge", "size": "small",
                                                "description": "d", "fix": "f"}]}),
                          ["answer 1's added finding 1 has severity 'huge'; use blocking, significant, minor."])
-        self.assertEqual(problems(verdict="ship"), ["verdict 'ship': use merge, fix-here, request-changes, close."])
+        self.assertEqual(problems(verdict="ship"), ["verdict 'ship': use merge, fix-here, close."])
+        self.assertEqual(problems(verdict="request-changes"), ["verdict 'request-changes': use merge, fix-here, close."])
         self.assertEqual(problems(verdict="merge"), ['a "merge" verdict fixes nothing, but F1 are still kept: drop'
                                                      ' them, or keep the verdict that fixes them.'])
         self.assertEqual(problems(a1={"drop": ["F1"]}),
                          ['no finding is left to fix, so the verdict is "merge" or "close", not "fix-here".'])
         self.assertEqual(problems(a1={"drop": ["F1"]}, verdict="merge"), [])
-        self.assertEqual(problems(verdict="request-changes", a1={"drop": ["F1"], "add": [
+        self.assertEqual(problems(a1={"drop": ["F1"], "add": [
             {"title": "t", "area": "gaps", "severity": "minor", "size": "small", "description": "d", "fix": "f"}]}), [])
         (folder / "merge.md").write_text("A" * 73 + "\n")
         self.assertEqual(problems(), ["the squash subject is 73 characters; keep it to 72."])

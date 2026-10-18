@@ -287,12 +287,12 @@ class PRSettingsTest(unittest.TestCase):
         )
         self.assertEqual(c.pr.reviewers[1].fallback, c.roles["review"].fallback)
         self.assertEqual(c.pr.host_paths, (".placido", ".claude", ".codex", ".mcp.json"))
-        self.assertEqual((c.pr.gates, c.pr.contributor_share), ((), 0.5))
+        self.assertEqual(c.pr.gates, ())
         self.assertEqual(c.roles["scan"].agent, AgentSpec("claude", "opus", "high"))
         self.assertEqual(c.roles["judge"].agent, AgentSpec("claude", "opus", "high"))
-        self.assertEqual(c.roles["verify"].agent, c.roles["review"].agent)  # another vendor than the fixer's
         self.assertEqual(c.roles["decide"].agent, c.roles["judge"].agent)
-        self.assertEqual((c.pr.parallel, c.pr.fix_rounds), (True, 2))
+        self.assertEqual((c.pr.parallel, c.pr.fix_rounds), (True, 3))
+        self.assertNotIn("verify", c.roles)  # the fixes are reviewed in full, in rounds of their own
 
     def test_gates_default_to_the_slice_and_final_gates(self):
         c = load_text(
@@ -304,14 +304,14 @@ class PRSettingsTest(unittest.TestCase):
     def test_everything_is_configurable(self):
         c = load_text(
             '[commands.unit]\nrun = "u"\n'
-            '[pr]\ngates = ["unit"]\nhost_paths = ["scripts/", ".placido"]\ncontributor_share = 1\n'
+            '[pr]\ngates = ["unit"]\nhost_paths = ["scripts/", ".placido"]\nfix_rounds = 5\n'
             'reviewers = [{agent = "codex", effort = "high", fallback = []}, {agent = "pi"}]\n'
             '[roles.judge]\nagent = "codex"\n'
         )
         self.assertEqual([r.agent for r in c.pr.reviewers],
                          [AgentSpec("codex", "gpt-6.1-sol", "high"), AgentSpec("pi", "deepseek/deepseek-v4.1-flash", "high")])
         self.assertEqual(c.pr.reviewers[0].fallback, ())
-        self.assertEqual((c.pr.gates, c.pr.host_paths, c.pr.contributor_share), (("unit",), ("scripts", ".placido"), 1.0))
+        self.assertEqual((c.pr.gates, c.pr.host_paths, c.pr.fix_rounds), (("unit",), ("scripts", ".placido"), 5))
         self.assertEqual(c.roles["judge"].agent.agent, "codex")
         self.assertEqual(c.roles["decide"].agent.agent, "codex")  # follows the judge unless set itself
 
@@ -322,12 +322,11 @@ class PRSettingsTest(unittest.TestCase):
             "[pr]\ngates = [\"nope\"]\n": "pr.gates: 'nope' is not a command",
             "[pr]\nhost_paths = [\"/etc\"]\n": "pr.host_paths: '/etc' must be a path inside the repository",
             "[pr]\nhost_paths = [\"a/../../b\"]\n": "must be a path inside the repository",
-            "[pr]\ncontributor_share = 0\n": "pr.contributor_share: must be a number above 0 and at most 1",
-            "[pr]\ncontributor_share = 1.5\n": "pr.contributor_share",
-            "[pr]\ncontributor_share = true\n": "pr.contributor_share",
-            "[pr]\nshare = 0.5\n": "pr.share: unknown key",
+            "[pr]\ncontributor_share = 0.5\n": "pr.contributor_share: unknown key",
+            "[roles.verify]\nagent = \"codex\"\n": "roles.verify: unknown key",
             "[pr]\nparallel = 1\n": "pr.parallel: must be bool",
             "[pr]\nfix_rounds = -1\n": "pr.fix_rounds: must not be negative",
+            "[pr]\nfix_rounds = 0\n": "pr.fix_rounds: must be at least 1",
         }
         for text, message in cases.items():
             with self.assertRaisesRegex(ConfigError, message, msg=text):

@@ -14,7 +14,7 @@ from typing import Any
 AGENTS = ("claude", "codex", "pi")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TIERS = ("fast", "default")
-ROLES = ("spec", "implement", "review", "fix", "retro", "scan", "judge", "verify", "decide")
+ROLES = ("spec", "implement", "review", "fix", "retro", "scan", "judge", "decide")
 
 DEFAULT_MODELS = {"claude": "opus", "codex": "gpt-6.1-sol", "pi": "deepseek/deepseek-v4.1-flash"}
 
@@ -29,9 +29,8 @@ DEFAULTS: dict[str, Any] = {
         # `placido pr`: the scan reads an outside contributor's pull request before any of
         # its code runs, confined; the judge settles the reviews into the final one, at high
         # rather than xhigh since #588's judge spent nine minutes re-checking what both
-        # reviewers had confirmed (2026-10-16). `verify`, which checks the fixes made to a
-        # pull request, follows `review`: another vendor than the fixer's; `decide`, which
-        # takes the user through the judge's open questions, follows `judge`.
+        # reviewers had confirmed (2026-10-16). `decide`, which takes the user through the
+        # judge's open questions, follows `judge`.
         "scan": {"agent": "claude", "model": "opus", "effort": "high"},
         "judge": {"agent": "claude", "model": "opus", "effort": "high"},
     },
@@ -45,10 +44,9 @@ DEFAULTS: dict[str, Any] = {
     "review": {"plan_rounds": 0, "final_rounds": 3},
     "limits": {"stage_attempts": 3, "quota_wait": "2h", "ci_wait": "1h"},
     # `placido pr`: two reviewers from different vendors, one after the other; the gates
-    # placido runs once for both (none named: the slice and the final gates); the paths a
-    # pull request may not change without the user's approval, since setup and the gates
-    # run them on this machine; and the share of the pull request's own size at which
-    # the fixes go back to its author rather than being made here (decided 2026-10-16).
+    # placido runs once for both (none named: the slice and the final gates); and the
+    # paths a pull request may not change without the user's approval, since setup and
+    # the gates run them on this machine (decided 2026-10-16).
     "pr": {
         "reviewers": [
             {"agent": "claude", "model": "opus", "effort": "xhigh"},
@@ -58,11 +56,11 @@ DEFAULTS: dict[str, Any] = {
         # Placido's own project scripts, and the agents' project settings, whose hooks and
         # MCP servers run on this machine when an agent starts in the worktree.
         "host_paths": [".placido", ".claude", ".codex", ".mcp.json"],
-        "contributor_share": 0.5,
-        # Reviewers at once, each in a worktree and stack of its own; and how many times a
-        # failed check of the fixes sends them back to the fixer (decided 2026-10-16).
+        # Reviewers at once, each in a worktree and stack of its own (decided 2026-10-16);
+        # and how many times a fix and the full review of it follow each other, on their
+        # own, before the menu asks again (decided 2026-10-17).
         "parallel": True,
-        "fix_rounds": 2,
+        "fix_rounds": 3,
     },
 }
 
@@ -124,9 +122,8 @@ class PRSettings:
     reviewers: tuple[Role, ...]  # in the order they review; each has its own fallback chain
     gates: tuple[str, ...]  # command names placido runs once, before the reviews
     host_paths: tuple[str, ...]  # a pull request changing these waits for the user's approval
-    contributor_share: float  # fixes this big, against the pull request, go back to its author
     parallel: bool = True  # reviewers at once, each in a worktree and stack of its own
-    fix_rounds: int = 2  # times a failed check of the fixes sends them back to the fixer
+    fix_rounds: int = 3  # fixes, each reviewed in full in a round of its own, before the menu asks again
 
 
 @dataclass(frozen=True)
@@ -339,13 +336,11 @@ def _pr(
         if not clean or clean.startswith("/") or ".." in Path(clean).parts:
             raise ConfigError(f"pr.host_paths: {path!r} must be a path inside the repository")
         host_paths.append(clean)
-    share = table.get("contributor_share", DEFAULTS["pr"]["contributor_share"])
-    # bool is a subclass of int, so check exactly: `true` is not a share.
-    if type(share) not in (int, float) or not 0 < share <= 1:
-        raise ConfigError(f"pr.contributor_share: must be a number above 0 and at most 1, not {share!r}")
     parallel = _typed(table, "parallel", DEFAULTS["pr"]["parallel"], "pr")
     fix_rounds = _typed(table, "fix_rounds", DEFAULTS["pr"]["fix_rounds"], "pr")
-    return PRSettings(tuple(reviewers), tuple(names), tuple(host_paths), float(share), parallel, fix_rounds)
+    if fix_rounds < 1:
+        raise ConfigError(f"pr.fix_rounds: must be at least 1, not {fix_rounds}")
+    return PRSettings(tuple(reviewers), tuple(names), tuple(host_paths), parallel, fix_rounds)
 
 
 def _resolve(data: dict[str, Any], source: Path | None) -> Config:
@@ -369,9 +364,6 @@ def _resolve(data: dict[str, Any], source: Path | None) -> Config:
         if name == "retro":  # a retro is judgment about the project, like the spec interview
             specifier = roles["spec"]
             base, chain = vars(specifier.agent), specifier.fallback
-        if name == "verify":  # checking fixes is a review, by another vendor than the fixer's
-            reviewer = roles["review"]
-            base, chain = vars(reviewer.agent), reviewer.fallback
         if name == "decide":  # taking the user through the judge's open questions
             judge = roles["judge"]
             base, chain = vars(judge.agent), judge.fallback
@@ -457,8 +449,6 @@ def describe(config: Config, start: Path) -> str:
     lines += [
         f"{'gates'.ljust(10)} {', '.join(config.pr.gates) or '-'}",
         f"{'host paths'.ljust(10)} {', '.join(config.pr.host_paths) or '-'}",
-        f"{'share'.ljust(10)} {config.pr.contributor_share:g} (fixes this big, against the pull"
-        " request, go back to its author)",
         f"{'parallel'.ljust(10)} {str(config.pr.parallel).lower()}",
         f"{'fix rounds'.ljust(10)} {config.pr.fix_rounds}",
     ]

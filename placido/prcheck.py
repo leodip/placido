@@ -2,8 +2,8 @@
 cross-check, the judge's final review, and the check of the fixes, each problem worded
 for the agent to fix. Placido sends them back to the agent until its files pass, so the
 rest of `placido pr` reads well-formed files only. The judge's check also holds it to
-the rules: every reviewer finding settled exactly once, and the verdict following
-`[pr] contributor_share`.
+the rules: every reviewer finding settled exactly once, and the verdict following the
+findings kept.
 
 The agents write JSON alone, and placido renders it for people (`render_review`,
 `render_final`): #588's agents wrote every finding twice, once in Markdown, and the
@@ -11,8 +11,8 @@ judge's Markdown alone ran to 171 lines (decided 2026-10-16).
 
 The judge's open questions are the user's to decide, every one, before anything else
 happens to the pull request: what they decide is applied to the final review
-(`decided_final`), so the fix and its check work from it, whether or not it is what the
-judge recommended (decided 2026-10-16).
+(`decided_final`), so the fix and the review of it work from it, whether or not it is
+what the judge recommended (decided 2026-10-16).
 """
 
 from __future__ import annotations
@@ -30,11 +30,11 @@ EARLIER = ("addressed", "partly", "not-addressed")
 TESTS = ("yes", "partly", "no", "n/a")
 MUTATIONS = ("killed", "survived", "timeout")
 AGREEMENT = ("all", "confirmed", "disputed", "unsure", "single")
-VERDICTS = ("merge", "fix-here", "request-changes", "close")
-ROUTES = ("here", "contributor", "none")
-CHECKED = ("resolved", "unresolved", "accepted-dispute", "rejected-dispute")
-STILL_OPEN = ("unresolved", "rejected-dispute")
-ROUTE_OF = {"fix-here": "here", "request-changes": "contributor", "merge": "none", "close": "none"}
+# What becomes of a pull request: merged as it is, fixed here on its branch first, or
+# closed. Nothing goes back to the contributor: the maintainer fixes all of it (decided
+# 2026-10-17, after #611's comment asked the contributor for changes the maintainer had
+# made already).
+VERDICTS = ("merge", "fix-here", "close")
 ADDED = ("title", "area", "severity", "size", "location", "description", "fix")  # a finding a decision adds
 
 
@@ -161,9 +161,9 @@ def check_crosscheck(path: Path, others: list[str], own: list[str]) -> list[str]
     return problems
 
 
-def check_final(folder: Path, ids: list[str], earlier: list[str], share: float) -> list[str]:
+def check_final(folder: Path, ids: list[str], earlier: list[str]) -> list[str]:
     """Problems with the judge's files: well formed, every reviewer finding accounted for
-    exactly once, and the verdict following the routing rule."""
+    exactly once, and the verdict following the findings kept."""
 
     data, error = load(folder / "final.json")
     if error:
@@ -202,11 +202,7 @@ def check_final(folder: Path, ids: list[str], earlier: list[str], share: float) 
         count = sources.count(finding_id)
         if count != 1:
             problems.append(f"reviewer finding {finding_id} must be the source of exactly one final finding; it is of {count}.")
-    routing = data.get("routing")
-    if not isinstance(routing, dict) or routing.get("route") not in ROUTES:
-        problems.append(f'final.json needs "routing" with a "route" of {", ".join(ROUTES)}.')
-    else:
-        problems += routing_problems(routing, verdict, kept, share)
+    problems += verdict_problems(verdict, kept)
     answered = {e.get("item"): e for e in data.get("earlier", []) if isinstance(e, dict)} \
         if isinstance(data.get("earlier", []), list) else {}
     for item in earlier:
@@ -230,25 +226,28 @@ def check_final(folder: Path, ids: list[str], earlier: list[str], share: float) 
     return problems
 
 
-def routing_problems(routing: dict[str, Any], verdict: Any, kept: list[dict[str, Any]], share: float) -> list[str]:
-    route, measured = routing.get("route"), routing.get("share")
-    if verdict == "close":
-        return [] if route == "none" else ['a "close" verdict routes nothing: use route "none".']
-    if not kept:
-        problems = [] if route == "none" else ['with no finding kept, the route is "none".']
-        return problems + ([] if verdict == "merge" else ['with no finding kept, the verdict is "merge" (or "close").'])
-    if type(measured) not in (int, float) or measured < 0:
-        return ['"routing.share" must be the fixes\' size as a fraction of the pull request\'s, such as 0.2.']
-    if not texts(routing, "estimate"):
-        return ['"routing.estimate" must say how the share was estimated.']
-    wanted = "contributor" if measured >= share else "here"
-    problems = [] if route == wanted else [
-        f"a share of {measured:g} against the threshold of {share:g} routes to {wanted!r}, not {route!r}."
-    ]
-    verdict_for = {"here": "fix-here", "contributor": "request-changes"}[wanted]
-    if verdict != verdict_for:
-        problems.append(f'kept findings routed {wanted!r} make the verdict "{verdict_for}" (or "close").')
-    return problems
+def verdict_problems(verdict: Any, kept: list[dict[str, Any]]) -> list[str]:
+    if verdict == "close" or verdict not in VERDICTS:
+        return []
+    if kept and verdict != "fix-here":
+        return [f'kept findings make the verdict "fix-here" (or "close"), not "{verdict}".']
+    if not kept and verdict != "merge":
+        return [f'with no finding kept, the verdict is "merge" (or "close"), not "{verdict}".']
+    return []
+
+
+def verdict_of(data: dict[str, Any]) -> str:
+    """A review's verdict. One from before 2026-10-17 that asked the contributor for
+    changes reads as fix-here: the maintainer fixes them now."""
+
+    return "fix-here" if data.get("verdict") == "request-changes" else str(data.get("verdict"))
+
+
+def judge_verdict(data: dict[str, Any]) -> str:
+    """The judge's verdict, when the user decided another; "" otherwise. A review from
+    before 2026-10-17 kept it in its routing."""
+
+    return str(data.get("judge_verdict") or (data.get("routing") or {}).get("judge_verdict") or "")
 
 
 def decision_items(final: dict[str, Any]) -> list[dict[str, Any]]:
@@ -311,7 +310,7 @@ def check_decided(folder: Path, final: dict[str, Any]) -> list[str]:
     if verdict == "merge" and left:
         problems.append(f'a "merge" verdict fixes nothing, but {", ".join(left)} are still kept: drop them,'
                         ' or keep the verdict that fixes them.')
-    if verdict in ("fix-here", "request-changes") and not left:
+    if verdict == "fix-here" and not left:
         problems.append(f'no finding is left to fix, so the verdict is "merge" or "close", not "{verdict}".')
     if not (folder / "comment.md").is_file() or not (folder / "comment.md").read_text(encoding="utf-8").strip():
         problems.append(f"{folder / 'comment.md'} is missing or empty.")
@@ -337,7 +336,7 @@ def added_problems(item: Any, where: str) -> list[str]:
 def decided_final(final: dict[str, Any], decided: dict[str, Any]) -> dict[str, Any]:
     """The final review with the user's decisions applied: each question carries its
     decision; a finding fixed another way, dropped, or added says which decision did it;
-    and a verdict the user changed routes the fixes, keeping the judge's beside it."""
+    and a verdict the user changed keeps the judge's beside it."""
 
     data = copy.deepcopy(final)
     by_id = {f["id"]: f for f in data["findings"]}
@@ -357,8 +356,7 @@ def decided_final(final: dict[str, Any], decided: dict[str, Any]) -> dict[str, A
             })
     data["decisions"] = items
     if decided["verdict"] != data["verdict"]:
-        data["routing"] = {**data["routing"], "route": ROUTE_OF[decided["verdict"]], "judge_verdict": data["verdict"]}
-        data["verdict"] = decided["verdict"]
+        data["judge_verdict"], data["verdict"] = data["verdict"], decided["verdict"]
     return data
 
 
@@ -367,42 +365,6 @@ def first_line(path: Path) -> str:
         return ""
     lines = path.read_text(encoding="utf-8").strip().splitlines()
     return lines[0].strip() if lines else ""
-
-
-def check_verify(path: Path, ids: list[str]) -> list[str]:
-    """Problems with a check of the fixes: one verdict for each finding the fixer
-    answered, and any new problem the fixes brought as a finding V1, V2, …"""
-
-    data, error = load(path)
-    if error:
-        return [error]
-    if not isinstance(data, dict) or not isinstance(data.get("verdicts"), list):
-        return ['verify.json needs a "verdicts" list.']
-    problems, seen = [], []
-    for entry in data["verdicts"]:
-        if not isinstance(entry, dict) or entry.get("verdict") not in CHECKED or not texts(entry, "note"):
-            problems.append(f"verdict {entry!r} needs an id, a verdict of {', '.join(CHECKED)}, and a note.")
-            continue
-        seen.append(entry.get("id"))
-    for finding_id in ids:
-        count = seen.count(finding_id)
-        if count != 1:
-            problems.append(f"{finding_id} needs exactly one verdict; it has {count}.")
-    for finding_id in sorted({i for i in seen if i not in ids}):
-        problems.append(f"{finding_id!r} is not a finding the fix answered ({', '.join(ids)}).")
-    findings = data.get("findings", [])
-    if not isinstance(findings, list):
-        return problems + ['"findings" must be a list (empty when the fixes brought no new problem).']
-    return problems + findings_problems(findings, "V")
-
-
-def verify_passed(data: dict[str, Any]) -> bool:
-    """Every finding resolved, or its dispute accepted, and no new blocking or
-    significant problem."""
-
-    open_ = [v for v in data["verdicts"] if v["verdict"] in STILL_OPEN]
-    serious = [f for f in data.get("findings", []) if f.get("severity") != "minor"]
-    return not open_ and not serious
 
 
 # ---- for people -------------------------------------------------------------------------
@@ -454,11 +416,8 @@ def render_review(data: dict[str, Any], code: str) -> str:
 def render_final(data: dict[str, Any]) -> str:
     """The judge's final.json, for people."""
 
-    routing = data.get("routing") or {}
-    judged = f" (yours; the judge's was {routing['judge_verdict']})" if routing.get("judge_verdict") else ""
-    lines = [f"# Verdict: {data['verdict']}{judged}", "", data.get("summary", "").strip(), ""]
-    if routing.get("route") and routing["route"] != "none":
-        lines += [f"Fixes go to: {routing['route']} (share {routing.get('share')}). {routing.get('estimate', '')}".strip(), ""]
+    judged = f" (yours; the judge's was {judge_verdict(data)})" if judge_verdict(data) else ""
+    lines = [f"# Verdict: {verdict_of(data)}{judged}", "", data.get("summary", "").strip(), ""]
     kept = [f for f in data["findings"] if f.get("decision") == "keep"]
     dropped = [f for f in data["findings"] if f.get("decision") != "keep"]
     for title, group in (("Kept", kept), ("Dropped", dropped)):

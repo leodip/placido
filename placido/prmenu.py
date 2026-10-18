@@ -1,22 +1,25 @@
 """The end of `placido pr`: the review's summary, and the actions the user picks.
 
 Nothing reaches GitHub or the contributor's branch until the user picks it here, and
-pushing, merging, and closing ask once more (decided 2026-10-16). A merge is pinned to
-the commit the review covered, or to the fixes made on it here, so nothing pushed in
-between is merged unreviewed. Fixes made here go on the contributor's own branch, so
-the pull request stays the one way the change lands and keeps its author.
+pushing, merging, and closing ask once more (decided 2026-10-16). Fixes made here go on
+the contributor's own branch, so the pull request stays the one way the change lands
+and keeps its author. Whatever the review finds, the maintainer fixes it here: nothing
+goes back to the contributor, whose comment says the change is good, or what was
+changed on their branch (decided 2026-10-17).
 
-A fix made here is checked before it is offered for pushing: the `verify` role, by
-default another vendor than the fixer's, judges each finding's fix and reads the fixes
-for new problems, and what it finds open goes back to the fixer, up to `[pr]
-fix_rounds` times (decided 2026-10-16, after #588's fix went out checked by its gates
-alone). The fixer is kept open and resumed for that, since what is left open is about
-its own work; each check is a fresh session, whose value is fresh eyes. Fixes that never
-passed the check can still be pushed, saying so, when the user confirms.
+Every change made here is reviewed in full before it can go out. Once a fix is
+committed, a new round reviews the branch with it: every reviewer, the cross-checks,
+and the judge, as the contributor's own head was. What that round keeps is fixed in
+turn, and reviewed again, up to `[pr] fix_rounds` times before the menu asks again.
+The user's own commits in the worktree, or an agent's they ran there, wait for such a
+round too. So the worktree is pushed, and the pull request merged, only at the head
+the latest round reviewed, with nothing left from its review but minor findings
+(decided 2026-10-17: #611's fixes went out read by one agent alone, the `verify`
+role, which this replaces).
 
 Before a fix, the base branch is merged into the branch when it has moved past it, as a
 commit of its own, its conflicts resolved by the fix role and nothing else: the fixes
-are then made, gated, and checked on what the squash merge will land, and a branch that
+are then made, gated, and reviewed on what the squash merge will land, and a branch that
 conflicts with the base is brought up to date without the force push a rebase needs,
 which placido never does (decided 2026-10-16, after #592's review asked for a rebase).
 A pull request that changes host paths is fixed on its own base instead, since the
@@ -45,10 +48,9 @@ PUSH_URL = "https://github.com/{repo}.git"  # where the contributor's branch is 
 RESOLUTIONS = ("fixed", "disputed")
 # The last gates run before the push, as in an issue run, so a failing one stops the
 # push, the post, and the merge picked with it.
-ORDER = ("edit", "edit-merge", "fix", "last", "push", "post", "ci", "merge", "ask", "close")
+ORDER = ("edit", "edit-merge", "fix", "review", "last", "push", "post", "ci", "merge", "ask", "close")
 # How each verdict's comment is posted: the review's kind on GitHub, and in words.
 POSTED_AS = {
-    "request-changes": ("request-changes", "as a review requesting changes"),
     "merge": ("approve", "as an approving review"),
     "fix-here": ("comment", "as a comment"),
     "close": ("comment", "as a comment"),
@@ -67,12 +69,10 @@ class State:
 
     pull: prgh.PullRequest
     verdict: str
-    route: str
     kept: list[dict[str, Any]]
-    fixed: bool  # the fix ran this round, whether or not it changed code
-    fixes: list[str]  # commits made here this round: the base merged in, and the fixes
-    verified: bool | None  # the latest check of the fixes passed; None: never checked
-    yours: list[str]  # the user's own commits made in the worktree this round, which nothing checked
+    fixed: bool  # a fix ran this round, whether or not it changed code: a new round reviews it
+    yours: list[str]  # the user's own commits in the worktree this round, which a new round reviews
+    local: str  # the worktree's head
     ahead: int  # commits made here that the pull request's branch lacks, the base's own not counted
     merges_base: bool  # a fix merges the base in first: it moved past the branch, which changes no host path
     pushed: bool
@@ -89,11 +89,15 @@ def state(ctx: Context, rnd: Round) -> State:
     if pull.state == "OPEN":
         pr.fetch(ctx.root, pull.base, number)
     data = final(rnd)
-    run_dir = ctx.run.path
-    fixes = pr.commits_here(run_dir, rnd.number)
-    ahead = int(pr.git(ctx.worktree, "rev-list", "--count", "--first-parent", f"{pr.pr_ref(number)}..HEAD") or 0)
+    run_dir, wt = ctx.run.path, ctx.worktree
+    local = pr.git(wt, "rev-parse", "HEAD")
+    expected = pr.expected_head(ctx, rnd)
+    taken = [c for e in pr.round_events(run_dir, "pr.adopted", rnd.number) for c in e.get("commits", [])]
+    since = (pr.git(wt, "rev-list", "--reverse", f"{expected}..{local}").splitlines()
+             if local != expected and pr.is_ancestor(wt, expected, local) else [])
+    ahead = int(pr.git(wt, "rev-list", "--count", "--first-parent", f"{pr.pr_ref(number)}..HEAD") or 0)
     merges_base = (
-        pull.state == "OPEN" and not pr.is_ancestor(ctx.worktree, pr.base_ref(pull.base), "HEAD")
+        pull.state == "OPEN" and not pr.is_ancestor(wt, pr.base_ref(pull.base), "HEAD")
         and not pr.branch_changes_host_paths(ctx, rnd)
     )
     try:
@@ -103,13 +107,11 @@ def state(ctx: Context, rnd: Round) -> State:
         waiting, ci = [], "unknown"
     return State(
         pull=pull,
-        verdict=data["verdict"],
-        route=data["routing"]["route"],
+        verdict=prcheck.verdict_of(data),
         kept=[f for f in data["findings"] if f["decision"] == "keep"],
         fixed=bool(pr.round_events(run_dir, "pr.fixed", rnd.number)),
-        fixes=fixes,
-        verified=(pr.done(run_dir, "pr.verified", rnd.number) or {}).get("passed"),
-        yours=[c for e in pr.round_events(run_dir, "pr.adopted", rnd.number) for c in e.get("commits", [])],
+        yours=taken + since,
+        local=local,
         ahead=ahead,
         merges_base=merges_base,
         pushed=bool(pr.round_events(run_dir, "pr.pushed", rnd.number)),
@@ -118,6 +120,23 @@ def state(ctx: Context, rnd: Round) -> State:
         ci=ci,
         last=pr.done(run_dir, "pr.last_gates", rnd.number),
     )
+
+
+def blocked(rnd: Round, s: State) -> str:
+    """Why the worktree cannot be pushed, nor the pull request merged, now; "" when it
+    can: at the head the round reviewed in full, with nothing left from its review but
+    minor findings."""
+
+    if s.fixed or s.yours:
+        return f"the changes made here since round {rnd.number}'s review wait for a full review of their own"
+    if s.local != rnd.head:
+        return f"the worktree is at {s.local[:12]}, not at {rnd.head[:12]}, the head round {rnd.number} reviewed"
+    if s.verdict == "close":
+        return f"round {rnd.number}'s verdict is close"
+    serious = [f["id"] for f in s.kept if f.get("severity") != "minor"]
+    if serious:
+        return f"round {rnd.number} kept {', '.join(serious)}, which are not minor: fix them first"
+    return ""
 
 
 # ---- the summary --------------------------------------------------------------------------
@@ -131,19 +150,16 @@ def summary(ctx: Context, rnd: Round) -> str:
         f"{pull.url} · @{pull.author} · +{pull.additions} −{pull.deletions} in {pull.files} files"
         f" · round {rnd.number}, head {rnd.head[:12]}",
         "",
-        f"Verdict: {data['verdict']}{_yours(data)}. {data['summary']}",
+        f"Verdict: {prcheck.verdict_of(data)}{_yours(data)}. {data['summary']}",
     ]
-    routing = data["routing"]
-    if routing["route"] != "none":
-        whom = "the contributor" if routing["route"] == "contributor" else "here, by you"
-        decided = ", as you decided" if routing.get("judge_verdict") else ""
-        share = routing.get("share")
-        measured = (f" (about {share:.0%} of the pull request; the line is {ctx.settings.pr.contributor_share:.0%})."
-                    f" {routing.get('estimate', '')}" if isinstance(share, (int, float)) else ".")
-        lines.append(f"Fixes: {whom}{decided}{measured}".rstrip())
-    scanned = pr.done(run_dir, "pr.scan", rnd.number) or {}
+    first = pr.contributor_round(run_dir, rnd)
+    if rnd.here:
+        made = pr.git(ctx.worktree, "rev-list", "--count", "--first-parent", f"{first.head}..{rnd.head}")
+        lines.append(f"Reviewed here: the branch with the {made} commit(s) made here since round {rnd.previous}'s"
+                     f" review, on {first.head[:12]}, the contributor's head")
+    scanned = pr.done(run_dir, "pr.scan", first.number) or {}
     scan_text = "clear" if scanned.get("verdict") == "clear" else f"{scanned.get('concerns', '?')} concern(s), accepted by you"
-    lines.append(f"Scan: {scan_text}")
+    lines.append(f"Scan: {scan_text}" + (f" (round {first.number}'s)" if first.number != rnd.number else ""))
     gates = pr.done(run_dir, "pr.gates", rnd.number) or {}
     if gates.get("results"):
         shown = [f"{name} {'pass' if code == 0 else 'FAIL'}" for name, code in gates["results"].items()]
@@ -199,12 +215,7 @@ def summary(ctx: Context, rnd: Round) -> str:
         last = fixed[-1]
         commit = (last.get("commit") or "")[:12] or "no commit"
         lines += ["", f"Fixed here ({commit}): {last.get('fixed', 0)} fixed, {last.get('disputed', 0)} disputed"
-                  f" (see {run_dir / 'steps' / last['step'] / 'resolutions.json'})"]
-        checked = pr.done(run_dir, "pr.verified", rnd.number)
-        if checked:
-            verdict = "passed" if checked["passed"] else f"left {', '.join(checked['open'] + checked['new'])} open"
-            lines.append(f"Checked by {checked.get('agent', '?')}: {verdict}"
-                         f" (see {run_dir / 'steps' / checked['step'] / 'verify.json'})")
+                  f" (see {run_dir / 'steps' / last['step'] / 'resolutions.json'}); not reviewed yet"]
     ran = pr.done(run_dir, "pr.last_gates", rnd.number)
     if ran:
         shown = " · ".join(f"{name} {'pass' if code == 0 else 'FAIL'}" for name, code in ran["results"].items())
@@ -220,7 +231,7 @@ def summary(ctx: Context, rnd: Round) -> str:
 
 
 def _yours(data: dict[str, Any]) -> str:
-    judged = data["routing"].get("judge_verdict")
+    judged = prcheck.judge_verdict(data)
     return f" (yours; the judge's was {judged})" if judged else ""
 
 
@@ -245,44 +256,54 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
         return [], [note]
     out: list[tuple[str, str]] = []
     notes: list[str] = []
+    wt, rounds = ctx.worktree, ctx.settings.pr.fix_rounds
+    if final(rnd).get("verdict") == "request-changes":
+        notes.append("This review is from before placido stopped asking contributors for changes, and its comment"
+                     " asks the contributor for them: fix them here, and the next round writes one that says what"
+                     " you changed, or edit it before posting.")
     if s.yours:
-        notes.append(f"Your {len(s.yours)} commit(s) made in the worktree, up to {s.yours[-1][:12]}, are part of"
-                     " this round: no review or check has read them, and the comment does not mention them.")
+        notes.append(f"Your {len(s.yours)} commit(s) in the worktree, up to {s.yours[-1][:12]}, wait for a full review:"
+                     " nothing is pushed or merged before one.")
+    if pr.git(wt, "status", "--porcelain"):
+        notes.append(f"The worktree has uncommitted changes: commit them to have them reviewed, or drop them"
+                     f" (git -C {wt} status).")
     out.append(("edit", f"Edit the comment ({rnd.folder / 'comment.md'})"))
     if (rnd.folder / "merge.md").is_file():
         out.append(("edit-merge", f"Edit the squash message ({rnd.folder / 'merge.md'})"))
     merge = f"Merge {s.pull.base} into the branch, then " if s.merges_base else ""
-    if s.kept and not s.fixed:
+    if s.fixed or s.yours:
+        what = "the fix" if s.fixed else f"your {len(s.yours)} commit(s)"
+        out.append(("review", f"Review the branch with {what} in full, in round {rnd.number + 1}: every reviewer,"
+                              " the cross-checks, and the judge"))
+    elif s.kept and s.verdict == "fix-here":
         out.append(("fix", f"{merge}{'fix' if merge else 'Fix'} the {len(s.kept)} kept finding(s) here, on the"
-                           " contributor's branch, and have the fixes checked: committed locally, nothing pushed"))
-    elif s.fixed and s.verified is False:
-        count = len(open_items(rnd))
-        out.append(("fix", f"{merge}{'send' if merge else 'Send'} the {count} item(s) the check left open back to"
-                           " the fixer, then check again"))
+                           " contributor's branch, then review the branch with the fixes in full, in a new round;"
+                           f" what it keeps is fixed and reviewed in turn, up to {rounds} times. Committed locally,"
+                           " nothing pushed"))
     if ctx.settings.last_gates:
         stale = f": {s.pull.base} has moved on, and this runs on the pull request's own base" if s.merges_base else ""
-        out.append(("last", f"Run the last gates ({', '.join(ctx.settings.last_gates)}) on"
-                            f" {pr.git(ctx.worktree, 'rev-parse', 'HEAD')[:12]}{stale}"))
-    if s.ahead and s.pull.can_modify:
+        out.append(("last", f"Run the last gates ({', '.join(ctx.settings.last_gates)}) on {s.local[:12]}{stale}"))
+    why = blocked(rnd, s)
+    minor = f", leaving {len(s.kept)} minor finding(s)" if s.kept else ""
+    if s.ahead and s.pull.can_modify and not why:
         target = f"{s.pull.head_repo}:{s.pull.head_ref}"
-        if s.verified:
-            checked = "the fixes checked, yours not" if s.yours else "checked"
-            out.append(("push", f"Push the {s.ahead} commit(s) made here, {checked}, to {target}"))
-        elif s.verified is False:
-            out.append(("push", f"Push anyway: the check left {len(open_items(rnd))} item(s) open ({target})"))
-        else:
-            out.append(("push", f"Push the {s.ahead} commit(s) made here, never checked, to {target}"))
-    elif s.ahead:
+        out.append(("push", f"Push the {s.ahead} commit(s) made here, reviewed in full in round {rnd.number}{minor},"
+                            f" to {target}"))
+    elif s.ahead and not why:
         notes.append("The contributor does not let maintainers push to the branch, so the fixes made"
                      " here cannot be pushed from placido.")
     if not s.posted:
         out.append(("post", f"Post the comment {POSTED_AS[s.verdict][1]}"))
     if s.waiting:
         out.append(("ci", f"Approve the {len(s.waiting)} CI run(s) waiting for a maintainer"))
-    if not s.ahead and (s.verdict == "merge" or s.pushed or s.yours or (s.fixed and not s.fixes)):
+    if not s.ahead and not why and s.pull.head_sha == rnd.head:
         when = (f" once CI is green (placido waits up to {config.format_duration(ctx.settings.ci_wait)})"
                 if s.ci == "pending" else "")
-        out.append(("merge", f"Squash-merge into {s.pull.base}{when}, pinned to {s.pull.head_sha[:12]} (CI {s.ci})"))
+        out.append(("merge", f"Squash-merge into {s.pull.base}{when}, pinned to {s.pull.head_sha[:12]}"
+                             f" (CI {s.ci}){minor}"))
+    elif not s.ahead and not why:
+        notes.append(f"The pull request's head is {s.pull.head_sha[:12]}, which no round reviewed:"
+                     f" placido pr {s.pull.number} reviews it.")
     asked = to_ask(ctx, rnd)
     if asked is not None:
         out.append(("ask", f"Ask {_who(asked)} questions, read-only, in a new tab"))
@@ -292,7 +313,9 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
 
 
 def menu(ctx: Context, rnd: Round, read: Callable[[str], str | None], confirm: Ask) -> None:
-    """Show the actions open, run the ones picked, and again, until the user is done."""
+    """Show the actions open, run the ones picked, and again, until the user is done. An
+    action that ends in a new round, a fix or a review, goes on with that round, and
+    the ones picked after it wait for the next menu, which reads it."""
 
     while True:
         s = state(ctx, rnd)
@@ -323,10 +346,14 @@ def menu(ctx: Context, rnd: Round, read: Callable[[str], str | None], confirm: A
             continue
         for key in [k for k in ORDER if k in picked]:
             try:
-                ACTIONS[key](ctx, rnd, s, confirm)
+                reviewed = ACTIONS[key](ctx, rnd, s, confirm)
             except (PRStop, prgh.PRError, implement.ImplementError) as error:
                 print(f"placido: {key}: {error}")
                 ctx.run.event("pr.action_failed", round=rnd.number, action=key, error=str(error)[:500])
+                break
+            if isinstance(reviewed, Round):
+                rnd = reviewed
+                print("\n" + summary(ctx, rnd))
                 break
             s = state(ctx, rnd)
 
@@ -351,17 +378,23 @@ def edit_merge(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
 
 # Whose session the user's questions go to: the round's last fixer, about its fixes, else
 # its judge, about the decision. The session is copied, so the one placido may resume
-# stays as it was, and the copy starts read-only, since a change made there would skip
-# the check a fix gets; the user can lift that in the agent. With neither session at
-# hand, a new agent of the fix role's is asked (decided 2026-10-17).
+# stays as it was, and the copy starts read-only, since a change made there skips the
+# gates a fix gets; the user can lift that in the agent, and what it commits waits for a
+# full review like any change made here. With neither session at hand, a new agent of
+# the fix role's is asked (decided 2026-10-17).
 ASKED = {"fix": "the fixer", "judge": "the judge"}
 FORK = {"claude": ["--resume", "{id}", "--fork-session"], "codex": ["fork", "{id}"]}
 READ_ONLY = {"claude": ["--permission-mode", "plan"], "codex": ["-s", "read-only", "-a", "on-request"]}
-ASK_COPY = "From here on the maintainer asks you about your work on pull request #{number}. Answer; change nothing."
+ASK_CHANGE = (
+    " If they ask you for a change after all, commit it and never push: placido reviews it in full, in a new"
+    " round, before it goes out."
+)
+ASK_COPY = ("From here on the maintainer asks you about your work on pull request #{number}. Answer; change nothing."
+            + ASK_CHANGE)
 ASK_NEW = (
     "The maintainer has questions about pull request #{number}, whose branch is checked out here. Placido"
     " reviewed it: {folder} holds the review, final.json its decision and findings, comment.md the comment"
-    " to the contributor. Answer their questions; change nothing."
+    " to the contributor. Answer their questions; change nothing." + ASK_CHANGE
 )
 
 
@@ -439,7 +472,8 @@ def ask(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
     except HerdrError as error:
         ctx.run.event("herdr.warning", error=str(error))
     who = _who(asked)
-    print(f"{who[0].upper()}{who[1:]} is in the tab {label} of this workspace, read-only. This menu stays here.")
+    print(f"{who[0].upper()}{who[1:]} is in the tab {label} of this workspace, read-only. This menu stays here;"
+          " a commit made there is reviewed in a new round before anything goes out.")
 
 
 def _body(ctx: Context, rnd: Round) -> Path:
@@ -456,8 +490,7 @@ def post(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
     since the summary showed it (decided 2026-10-16, after #592's comment went out unseen)."""
 
     kind, how = POSTED_AS[s.verdict]
-    unpushed = (" It says what was fixed on the branch, and nothing is pushed yet."
-                if s.verdict == "fix-here" and not s.pushed else "")
+    unpushed = " It may say what was changed on the branch, which is not pushed yet." if s.ahead else ""
     print("\n" + "\n".join(comment_block(rnd)))
     if not confirm(f"Post this on #{s.pull.number} {how}?{unpushed}"):
         return
@@ -489,20 +522,26 @@ def last(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
 
 
 def push(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
+    """Push the head the round reviewed in full to the contributor's branch, never
+    forced: the worktree's own, since nothing unreviewed is pushed."""
+
     if not s.pull.can_modify:
         raise PRStop("the contributor does not let maintainers push to the branch")
+    why = blocked(rnd, s)
+    if why:
+        raise PRStop(f"nothing is pushed: {why}")
     target = f"{s.pull.head_repo}:{s.pull.head_ref}"
-    warning = {True: "", False: " The check of the fixes left items open.", None: " The fixes were never checked."}
-    if not confirm(f"Push {s.ahead} commit(s) to {target}? (never forced){warning[s.verified]}"):
+    left = f" Round {rnd.number} leaves {len(s.kept)} minor finding(s) unfixed." if s.kept else ""
+    if not confirm(f"Push {s.ahead} commit(s) to {target}, reviewed in full in round {rnd.number}? (never forced){left}"):
         return
     url = PUSH_URL.format(repo=s.pull.head_repo)
-    done = subprocess.run(
-        ["git", "-C", str(ctx.worktree), "push", url, f"HEAD:refs/heads/{s.pull.head_ref}"],
+    done = subprocess.run(  # the commit reviewed, whatever the worktree moved to meanwhile
+        ["git", "-C", str(ctx.worktree), "push", url, f"{rnd.head}:refs/heads/{s.pull.head_ref}"],
         capture_output=True, text=True,
     )
     if done.returncode != 0:
         raise PRStop(f"git push: {(done.stderr or done.stdout).strip()[-400:]}")
-    commit = pr.git(ctx.worktree, "rev-parse", "HEAD")
+    commit = rnd.head
     ctx.run.event("pr.pushed", round=rnd.number, commit=commit, to=target)
     print(f"pushed {commit[:12]} to {target}")
 
@@ -520,10 +559,14 @@ def approve_ci(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
 
 
 def merge(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
-    covered = {rnd.head, *(e["commit"] for e in pr.round_events(ctx.run.path, "pr.pushed", rnd.number))}
+    """Squash-merge the pull request, pinned to the head the round reviewed in full."""
+
     head = s.pull.head_sha
-    if head not in covered:
+    if head != rnd.head:
         raise PRStop(f"the pull request's head is {head[:12]}, which this review did not cover; run placido pr again")
+    why = blocked(rnd, s)
+    if why:
+        raise PRStop(f"nothing is merged: {why}")
     ci, number, wait = s.ci, s.pull.number, config.format_duration(ctx.settings.ci_wait)
     if s.waiting:
         raise PRStop(f"{len(s.waiting)} CI run(s) on {head[:12]} wait for a maintainer's approval, so CI cannot"
@@ -533,7 +576,8 @@ def merge(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
     if ci in ("none", "unknown") and not confirm(f"CI shows no result on {head[:12]}. Merge anyway?"):
         return
     drafted = rnd.folder / "merge.md"
-    # Without the judge's draft (a request for changes fixed here instead), GitHub's own.
+    # Without the judge's draft (a review from before 2026-10-17 whose changes were asked
+    # of the contributor), GitHub's own.
     text = drafted.read_text(encoding="utf-8") if drafted.is_file() else f"{s.pull.title} (#{number})"
     lines = text.strip().splitlines()
     subject = lines[0].strip()
@@ -542,7 +586,8 @@ def merge(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
     # Pending CI is waited out here, and the merge follows its green without asking again,
     # so the user can leave it (decided 2026-10-16).
     later = f" once CI is green on {head[:12]}? Placido waits up to {wait} and merges then" if ci == "pending" else "?"
-    if not confirm(f"Squash-merge #{number} into {s.pull.base} as \"{subject}\"{later}"):
+    left = f" Round {rnd.number} leaves {len(s.kept)} minor finding(s) unfixed." if s.kept else ""
+    if not confirm(f"Squash-merge #{number} into {s.pull.base} as \"{subject}\"{later}{left}"):
         return
     if ci == "pending":
         ctx.run.event("pr.merge_waiting", round=rnd.number, head=head)
@@ -579,41 +624,52 @@ def close_pr(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
 # ---- fixing it here ---------------------------------------------------------------------------
 
 
-def open_items(rnd: Round) -> list[dict[str, Any]]:
-    """What the latest check of the fixes left open, for the next fix."""
+def fix(ctx: Context, rnd: Round, s: State, confirm: Ask) -> Round:
+    """Fix what the round kept, here, on the contributor's branch (the base merged in
+    first when it moved on), then review the branch with the fix in full, in a new
+    round; while that round keeps findings, fix them and review again, up to `[pr]
+    fix_rounds` times. Placido runs the gates and commits; nothing is pushed. Returns
+    the round reviewed last, which the menu goes on with."""
 
-    path = rnd.folder / "open-items.json"
-    return json.loads(path.read_text(encoding="utf-8"))["findings"] if path.is_file() else []
+    if s.fixed or s.yours:
+        raise PRStop(f"round {rnd.number}'s review was answered here already: review that in full first")
+    rounds = ctx.settings.pr.fix_rounds
+    for n in range(1, rounds + 1):
+        data = final(rnd)
+        items = [f for f in data["findings"] if f["decision"] == "keep"]
+        if prcheck.verdict_of(data) != "fix-here" or not items:
+            break
+        fix_round(ctx, rnd, items)
+        print(f"\nround {rnd.number + 1} reviews the branch with the fix in full")
+        rnd = pragents.review(ctx, quiet=True)
+        data = final(rnd)
+        kept = [f["id"] for f in data["findings"] if f["decision"] == "keep"]
+        print(f"round {rnd.number}: {prcheck.verdict_of(data)}" + (f", keeping {', '.join(kept)}" if kept else ""))
+    verdict = prcheck.verdict_of(final(rnd))
+    more = (f"; still fix-here after {rounds} fix(es): placido pr {ctx.pr.number} fixes again"
+            if verdict == "fix-here" else f"; placido pr {ctx.pr.number}")
+    pr.notify(ctx, "the fixes are reviewed", f"#{ctx.pr.number}: round {rnd.number}, {verdict}{more}")
+    return rnd
 
 
-def fix(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
-    """Merge the base in when it moved on, fix the kept findings here, on the
-    contributor's branch, then have the fixes checked; what the check leaves open goes
-    back to the fixer, up to `[pr] fix_rounds` times. Placido runs the gates and
-    commits; nothing is pushed."""
+def review_here(ctx: Context, rnd: Round, s: State, confirm: Ask) -> Round:
+    """Review in full, in a new round, what was done here since the round's review: a
+    fix no round has read yet, or the user's own commits."""
 
-    items = open_items(rnd) if s.fixed and s.verified is False else s.kept
-    done_before = len(pr.round_events(ctx.run.path, "pr.fixed", rnd.number))
+    reviewed = pragents.review(ctx)
+    if reviewed.number == rnd.number:
+        raise PRStop(f"nothing here is new since round {rnd.number}'s review")
+    return reviewed
+
+
+def fix_round(ctx: Context, rnd: Round, items: list[dict[str, Any]]) -> None:
+    """Merge the base in when it moved on, then one fix of the items: the fix role
+    answers each, placido runs the gates and commits."""
+
+    attempt_no = len(pr.round_events(ctx.run.path, "pr.fixed", rnd.number)) + 1
     ctx.run.event("pr.fix_start", round=rnd.number, findings=[f["id"] for f in items])
-    before = pr.git(ctx.worktree, "rev-parse", "HEAD")  # the first check reads the merge too
     merge_base_in(ctx, rnd)
-    try:
-        for n in range(1, ctx.settings.pr.fix_rounds + 2):
-            attempt_no = done_before + n
-            folder = fix_once(ctx, rnd, items, attempt_no)
-            data = check_fix(ctx, rnd, items, attempt_no, before, folder)
-            if prcheck.verify_passed(data):
-                print(f"the check of fix {attempt_no} passed: every finding is resolved, and nothing new is serious")
-                return
-            items = _still_open(data, items, attempt_no)
-            (rnd.folder / "open-items.json").write_text(json.dumps({"findings": items}, indent=2) + "\n",
-                                                        encoding="utf-8")
-            print(f"the check of fix {attempt_no} left {len(items)} item(s) open: "
-                  + ", ".join(f"{i['id']} {i['title']}" for i in items))
-            before = pr.git(ctx.worktree, "rev-parse", "HEAD")
-        print("No fix round is left: push anyway, or send them back to the fixer from the menu.")
-    finally:
-        _close_fixer(ctx)
+    fix_once(ctx, rnd, items, attempt_no)
 
 
 # ---- the base merged in before a fix ---------------------------------------------------
@@ -838,32 +894,16 @@ def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: 
         folder = run.new_step_dir(name)
         return ctx.runner(
             "fix", spec, fix_prompt(ctx, rnd, listed, folder), name=name, folder=folder, check=check,
-            keep_open=True, ask=implement.blocked,
+            ask=implement.blocked,
         )
 
-    kept, step = _kept_fixer(ctx), None
-    if kept:
-        folder = run.new_step_dir(name)
-        step = ctx.runner.resume(
-            "fix", kept["kind"], kept["name"], kept["pane"], fix_prompt(ctx, rnd, listed, folder, resumed=True),
-            name=name, folder=folder, check=check, keep_open=True, ask=implement.blocked,
-        )
-        if step.outcome != "success":
-            _close_fixer(ctx)
-    if step is None or step.outcome != "success":
-        step = pragents.attempt(ctx, chain, start)
-        kept = None
+    step = pragents.attempt(ctx, chain, start)
     if step.outcome != "success":
         if pr.git(wt, "status", "--porcelain"):
             message = f"placido: pr fix failed ({step.outcome}, {run.path.name})"
             pr.git(wt, "stash", "push", "--include-untracked", "-m", message)
             run.event("worktree.stashed", message=message)
         raise PRStop(f"the fix did not finish ({step.outcome}); see {step.path}")
-    # Kept open from here, so that the end of the fix closes it whatever stops it next.
-    run.event(
-        "pr.kept_open", round=rnd.number, role="fix", step=step.path.name, name=kept["name"] if kept else step.agent,
-        pane=kept["pane"] if kept else step.pane, kind=kept["kind"] if kept else chain.current.agent,
-    )
     data = json.loads((step.path / "resolutions.json").read_text(encoding="utf-8"))
     counts = {k: sum(1 for r in data["resolutions"] if r.get("status") == k) for k in RESOLUTIONS}
     result = step.path / "result.md"
@@ -880,75 +920,7 @@ def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: 
     pr.settle(ctx, rnd, f"fix {attempt_no}")
     print(f"\nfix {attempt_no}: {counts['fixed']} fixed, {counts['disputed']} disputed"
           + (f"; committed as {commit[:12]}, not pushed" if commit else "; no code changed"))
-    if counts["disputed"]:
-        print("The comment may name findings the fix disputed: edit it before posting.")
     return step.path
-
-
-def _kept_fixer(ctx: Context) -> dict[str, Any] | None:
-    """The fixer kept open after its last fix: a later fix resumes it, since what the
-    check left open is about the fixer's own work (decided 2026-10-16). Only the
-    round's can be open: a new round closes every agent kept open."""
-
-    kept = [a for a in pr.open_agents(ctx.run.path) if a.get("role") == "fix"]
-    return kept[-1] if kept else None
-
-
-def _close_fixer(ctx: Context) -> None:
-    kept = _kept_fixer(ctx)
-    if kept:
-        ctx.runner.close_agent(kept["name"], kept["pane"], ctx.run.path / "steps" / kept["step"], kept["kind"])
-        ctx.run.event("pr.agent_closed", name=kept["name"])
-
-
-def check_fix(
-    ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: int, before: str, fix_folder: Path,
-) -> dict[str, Any]:
-    """The `verify` role checks one fix: each item's answer, and the fixes themselves."""
-
-    run = ctx.run
-    ids = [f["id"] for f in items]
-    chain = fallback.Chain(
-        run, "verify", fallback.entries(ctx.settings, "verify"), lambda title, body: pr.notify(ctx, title, body),
-        since=lambda event: event.get("event") == "pr.fix_start",
-    )
-    name = f"r{rnd.number}-verify-{attempt_no}"
-    listed = rnd.folder / f"fix-findings-{attempt_no}.json"
-
-    def start(spec: config.AgentSpec) -> Any:
-        folder = run.new_step_dir(name)
-        return ctx.runner(
-            "verify", spec, verify_prompt(ctx, rnd, listed, fix_folder, before, folder), name=name, folder=folder,
-            check=lambda r: prcheck.check_verify(r.parent / "verify.json", ids),
-        )
-
-    step = pragents.attempt(ctx, chain, start)
-    if step.outcome != "success":
-        raise PRStop(f"the check of fix {attempt_no} did not finish ({step.outcome}); see {step.path}")
-    data = json.loads((step.path / "verify.json").read_text(encoding="utf-8"))
-    still = [v["id"] for v in data["verdicts"] if v["verdict"] in prcheck.STILL_OPEN]
-    run.event(
-        "pr.verified", round=rnd.number, attempt=attempt_no, passed=prcheck.verify_passed(data), open=still,
-        new=[f["id"] for f in data.get("findings", [])], step=step.path.name, agent=chain.current.agent,
-    )
-    pr.settle(ctx, rnd, f"the check of fix {attempt_no}")
-    return data
-
-
-def _still_open(data: dict[str, Any], items: list[dict[str, Any]], attempt_no: int) -> list[dict[str, Any]]:
-    """The next fix's items: those the check left open, with its note, then the new
-    problems it found that are not minor, renamed so ids stay unique across fixes."""
-
-    notes = {v["id"]: v for v in data["verdicts"]}
-    still = [
-        {**item, "check": f"{notes[item['id']]['verdict']}: {notes[item['id']]['note']}"}
-        for item in items if notes.get(item["id"], {}).get("verdict") in prcheck.STILL_OPEN
-    ]
-    new = [
-        {**finding, "id": f"V{attempt_no}-{finding['id'][1:]}"}
-        for finding in data.get("findings", []) if finding.get("severity") != "minor"
-    ]
-    return still + new
 
 
 def check_resolutions(path: Path, ids: list[str]) -> list[str]:
@@ -969,36 +941,23 @@ def check_resolutions(path: Path, ids: list[str]) -> list[str]:
     return problems
 
 
-def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path, resumed: bool = False) -> str:
-    """The fixer's task. A resumed fixer has the framing, the skill, and the paths from its
-    first fix, and is told what the check of its own work found instead."""
+def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path) -> str:
+    """The fixer's task: every finding the round kept."""
 
-    if resumed:
-        lines = [
-            f"# The check of your fix to pull request #{ctx.pr.number} left items open",
-            "",
-            "Placido committed your fix, and another agent checked it: what it found still wrong, or"
-            " new, is in the findings file below. Answer each as before, following the same skill.",
-            "",
-        ]
-    else:
-        lines = [
-            f"# Fix the review's findings on pull request #{ctx.pr.number}",
-            "",
-            pragents.FRAMING,
-            "",
-            f"Follow the placido pr-fix skill in {pragents.SKILLS / 'pr-fix' / 'SKILL.md'}.",
-            "",
-            *pragents._paths_block(ctx, rnd),
-            pragents.notes_line(rnd, "fix", "pr"),
-            f"- **The final review:** {rnd.folder / 'final.md'}",
-        ]
-    lines.append(
-        f"- **The findings to fix, all of them:** {listed}. An item with a `check` names what the"
-        " check of an earlier fix still found wrong."
-    )
+    lines = [
+        f"# Fix the review's findings on pull request #{ctx.pr.number}",
+        "",
+        pragents.FRAMING,
+        "",
+        f"Follow the placido pr-fix skill in {pragents.SKILLS / 'pr-fix' / 'SKILL.md'}.",
+        "",
+        *pragents._paths_block(ctx, rnd),
+        pragents.notes_line(rnd, "fix", "pr"),
+        f"- **The final review:** {rnd.folder / 'final.md'}",
+        f"- **The findings to fix, all of them:** {listed}",
+    ]
     merged = pr.done(ctx.run.path, "pr.base_merged", rnd.number)
-    if merged and not resumed:
+    if merged:
         lines.append(
             f"- **The base:** placido merged {ctx.pr.base} ({merged['tip'][:12]}) into the branch before you, as"
             f" {merged['commit'][:12]}, so you fix what will land (`git -C {ctx.worktree} show --remerge-diff"
@@ -1011,37 +970,10 @@ def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path, resumed: bo
         f"- **Paths that run on this machine:** {host}. Change them only when a finding needs it:"
         " placido shows the change to the user, who approves it before anything runs it.",
         f"- **Gates:** {gates}. Placido runs them after you and commits only when they pass, so"
-        " run only the narrow tests for what you change.",
+        " run only the narrow tests for what you change. Then a new round reviews the pull request"
+        " with your fixes in full, as it reviewed the contributor's head.",
         decisions.prompt_line(ctx.run.path, pragents.OVER),
         f"- **Write:** {folder / 'resolutions.json'} and the result file.",
-    ]
-    menu_ = config.command_menu(ctx.settings)
-    return "\n".join(lines) + "\n\n" + (menu_ or "The project defines no commands.\n")
-
-
-def verify_prompt(ctx: Context, rnd: Round, listed: Path, fix_folder: Path, before: str, folder: Path) -> str:
-    head = pr.git(ctx.worktree, "rev-parse", "HEAD")
-    fixes = (f"`git -C {ctx.worktree} log -p --first-parent --remerge-diff {before[:12]}..{head[:12]}`"
-             f" (a merge of {ctx.pr.base} shows only what its conflicts were resolved to)" if head != before
-             else "none: the fixer changed no code, disputing every item")
-    lines = [
-        f"# Check the fixes to pull request #{ctx.pr.number}",
-        "",
-        pragents.FRAMING,
-        "",
-        f"Follow the placido pr-verify skill in {pragents.SKILLS / 'pr-verify' / 'SKILL.md'}.",
-        "",
-        *pragents._paths_block(ctx, rnd),
-        pragents.notes_line(rnd, "review", "pr"),
-        f"- **The final review:** {rnd.folder / 'final.md'}",
-        f"- **The findings this fix answered:** {listed}",
-        f"- **The fixer's answers:** {fix_folder / 'resolutions.json'}",
-        f"- **The fixes:** {fixes}. The worktree is at {head[:12]}; leave it so, with nothing"
-        " changed or added: placido checks.",
-        decisions.prompt_line(ctx.run.path, pragents.OVER),
-        "- **Mutations:** `placido mutate <file> --replace \"<old>\" --with \"<new>\" -- <narrow test"
-        " command>`, which restores the file however it ends.",
-        f"- **Write:** {folder / 'verify.json'} (new problems and untested behaviour as V1, V2, …).",
     ]
     menu_ = config.command_menu(ctx.settings)
     return "\n".join(lines) + "\n\n" + (menu_ or "The project defines no commands.\n")
@@ -1062,6 +994,7 @@ ACTIONS: dict[str, Callable[[Context, Round, State, Ask], None]] = {
     "edit": edit,
     "edit-merge": edit_merge,
     "fix": fix,
+    "review": review_here,
     "last": last,
     "push": push,
     "post": post,

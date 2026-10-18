@@ -17,15 +17,18 @@ own: a worktree and the stack the project's setup brings up there (`[pr] paralle
 with it off, one after the other in the pull request's own worktree, since two agents
 in one worktree and one stack would spoil each other's mutations and test runs). Each,
 resumed with its context, then checks the others' findings, and a judge settles them
-all into the final review: the findings kept and who found each, a verdict, whether
-the fixes are made here or go back to the contributor (`[pr] contributor_share`), and
-the drafts of the comment and the squash message. Nothing is posted, pushed, merged,
-or closed until the user picks it at the menu (placido/prmenu.py).
+all into the final review: the findings kept and who found each, a verdict, and the
+drafts of the comment and the squash message. Nothing is posted, pushed, merged, or
+closed until the user picks it at the menu (placido/prmenu.py).
 
 A run belongs to the pull request, `pr-<number>`, with a worktree on the branch
-`placido/pr-<number>`. Each new head the contributor pushes starts a round, whose
-reviewers verify the earlier round's items. Every phase is an event, so a stopped
-review resumes where it was. `placido close pr-<number>` ends it.
+`placido/pr-<number>`. Each new head the contributor pushes starts a round, and so does
+every answer made here to a round's review: the fixes on their branch, the base merged
+in for them, and the user's own commits. Its reviewers check each item the round before
+kept, and review the whole change again, so nothing goes out that a full review has not
+read (decided 2026-10-17, after #611's fixes went out read by one agent alone). Every
+phase is an event, so a stopped review resumes where it was. `placido close
+pr-<number>` ends it.
 
 This module holds the run, its rounds, the files every agent reads, the host paths,
 and the commands placido runs; the agents and their order are in placido/pragents.py,
@@ -107,6 +110,7 @@ class Round:
     base: str  # its merge base with the base branch
     folder: Path  # placido's files for the round: the pull request, the diff, the gates, the final review
     previous: int | None  # the last round judged before this one, whose items this one verifies
+    here: bool = False  # it reviews the changes made here on the branch, not a head the contributor pushed
 
 
 @dataclass
@@ -274,11 +278,21 @@ def create_run(
 
 def _round(run_dir: Path, event: dict[str, Any]) -> Round:
     number = int(event["round"])
-    return Round(number, event["head"], event["base"], run_dir / "rounds" / str(number), event.get("previous"))
+    return Round(
+        number, event["head"], event["base"], run_dir / "rounds" / str(number), event.get("previous"),
+        bool(event.get("here")),
+    )
 
 
 def rounds(run_dir: Path) -> list[Round]:
     return [_round(run_dir, e) for e in runlog.read_events(run_dir) if e.get("event") == "pr.round"]
+
+
+def contributor_round(run_dir: Path, rnd: Round) -> Round:
+    """The latest round up to rnd that reviewed a head the contributor pushed."""
+
+    found = [r for r in rounds(run_dir) if r.number <= rnd.number and not r.here]
+    return found[-1] if found else rnd
 
 
 def round_events(run_dir: Path, kind: str, number: int) -> list[dict[str, Any]]:
@@ -316,32 +330,45 @@ def expected_head(ctx: Context, rnd: Round) -> str:
 
 
 def current_round(ctx: Context) -> Round:
-    """The round to work on: the latest, while the pull request's head is still the one
-    it reviewed, or the fixes made here; otherwise a new round on the new head."""
+    """The round to work on: a new one on the worktree's head once the latest round's
+    review was answered there, by a fix or by the user's own commits; a new one on the
+    pull request's head once the contributor pushed what the worktree lacks; otherwise
+    the latest."""
 
-    run, head = ctx.run, ctx.pr.head_sha
+    run, head, wt = ctx.run, ctx.pr.head_sha, ctx.worktree
     latest = rounds(run.path)
     if latest:
         last = latest[-1]
-        local = git(ctx.worktree, "rev-parse", "HEAD")
+        local = git(wt, "rev-parse", "HEAD")
         adopt(ctx, last, local)
-        fixes = commits_here(run.path, last.number)
-        if fixes and local == fixes[-1] and not is_ancestor(ctx.worktree, local, head):
-            if head != last.head and head not in fixes:
-                raise PRStop(
-                    f"the contributor pushed {head[:12]} while the commits made here ({local[:12]}) are not"
-                    " pushed yet. Look at both, then push the fixes by hand or drop them"
-                    f" (git -C {ctx.worktree} reset --hard {head[:12]}), and run placido pr again"
-                )
-            return last  # the fixes wait to be pushed from the menu
-        if head == last.head or head in fixes:
-            follow(ctx, head)
-            return last
+        if is_ancestor(wt, head, local):  # the pull request holds nothing the worktree lacks
+            if not answered(run.path, last):
+                return last
+            if git(wt, "status", "--porcelain"):  # the round's agents and gates would put them back
+                raise PRStop(f"{wt} has uncommitted changes. Commit them, and the next round reviews them"
+                             f" with the rest, or drop them (git -C {wt} status); then run placido pr again")
+            return new_round(ctx, local, here=True)
     follow(ctx, head)
+    return new_round(ctx, head)
+
+
+def answered(run_dir: Path, rnd: Round) -> bool:
+    """Whether the round's review was answered here: judged, then a fix made, with code
+    or disputes alone, or the user's own commits taken in. A new round reviews that."""
+
+    return done(run_dir, "pr.judged", rnd.number) is not None and any(
+        round_events(run_dir, kind, rnd.number) for kind in ("pr.fixed", "pr.adopted")
+    )
+
+
+def new_round(ctx: Context, head: str, here: bool = False) -> Round:
+    run = ctx.run
+    latest = rounds(run.path)
     base = git(ctx.root, "merge-base", base_ref(ctx.pr.base), head)
     judged = [e["round"] for e in runlog.read_events(run.path) if e.get("event") == "pr.judged"]
     number = latest[-1].number + 1 if latest else 1
-    event = run.event("pr.round", round=number, head=head, base=base, previous=judged[-1] if judged else None)
+    event = run.event("pr.round", round=number, head=head, base=base, previous=judged[-1] if judged else None,
+                      **({"here": True} if here else {}))
     close_agents(ctx)  # agents a stopped round left open
     return _round(run.path, event)
 
@@ -351,8 +378,9 @@ def adopt(ctx: Context, rnd: Round, local: str) -> None:
     fixes made here are. They are the user's, or an agent's the user ran there, such as
     one the menu opened to answer questions: a contributor's arrive by fetch, and only
     follow() brings the worktree to them. Before, such a commit, once pushed, read as
-    the contributor's and started a new round of reviews (#595, 2026-10-17). Their
-    change to a host path is the user's, so it is trusted as an approved fix's is."""
+    the contributor's (#595, 2026-10-17). Taken in, they answer the round's review as a
+    fix does, and the next round reviews them in full. Their change to a host path is
+    the user's, so it is trusted as an approved fix's is."""
 
     wt, expected = ctx.worktree, expected_head(ctx, rnd)
     if local == expected or not is_ancestor(wt, expected, local):
@@ -363,8 +391,8 @@ def adopt(ctx: Context, rnd: Round, local: str) -> None:
     ctx.run.event("pr.adopted", round=rnd.number, commit=local, commits=commits, host_files=host)
     if host:
         ctx.run.event("pr.host_change_committed", round=rnd.number, commit=local, files=host, by="user")
-    print(f"placido: {len(commits)} commit(s) made in the worktree, up to {local[:12]}, are yours: they join"
-          f" round {rnd.number} rather than start a new one")
+    print(f"placido: {len(commits)} commit(s) made in the worktree, up to {local[:12]}, are yours, not the"
+          " contributor's: a new round reviews them in full")
 
 
 def follow(ctx: Context, head: str) -> None:
@@ -383,7 +411,11 @@ def follow(ctx: Context, head: str) -> None:
         return
     ours = [c for c in commits_here_all(ctx.run.path) if is_ancestor(wt, c, current)]
     if any(not is_ancestor(wt, c, head) for c in ours):
-        raise PRStop(f"{wt} holds commits made here that {head[:12]} lacks; push or drop them first")
+        raise PRStop(
+            f"the contributor pushed {head[:12]} while the commits made here ({current[:12]}) are not pushed"
+            " yet. Look at both, then push the commits made here by hand or drop them"
+            f" (git -C {wt} reset --hard {head[:12]}), and run placido pr again"
+        )
     git(wt, "reset", "-q", "--hard", head)  # the contributor rewrote the branch; nothing of ours is lost
     ctx.run.event("pr.followed", head=head, rewritten=True)
 
@@ -409,7 +441,11 @@ def write_data(ctx: Context, rnd: Round) -> None:
     )
     if rnd.previous is not None:
         before = round_by_number(ctx.run.path, rnd.previous).head
-        if is_ancestor(wt, before, rnd.head):
+        if rnd.here:  # commit by commit; a merge of the base shows only how its conflicts were resolved
+            text = git(wt, "log", "-p", "--first-parent", "--remerge-diff", f"{before}..{rnd.head}") + "\n"
+            if not text.strip():
+                text = "No code changed since the round before.\n"
+        elif is_ancestor(wt, before, rnd.head):
             text = git(wt, "diff", before, rnd.head) + "\n"
         else:
             text = f"The contributor rewrote the branch since {before[:12]}; read the whole change in diff.patch.\n"
@@ -661,6 +697,12 @@ def trust(ctx: Context, rnd: Round) -> None:
         run.event("pr.trust", round=rnd.number, changed=changed)
     if not changed:
         return
+    if rnd.here and rnd.previous is not None:
+        before = trusted(run.path, round_by_number(run.path, rnd.previous))
+        if not git(ctx.worktree, "diff", "--name-only", before, rnd.head, "--", *paths):
+            # As the round before trusted them: changed here only as the user approved.
+            run.event("pr.trust_approved", round=rnd.number, head=rnd.head, files=changed, carried=rnd.previous)
+            return
     diff = rnd.folder / "host-paths.diff"
     diff.write_text(git(ctx.worktree, "diff", rnd.base, rnd.head, "--", *paths) + "\n", encoding="utf-8")
     print(f"\n#{ctx.pr.number} changes files that run on this machine ({', '.join(paths)}):")

@@ -90,8 +90,8 @@ class FakeHub:
 
 
 class FakeRunner:
-    """Plays the scan, the reviewers, the judge, and the fixer: each step's name picks
-    what it writes. A check that rejects what it wrote fails the test, through problems."""
+    """Plays the scan, the reviewers, the judge, the decisions, and the fixer: each step's
+    name picks what it writes, and the round it is in. A check that rejects what it wrote fails the test, through problems."""
 
     def __init__(self, run: runlog.Run, worktree: Path) -> None:
         self.run, self.worktree = run, worktree
@@ -101,12 +101,15 @@ class FakeRunner:
         self.failures: dict[str, list[str]] = {}  # step name -> outcomes of its next attempts
         self.scan: dict = {"verdict": "clear", "concerns": []}
         self.findings: dict[str, list[dict]] = {"A": [finding("A", 1)], "B": [finding("B", 1)]}
-        self.earlier: list[str] = []  # earlier items every reviewer and the judge answer
+        # Per round, what its reviewers find; a round on the changes made here finds
+        # nothing unless named.
+        self.findings_in: dict[int, dict[str, list[dict]]] = {}
+        self.earlier: list[str] | None = None  # earlier items every reviewer and the judge answer; None: the round before's kept
+        self.number = 1  # the round of the step being played
         self.final: dict | None = None  # the judge's final.json; None: one built from the findings
         self.during: dict[str, Any] = {}  # step name -> something the agent does to the worktree
         self.fix_change = True
         self.resolution: str | None = "print('hi there, all')\n"  # what a conflict resolves to; None: left as is
-        self.verify: list[dict] = []  # per check of a fix: its verify.json; none left: all resolved
         self.decided: dict | None = None  # the user's decisions.json; None: every one as recommended
         self.drafts: dict[str, str] = {}  # what the decide step writes over its copies of the drafts
         self.env: dict[str, str] = {}
@@ -144,6 +147,7 @@ class FakeRunner:
             return StepResult(kind, folder, f"agent-{folder.name}", "w1:p9", Failure(kind, f"{kind} happened"))
         if name in self.during:
             self.during[name](self.worktree)
+        self.number = int(name.split("-", 1)[0][1:])
         kind = name.split("-", 1)[1]
         getattr(self, "_" + kind.split("-")[0])(folder, kind)
         result = folder / "result.md"
@@ -159,10 +163,27 @@ class FakeRunner:
         (folder / "scan.md").write_text("checked\n")
         (folder / "scan.json").write_text(json.dumps(self.scan))
 
+    def _round_event(self, number: int) -> dict:
+        return next(e for e in runlog.read_events(self.run.path) if e.get("event") == "pr.round" and e["round"] == number)
+
+    def found(self, number: int) -> dict[str, list[dict]]:
+        if number in self.findings_in:
+            return self.findings_in[number]
+        return {code: [] for code in self.findings} if self._round_event(number).get("here") else self.findings
+
+    def earlier_for(self, number: int) -> list[str]:
+        if self.earlier is not None:
+            return self.earlier
+        previous = self._round_event(number).get("previous")
+        if previous is None:
+            return []
+        final = json.loads((self.run.path / "rounds" / str(previous) / "final.json").read_text())
+        return [f["id"] for f in final["findings"] if f["decision"] == "keep"]
+
     def _review(self, folder: Path, kind: str) -> None:
         code = kind.rsplit("-", 1)[1].upper()
-        earlier = [{"item": i, "status": "addressed", "note": "fixed"} for i in self.earlier]
-        data = {"findings": self.findings[code], "tests": {"fail_without_fix": "yes", "note": "ran", "mutations": [
+        earlier = [{"item": i, "status": "addressed", "note": "fixed"} for i in self.earlier_for(self.number)]
+        data = {"findings": self.found(self.number)[code], "tests": {"fail_without_fix": "yes", "note": "ran", "mutations": [
             {"location": "greet.py:1", "change": "dropped it", "command": "unit", "outcome": "killed"}]},
             "standards": [], "preexisting": [], "earlier": earlier}
         (folder / "review.md").write_text(f"review {code}\n")
@@ -170,31 +191,36 @@ class FakeRunner:
 
     def _crosscheck(self, folder: Path, kind: str) -> None:
         code = kind.rsplit("-", 1)[1].upper()
-        others = [f["id"] for other, items in self.findings.items() if other != code for f in items]
+        others = [f["id"] for other, items in self.found(self.number).items() if other != code for f in items]
         verdicts = [{"id": i, "verdict": "confirmed", "note": "reproduced"} for i in others]
         (folder / "crosscheck.md").write_text("checked\n")
         (folder / "crosscheck.json").write_text(json.dumps({"verdicts": verdicts}))
 
     def _judge(self, folder: Path, kind: str) -> None:
-        final = self.final or self.default_final()
+        final = self.final or self.default_final(self.number)
         (folder / "final.json").write_text(json.dumps(final))
         (folder / "final.md").write_text("# Final\n")
         (folder / "comment.md").write_text("Thanks for this.\n\n1. Fix greet.py.\n")
         (folder / "merge.md").write_text("Add a greeting (#7)\n\nIt greets.\n")
 
-    def default_final(self) -> dict:
-        ids = [f["id"] for items in self.findings.values() for f in items]
+    def default_final(self, number: int | None = None) -> dict:
+        """The judge's final.json for round number's findings; without one, for the
+        findings every round has by default."""
+
+        found = self.found(number) if number else self.findings
+        earlier = self.earlier_for(number) if number else self.earlier or []
+        ids = [f["id"] for items in found.values() for f in items]
+        minor = all(f.get("severity") == "minor" for items in found.values() for f in items)
         findings = [{
-            "id": "F1", "title": "the greeting", "area": "bugs", "severity": "significant", "size": "small",
+            "id": "F1", "title": "the greeting", "area": "bugs", "severity": "minor" if minor else "significant",
+            "size": "small",
             "location": "greet.py:1", "description": "d", "fix": "f", "sources": ids,
             "agreement": "all", "decision": "keep", "reason": "both found it",
         }] if ids else []
-        verdict, route = ("fix-here", "here") if ids else ("merge", "none")
         return {
-            "verdict": verdict, "summary": "It greets, nearly.", "findings": findings,
-            "routing": {"share": 0.1, "estimate": "10 lines of 100", "route": route},
+            "verdict": "fix-here" if ids else "merge", "summary": "It greets, nearly.", "findings": findings,
             "decisions": [], "preexisting": [{"title": "old bug", "location": "x.py", "description": "d", "security": True}],
-            "earlier": [{"item": i, "status": "addressed", "note": "fixed"} for i in self.earlier],
+            "earlier": [{"item": i, "status": "addressed", "note": "fixed"} for i in earlier],
         }
 
     def _decide(self, folder: Path, kind: str) -> None:
@@ -209,15 +235,6 @@ class FakeRunner:
         for name, text in self.drafts.items():
             (folder / name).write_text(text)
 
-    def _verify(self, folder: Path, kind: str) -> None:
-        listed = sorted((self.run.path / "rounds").glob("*/fix-findings-*.json"), key=lambda p: p.stat().st_mtime)
-        ids = [f["id"] for f in json.loads(listed[-1].read_text())["findings"]]
-        data = self.verify.pop(0) if self.verify else {
-            "verdicts": [{"id": i, "verdict": "resolved", "note": "the test fails without the fix"} for i in ids],
-            "findings": [],
-        }
-        (folder / "verify.json").write_text(json.dumps(data))
-
     def _merge(self, folder: Path, kind: str) -> None:
         conflicted = sh(self.worktree, "git", "diff", "--name-only", "--diff-filter=U").split()
         if self.resolution is not None:
@@ -231,7 +248,7 @@ class FakeRunner:
         resolutions = [{"id": i, "status": "fixed", "note": "changed greet.py, test added"} for i in ids]
         (folder / "resolutions.json").write_text(json.dumps({"resolutions": resolutions}))
         if self.fix_change:
-            (self.worktree / "greet.py").write_text(f"print('hello {kind}')\n")
+            (self.worktree / "greet.py").write_text(f"print('hello r{self.number} {kind}')\n")
             (folder / "result.md").write_text("Greet properly\n\nThe review asked for it.\n\n## Evidence\n- unit passed\n")
         else:
             (folder / "result.md").write_text("No code changes\n")
@@ -329,7 +346,8 @@ class ReviewTest(PRTestCase):
         for name in ("final.json", "final.md", "comment.md", "merge.md", "pr.md", "diff.patch", "gates.md"):
             self.assertTrue((rnd.folder / name).is_file(), name)
         judged = runlog.last_event(self.run.path, "pr.judged")
-        self.assertEqual((judged["verdict"], judged["route"], judged["kept"]), ("fix-here", "here", 1))
+        self.assertEqual((judged["verdict"], judged["kept"]), ("fix-here", 1))
+        self.assertNotIn("route", judged)
 
     def test_the_scan_runs_confined_to_the_change_and_its_own_folder(self):
         rnd = pragents.review(self.ctx)
@@ -578,6 +596,7 @@ class RoundTest(PRTestCase):
     def test_a_reviewer_must_answer_every_earlier_item(self):
         pragents.review(self.ctx)
         self.push_new_head({"greet.py": "again\n"}, self.head)
+        self.runner.earlier = []
         with self.assertRaisesRegex(pr.PRStop, "reviewer A did not finish"):
             pragents.review(self.ctx)
         self.assertIn("earlier item F1 needs an entry", self.runner.problems[0][1][0])
@@ -591,17 +610,70 @@ class RoundTest(PRTestCase):
         self.assertTrue(runlog.last_event(self.run.path, "pr.followed")["rewritten"])
         self.assertIn("rewrote the branch", (rnd.folder / "since.patch").read_text())
 
-    def test_the_head_placido_pushed_does_not_start_a_round(self):
+    def fixed(self, commit: bool = True, name: str = "greet.py") -> str:
+        if commit:
+            (self.worktree / name).write_text("fixed here\n")
+            git_commit(self.worktree, "fix")
+        fix = sh(self.worktree, "git", "rev-parse", "HEAD")
+        step = self.run.new_step_dir("r1-fix-1")
+        (step / "resolutions.json").write_text('{"resolutions": [{"id": "F1", "status": "fixed", "note": "n"}]}')
+        self.run.event("pr.fixed", round=1, attempt=1, commit=fix if commit else None, step=step.name)
+        return fix
+
+    def test_a_fix_starts_a_round_that_reviews_the_branch_with_it_in_full(self):
+        pragents.review(self.ctx)
+        fix = self.fixed()
         rnd = pragents.review(self.ctx)
-        (self.worktree / "greet.py").write_text("fixed here\n")
-        fix = git_commit(self.worktree, "fix")
-        self.run.event("pr.fixed", round=1, commit=fix, step="x")
-        sh(self.repo, "git", "push", "-q", "-f", str(self.origin), f"{fix}:refs/pull/7/head")
-        pr.fetch(self.repo, "main", 7)
-        self.hub.pull = self.pull(fix)
-        self.ctx.pr = self.hub.pull
-        again = pragents.review(self.ctx)
-        self.assertEqual(again.number, rnd.number)
+        self.assertEqual((rnd.number, rnd.previous, rnd.head, rnd.here), (2, 1, fix, True))
+        self.assertEqual(
+            [n for n in self.runner.names() if n.startswith("r2-")],
+            ["r2-review-a", "r2-review-b", "r2-crosscheck-a", "r2-crosscheck-b", "r2-judge"],
+        )  # the contributor's code is as round 1 scanned it
+        self.assertIn("fixed here", (rnd.folder / "since.patch").read_text())
+        self.assertIn("fixed here", (rnd.folder / "diff.patch").read_text())  # the whole change, the fix in it
+        task = next(c["task"] for c in self.runner.calls if c["name"] == "r2-review-a")
+        self.assertIn("kept findings whether this head addresses it: F1", task)
+        self.assertIn("r1-fix-1/resolutions.json. Check each answer as the skill's section 4 says.", task)
+        self.assertIn(f"The contributor's own head is {self.head[:12]}", task)
+        self.assertIn("steps/01-r1-scan/scan.md", task)  # round 1's scan stands
+        judge = next(c["task"] for c in self.runner.calls if c["name"] == "r2-judge")
+        self.assertIn(f"--remerge-diff {self.head[:12]}..{fix[:12]}`, on the contributor's branch", judge)
+        self.assertEqual(self.runner.problems, [])
+        self.assertEqual(pragents.review(self.ctx).number, 2)  # reviewed once
+        pushed = self.push_new_head({"greet.py": "theirs\n"}, fix)  # on top of the fix, once it was pushed
+        self.assertEqual((pragents.review(self.ctx).number, pr.rounds(self.run.path)[-1].here), (3, False))
+        self.assertEqual(pr.rounds(self.run.path)[-1].head, pushed)
+
+    def test_a_host_path_changed_here_without_approval_is_asked_about_again(self):
+        pragents.review(self.ctx)
+        self.fixed(name=".placido/stack.sh")  # a fix's commit whose change to a host path nobody approved
+        with self.assertRaisesRegex(pr.PRStop, "stopped: the pull request changes host paths"):
+            pragents.review(self.ctx)
+        self.assertEqual(self.asked, ["Have you read that change, and may it run here?"])
+        self.assertNotIn("pr.trust_approved", self.kinds())
+        self.assertNotIn("r2-review-a", self.runner.names())
+
+    def test_a_fix_that_changed_no_code_is_reviewed_too(self):
+        pragents.review(self.ctx)
+        head = self.fixed(commit=False)  # every finding disputed
+        rnd = pragents.review(self.ctx)
+        self.assertEqual((rnd.number, rnd.head, rnd.here), (2, head, True))
+        self.assertEqual((rnd.folder / "since.patch").read_text(), "No code changed since the round before.\n")
+
+    def test_no_round_on_the_changes_made_here_before_the_judge(self):
+        self.runner.failures["r1-judge"] = ["crashed"]
+        with self.assertRaises(pr.PRStop):
+            pragents.review(self.ctx)
+        self.fixed()
+        self.assertEqual(pragents.review(self.ctx).number, 1)
+
+    def test_uncommitted_changes_stop_a_round_that_would_put_them_back(self):
+        pragents.review(self.ctx)
+        self.fixed()
+        (self.worktree / "greet.py").write_text("half done\n")
+        with self.assertRaisesRegex(pr.PRStop, "has uncommitted changes. Commit them, and the next round reviews them"):
+            pragents.review(self.ctx)
+        self.assertEqual(len(pr.rounds(self.run.path)), 1)
 
     def test_unpushed_fixes_and_a_new_head_stop_rather_than_lose_either(self):
         pragents.review(self.ctx)
@@ -615,8 +687,9 @@ class RoundTest(PRTestCase):
 
 
 class AdoptTest(PRTestCase):
-    """Commits made in the worktree on top of placido's are the user's: they join the
-    round rather than read as the contributor's and start a new one."""
+    """Commits made in the worktree on top of placido's are the user's: taken into the
+    round as a fix's are, not read as the contributor's, and reviewed in full in a round
+    of their own."""
 
     def yours(self, files: dict[str, str]) -> str:
         for name, text in files.items():
@@ -630,28 +703,29 @@ class AdoptTest(PRTestCase):
         self.hub.pull = self.pull(commit)
         self.ctx.pr = self.hub.pull
 
-    def test_your_pushed_commit_joins_the_round(self):
-        rnd = pragents.review(self.ctx)
+    def test_your_pushed_commit_is_reviewed_in_a_round_of_its_own(self):
+        pragents.review(self.ctx)
         mine = self.yours({"greet.py": "mine\n"})
         self.publish(mine)
         with contextlib.redirect_stdout(io.StringIO()) as out:
             again = pragents.review(self.ctx)
-        self.assertEqual(again.number, rnd.number)
+        self.assertEqual((again.number, again.head, again.here), (2, mine, True))
         self.assertEqual(runlog.last_event(self.run.path, "pr.adopted")["commits"], [mine])
         self.assertEqual(pr.commits_here(self.run.path, 1), [mine])
-        self.assertIn("are yours: they join round 1", out.getvalue())
-        self.assertEqual(len(pr.rounds(self.run.path)), 1)
+        self.assertIn("are yours, not the contributor's: a new round reviews them in full", out.getvalue())
+        task = next(c["task"] for c in self.runner.calls if c["name"] == "r2-review-a")
+        self.assertIn("How the round before was answered:** the maintainer's own commits", task)
 
-    def test_your_commit_on_a_pushed_fix_waits_to_be_pushed(self):
-        rnd = pragents.review(self.ctx)
+    def test_your_commit_on_a_fix_is_reviewed_with_it(self):
+        pragents.review(self.ctx)
         fix = self.yours({"greet.py": "fixed here\n"})
         self.run.event("pr.fixed", round=1, commit=fix, step="x")
         self.publish(fix)
         mine = self.yours({"greet.py": "mine\n"})
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(pragents.review(self.ctx).number, rnd.number)
+            self.assertEqual(pragents.review(self.ctx).head, mine)
         self.assertEqual(pr.commits_here(self.run.path, 1), [fix, mine])
-        self.assertEqual(pragents.review(self.ctx).number, rnd.number)  # adopted once
+        self.assertEqual(pragents.review(self.ctx).number, 2)  # adopted and reviewed once
         self.assertEqual(len(pr.round_events(self.run.path, "pr.adopted", 1)), 1)
 
     def test_your_unpushed_commit_and_a_contributor_push_stop_rather_than_lose_either(self):
@@ -666,9 +740,13 @@ class AdoptTest(PRTestCase):
         rnd = pragents.review(self.ctx)
         mine = self.yours({".placido/notes/pr.md": "Run the browser suite too.\n"})
         with contextlib.redirect_stdout(io.StringIO()):
-            pragents.review(self.ctx)
+            again = pragents.review(self.ctx)
         self.assertEqual(runlog.last_event(self.run.path, "pr.adopted")["host_files"], [".placido/notes/pr.md"])
         self.assertEqual(pr.trusted(self.run.path, rnd), mine)
+        carried = runlog.last_event(self.run.path, "pr.trust_approved")
+        self.assertEqual((carried["round"], carried["head"], carried["carried"]), (2, mine, 1))
+        self.assertEqual(self.asked, [])  # approved by committing it, not asked again
+        self.assertEqual(pr.trusted(self.run.path, again), mine)
 
 
 class CreateRunTest(PRTestCase):
@@ -705,9 +783,9 @@ class FinalCheckTest(PRTestCase):
         data.update(overrides)
         return data
 
-    def check(self, data: dict, ids=("A1", "B1"), earlier=(), share=0.5) -> list[str]:
+    def check(self, data: dict, ids=("A1", "B1"), earlier=()) -> list[str]:
         (self.folder / "final.json").write_text(json.dumps(data))
-        return prcheck.check_final(self.folder, list(ids), list(earlier), share)
+        return prcheck.check_final(self.folder, list(ids), list(earlier))
 
     def test_a_well_formed_final_review_passes(self):
         self.assertEqual(self.check(self.final()), [])
@@ -717,23 +795,19 @@ class FinalCheckTest(PRTestCase):
         data["findings"][0]["sources"] = ["A1"]
         self.assertIn("reviewer finding B1 must be the source of exactly one final finding; it is of 0.", self.check(data))
 
-    def test_the_share_decides_who_fixes(self):
-        data = self.final(routing={"share": 0.6, "estimate": "60 of 100", "route": "here"})
-        problems = self.check(data)
-        self.assertIn("a share of 0.6 against the threshold of 0.5 routes to 'contributor', not 'here'.", problems)
-        self.assertIn('kept findings routed \'contributor\' make the verdict "request-changes" (or "close").', problems)
-        data = self.final(verdict="request-changes", routing={"share": 0.6, "estimate": "60 of 100", "route": "contributor"})
-        self.assertEqual(self.check(data), [])
+    def test_kept_findings_are_fixed_here_however_many(self):
+        self.assertIn('kept findings make the verdict "fix-here" (or "close"), not "merge".',
+                      self.check(self.final(verdict="merge")))
+        self.assertEqual(self.check(self.final(verdict="request-changes")),
+                         ["verdict 'request-changes': use merge, fix-here, close."])
 
     def test_nothing_kept_means_merge(self):
         data = self.final(verdict="fix-here")
         data["findings"][0]["decision"] = "drop"
-        problems = self.check(data)
-        self.assertIn('with no finding kept, the route is "none".', problems)
-        self.assertIn('with no finding kept, the verdict is "merge" (or "close").', problems)
+        self.assertEqual(self.check(data), ['with no finding kept, the verdict is "merge" (or "close"), not "fix-here".'])
 
-    def test_close_routes_nothing(self):
-        self.assertEqual(self.check(self.final(verdict="close", routing={"share": 1, "estimate": "x", "route": "none"})), [])
+    def test_close_whatever_is_kept(self):
+        self.assertEqual(self.check(self.final(verdict="close")), [])
 
     def test_merge_needs_a_squash_subject_of_72_at_most(self):
         (self.folder / "merge.md").write_text("x" * 73 + "\n")
