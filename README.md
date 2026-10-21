@@ -429,8 +429,11 @@ reviewer, the cross-checks, and the judge, checking each finding's fix with a te
 that fails without it, each dispute against its evidence, and the fixes like any new
 code, with a test behind every behaviour they add. What that round keeps is fixed and
 reviewed again, up to `fix_rounds` times before the menu asks you. Push and merge are
-offered only at the head the latest round reviewed, with nothing left from its
-review but minor findings, which the offer names.
+offered only at the head the latest round reviewed, with your own commits on it, and
+nothing left from its review but minor findings, which the offer names. Each action
+reads the pull request and the worktree afresh when you pick it, so a push or a commit
+made while the menu waited is seen; a push over the head while a merge waits for CI
+ends the wait at once, and nothing is merged.
 When the base branch has moved on, the fix first merges it into the branch, as a commit
 of its own, so the fixes are made and gated on what will land; the `fix` role resolves
 any conflict, and only the conflicts. A merge, not a rebase, since the push is never
@@ -441,15 +444,17 @@ approve it; refused, the fixer undoes it and disputes the findings that needed i
 To ask about the work, the menu opens the round's fixer, or its judge when nothing was
 fixed, in a new tab of the workspace: a copy of its session, so placido's own stays as
 it was, started read-only, since a change made there skips the gates a fix gets; what
-it commits once you let it waits for a full review like any change made here.
+it commits once you let it is yours, trusted as your own commits are.
 With neither session at hand, it opens a new agent of the `fix` role's instead, pointed
 at the review's files.
 
 `placido pr 602` again shows the menu again, or, once the contributor has pushed, starts
 a new round whose reviewers check each earlier finding. Commits made in the worktree
-itself, by you or an agent you ran there, are yours, pushed or not: nothing goes out
-until a new round has reviewed them in full, which the menu offers, and `placido pr`
-starts. Changes left uncommitted stop it, rather than be put back by its agents. Typed outside its workspace, it
+itself, by you or an agent you ran there, are yours, pushed or not, and trusted: they
+go out with the head the latest round reviewed, and no round reviews them for their
+own sake (a later fix's round reads them with it). A commit that only claims to be
+yours, pushed to the pull request from anywhere else, is the contributor's, and starts
+a round. Changes left uncommitted stop a new round, rather than be put back by its agents. Typed outside its workspace, it
 goes on there, or only switches you there while the review is still going. `placido close pr-602` removes
 every lane's worktree and stack, putting the host paths back first (only your own
 uncommitted changes stop it, not what that puts back), and deletes the

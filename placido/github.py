@@ -171,19 +171,24 @@ def _title(record: dict[str, Any], run_dir: Path) -> str:
 def _await_ci(
     github: GitHub, number: int, head: str, limit: float,
     sleep: Callable[[float], None], clock: Callable[[], float],
-    progress: Callable[[str, float], None] = lambda text, seconds: None,
+    progress: Callable[[str, float], None] = lambda text, seconds: None, arrived: bool = False,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Wait for the checks on head, the commit just pushed, to conclude: the outcome
     and the failed checks. Until GitHub has moved the pull request to head, its checks
     are the previous commit's: #519 read a fixed failure as red again, one second
     after pushing the fix (2026-10-07). Every PROGRESS_SECONDS it says what it is
-    still waiting for, so a long CI run is not mistaken for a hung placido."""
+    still waiting for, so a long CI run is not mistaken for a hung placido. With
+    arrived, the pull request is at head already, so another head means it moved on:
+    "moved", at once, where #619's merge waited an hour for a head pushed over
+    (2026-10-21)."""
 
     began = clock()
     moved = clock()
     told = clock()
     while True:
         on_head = github.pr_head(number) == head
+        if arrived and not on_head:
+            return "moved", []
         if on_head:
             found = github.checks(number)
         else:

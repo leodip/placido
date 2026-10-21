@@ -23,10 +23,11 @@ closed until the user picks it at the menu (placido/prmenu.py).
 
 A run belongs to the pull request, `pr-<number>`, with a worktree on the branch
 `placido/pr-<number>`. Each new head the contributor pushes starts a round, and so does
-every answer made here to a round's review: the fixes on their branch, the base merged
-in for them, and the user's own commits. Its reviewers check each item the round before
-kept, and review the whole change again, so nothing goes out that a full review has not
-read (decided 2026-10-17, after #611's fixes went out read by one agent alone). Every
+every fix made here to a round's review, with the base merged in for it. Its reviewers
+check each item the round before kept, and review the whole change again, so no fix
+goes out that a full review has not read (decided 2026-10-17, after #611's fixes went
+out read by one agent alone). The user's own commits are trusted: they go out with the
+head a round reviewed, and start no round (decided 2026-10-21). Every
 phase is an event, so a stopped review resumes where it was. `placido close
 pr-<number>` ends it.
 
@@ -330,10 +331,10 @@ def expected_head(ctx: Context, rnd: Round) -> str:
 
 
 def current_round(ctx: Context) -> Round:
-    """The round to work on: a new one on the worktree's head once the latest round's
-    review was answered there, by a fix or by the user's own commits; a new one on the
-    pull request's head once the contributor pushed what the worktree lacks; otherwise
-    the latest."""
+    """The round to work on: a new one on the worktree's head once a fix answered the
+    latest round's review there; a new one on the pull request's head once the
+    contributor pushed what the worktree lacks; otherwise the latest, the user's own
+    commits taken into it."""
 
     run, head, wt = ctx.run, ctx.pr.head_sha, ctx.worktree
     latest = rounds(run.path)
@@ -354,11 +355,11 @@ def current_round(ctx: Context) -> Round:
 
 def answered(run_dir: Path, rnd: Round) -> bool:
     """Whether the round's review was answered here: judged, then a fix made, with code
-    or disputes alone, or the user's own commits taken in. A new round reviews that."""
+    or disputes alone. A new round reviews that. The user's own commits do not answer
+    it: they are trusted, and go out with the head the round reviewed (decided
+    2026-10-21)."""
 
-    return done(run_dir, "pr.judged", rnd.number) is not None and any(
-        round_events(run_dir, kind, rnd.number) for kind in ("pr.fixed", "pr.adopted")
-    )
+    return done(run_dir, "pr.judged", rnd.number) is not None and bool(round_events(run_dir, "pr.fixed", rnd.number))
 
 
 def new_round(ctx: Context, head: str, here: bool = False) -> Round:
@@ -378,9 +379,11 @@ def adopt(ctx: Context, rnd: Round, local: str) -> None:
     fixes made here are. They are the user's, or an agent's the user ran there, such as
     one the menu opened to answer questions: a contributor's arrive by fetch, and only
     follow() brings the worktree to them. Before, such a commit, once pushed, read as
-    the contributor's (#595, 2026-10-17). Taken in, they answer the round's review as a
-    fix does, and the next round reviews them in full. Their change to a host path is
-    the user's, so it is trusted as an approved fix's is."""
+    the contributor's (#595, 2026-10-17). Taken in, they are trusted, as the user's:
+    they go out with the head the round reviewed, and no round reviews them for their
+    own sake (decided 2026-10-21, after #619's merge waited on a review of the user's
+    own commit). A round that a fix starts later reviews them with it. Their change to
+    a host path is the user's, so it is trusted as an approved fix's is."""
 
     wt, expected = ctx.worktree, expected_head(ctx, rnd)
     if local == expected or not is_ancestor(wt, expected, local):
@@ -392,7 +395,7 @@ def adopt(ctx: Context, rnd: Round, local: str) -> None:
     if host:
         ctx.run.event("pr.host_change_committed", round=rnd.number, commit=local, files=host, by="user")
     print(f"placido: {len(commits)} commit(s) made in the worktree, up to {local[:12]}, are yours, not the"
-          " contributor's: a new round reviews them in full")
+          f" contributor's: trusted, they go out with round {rnd.number}'s reviewed head")
 
 
 def follow(ctx: Context, head: str) -> None:

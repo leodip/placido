@@ -349,6 +349,24 @@ class MergeTest(MenuTestCase):
             self.act("merge", rnd)
         self.assertNotIn("merge", [c[0] for c in self.hub.calls])
 
+    def test_a_push_over_the_head_while_ci_runs_ends_the_wait_at_once(self):
+        rnd, fix = self.fixed_and_pushed()
+        self.hub.ci = [{"name": "unit", "bucket": "pending"}]
+        self.confirms = [True]
+        polls = []
+
+        def sleep(seconds):  # time passes only here, so a wait that went on would end at its limit
+            polls.append(seconds)
+            self.hub.pull = self.pull("f" * 40)  # pushed over, from anywhere
+
+        clock = lambda: float(sum(polls))  # noqa: E731
+        with mock.patch.object(prmenu.time, "sleep", sleep), mock.patch.object(prmenu.time, "monotonic", clock), \
+                self.assertRaisesRegex(pr.PRStop, f"^the pull request moved on from {fix[:12]} while CI ran;"
+                                                  " nothing was merged.$"):
+            self.act("merge", rnd)
+        self.assertEqual(len(polls), 1)
+        self.assertNotIn("merge", [c[0] for c in self.hub.calls])
+
     def test_findings_kept_that_are_not_minor_are_never_merged(self):
         rnd = self.review()  # the head reviewed, nothing made here, F1 kept
         self.assertNotIn("merge", self.keys(rnd))
@@ -437,31 +455,135 @@ class MenuLoopTest(MenuTestCase):
 
 
 class YoursTest(MenuTestCase):
-    def test_your_commit_waits_for_a_full_review_before_anything_goes_out(self):
-        reviewed = self.fixed()
-        (self.worktree / "greet.py").write_text("print('hi there, all')\n")
-        mine = git_commit(self.worktree, "mine")
-        listed, notes = prmenu.options(self.ctx, reviewed, prmenu.state(self.ctx, reviewed))
-        self.assertIn(f"Your 1 commit(s) in the worktree, up to {mine[:12]}, wait for a full review", notes[0])
-        self.assertEqual(dict(listed)["review"], "Review the branch with your 1 commit(s) in full, in round 3: every"
-                                                 " reviewer, the cross-checks, and the judge")
-        self.assertNotIn("push", dict(listed))
-        with self.assertRaisesRegex(pr.PRStop, "nothing is pushed: the changes made here since round 2's review"
-                                               " wait for a full review of their own"):
-            self.act("push", reviewed)
-        self.publish(mine)  # pushed from outside placido
-        with self.assertRaisesRegex(pr.PRStop, "which this review did not cover"):
-            self.act("merge", reviewed)
+    """The user's own commits in the worktree are trusted: they go out with the head the
+    latest round reviewed, and no round reviews them (decided 2026-10-21)."""
+
+    def mine(self, name: str = "mine.txt") -> str:
+        (self.worktree / name).parent.mkdir(parents=True, exist_ok=True)
+        (self.worktree / name).write_text("mine\n")
+        return git_commit(self.worktree, "mine")
+
+    def listed(self, rnd: pr.Round) -> tuple[dict[str, str], list[str]]:
         with redirect_stdout(io.StringIO()):
-            again = self.act("review", reviewed)
-        self.assertEqual((again.number, again.head, again.here), (3, mine, True))
-        self.assertIn(f"pinned to {mine[:12]}", dict(prmenu.options(self.ctx, again, prmenu.state(self.ctx, again))[0])["merge"])
+            listed, notes = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
+        return dict(listed), notes
+
+    def menu_picks(self, rnd: pr.Round, key: str, meanwhile: Callable[[], None]) -> str:
+        """The menu shown, something done meanwhile, then key picked from it."""
+
+        listed, _ = self.listed(rnd)
+        picks = iter([str(list(listed).index(key) + 1), None])
+        shown = io.StringIO()
+
+        def pick(prompt: str) -> str | None:
+            answer = next(picks)
+            if answer is not None:
+                meanwhile()
+            return answer
+
+        with redirect_stdout(shown):
+            prmenu.menu(self.ctx, rnd, pick, self.confirm)
+        return shown.getvalue()
+
+    def test_your_commit_goes_out_with_the_reviewed_head(self):
+        reviewed = self.fixed()
+        mine = self.mine()
+        listed, notes = self.listed(reviewed)
+        self.assertIn(f"Your 1 commit(s) in the worktree, up to {mine[:12]}, are trusted: they go out with the head"
+                      " round 2 reviewed.", notes)
+        self.assertNotIn("review", listed)
+        self.assertRegex(listed["push"], r"^Push the \d commit\(s\) made here, reviewed in full in round 2, with your"
+                                         r" 1 own commit\(s\) on it, trusted, to ")
+        with redirect_stdout(io.StringIO()), self.assertRaisesRegex(
+            pr.PRStop, r"^the pull request lacks \d commit\(s\) made here: push them first$"
+        ):
+            self.act("merge", reviewed)
+        self.confirms = [True]
+        with redirect_stdout(io.StringIO()):
+            self.act("push", reviewed)
+        self.assertEqual(self.fork_head(), mine)
+        self.publish(mine)
+        self.hub.ci = [{"name": "unit", "bucket": "pass"}]
+        self.assertIn(f"pinned to {mine[:12]}", self.listed(reviewed)[0]["merge"])
+        self.confirms = [True]
+        with redirect_stdout(io.StringIO()):
+            self.act("merge", reviewed)
+        self.assertEqual(self.hub.calls[-1][:2], ("merge", mine))
+        self.assertEqual([r.number for r in pr.rounds(self.run.path)], [1, 2])
+
+    def test_a_merge_picked_after_your_push_takes_your_commit(self):
+        """#619: the menu showed the merge; the ask tab committed and pushed; then the user
+        picked the merge from what the menu showed."""
+
+        self.runner.findings = {"A": [], "B": []}
+        rnd = self.review()
+        self.hub.ci = [{"name": "unit", "bucket": "pass"}]
+        self.confirms = [True]
+        mine: list[str] = []
+        self.menu_picks(rnd, "merge", lambda: (mine.append(self.mine()), self.publish(mine[0])))
+        self.assertEqual(self.hub.calls[-1][:2], ("merge", mine[0]))
+
+    def test_a_merge_picked_after_a_contributor_push_merges_nothing(self):
+        self.runner.findings = {"A": [], "B": []}
+        rnd = self.review()
+        self.hub.ci = [{"name": "unit", "bucket": "pass"}]
+        self.confirms = [True]
+
+        def contributor_pushes() -> None:
+            sh(self.repo, "git", "checkout", "-q", "-B", "late", self.head)
+            (self.repo / "late.txt").write_text("late\n")
+            late = git_commit(self.repo, "late")
+            sh(self.repo, "git", "checkout", "-q", "main")
+            self.publish(late)
+
+        shown = self.menu_picks(rnd, "merge", contributor_pushes)
+        self.assertNotIn("merge", [c[0] for c in self.hub.calls])
+        self.assertIn("which this review did not cover", shown)
+
+    def test_a_commit_off_the_reviewed_head_is_not_pushed(self):
+        reviewed = self.fixed()
+        sh(self.worktree, "git", "reset", "-q", "--hard", self.head)
+        self.mine()
+        with self.assertRaisesRegex(pr.PRStop, "nothing is pushed: the worktree is at .*, not at .*, the head round 2"
+                                               " reviewed, nor on it with only your own commits"):
+            self.act("push", reviewed)
+
+    def test_a_commit_of_placidos_that_no_round_reviewed_is_not_pushed(self):
+        self.runner.findings = {"A": [], "B": []}
+        rnd = self.review()
+        (self.worktree / "base.txt").write_text("the base, merged in\n")
+        merged = git_commit(self.worktree, "merge the base")
+        self.run.event("pr.base_merged", round=rnd.number, commit=merged)  # its fix then failed
+        with self.assertRaisesRegex(pr.PRStop, "nothing is pushed: the worktree is at .*, nor on it with only your"
+                                               " own commits"):
+            self.act("push", rnd)
+
+    def test_a_fix_goes_on_from_your_commits(self):
+        rnd = self.review()  # F1 kept
+        mine = self.mine(".placido/notes/pr.md")  # a host path: the fix checks them before it runs
+        with redirect_stdout(io.StringIO()):
+            again = self.act("fix", rnd)
+        self.assertEqual(again.number, 2)
+        self.assertTrue(pr.is_ancestor(self.worktree, mine, again.head))
+        self.assertEqual(runlog.last_event(self.run.path, "pr.adopted")["commits"], [mine])
+
+    def test_a_fix_no_round_reviewed_yet_is_not_pushed(self):
+        rnd = self.review()  # F1 kept
+        (self.worktree / "greet.py").write_text("print('fixed')\n")
+        fix = git_commit(self.worktree, "fix")
+        self.run.event("pr.fixed", round=rnd.number, commit=fix, step="x")  # its review then failed
+        listed, _ = self.listed(rnd)
+        self.assertEqual(listed["review"], "Review the branch with the fix in full, in round 2: every reviewer,"
+                                           " the cross-checks, and the judge")
+        with self.assertRaisesRegex(pr.PRStop, "nothing is pushed: the changes made here since round 1's review wait"
+                                               " for a full review of their own"):
+            self.act("push", rnd)
 
     def test_uncommitted_changes_are_noted(self):
         rnd = self.review()
         (self.worktree / "greet.py").write_text("half done\n")
         _, notes = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
-        self.assertIn("The worktree has uncommitted changes: commit them to have them reviewed", notes[0])
+        self.assertIn("The worktree has uncommitted changes: commit them to have them go out", notes[0])
 
 
 class FixLoopTest(MenuTestCase):

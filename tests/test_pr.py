@@ -688,8 +688,8 @@ class RoundTest(PRTestCase):
 
 class AdoptTest(PRTestCase):
     """Commits made in the worktree on top of placido's are the user's: taken into the
-    round as a fix's are, not read as the contributor's, and reviewed in full in a round
-    of their own."""
+    round as a fix's are, not read as the contributor's, and trusted, so no round
+    reviews them for their own sake (decided 2026-10-21)."""
 
     def yours(self, files: dict[str, str]) -> str:
         for name, text in files.items():
@@ -703,18 +703,18 @@ class AdoptTest(PRTestCase):
         self.hub.pull = self.pull(commit)
         self.ctx.pr = self.hub.pull
 
-    def test_your_pushed_commit_is_reviewed_in_a_round_of_its_own(self):
+    def test_your_pushed_commit_is_trusted_and_starts_no_round(self):
         pragents.review(self.ctx)
         mine = self.yours({"greet.py": "mine\n"})
         self.publish(mine)
         with contextlib.redirect_stdout(io.StringIO()) as out:
             again = pragents.review(self.ctx)
-        self.assertEqual((again.number, again.head, again.here), (2, mine, True))
+        self.assertEqual((again.number, again.head), (1, self.head))
         self.assertEqual(runlog.last_event(self.run.path, "pr.adopted")["commits"], [mine])
         self.assertEqual(pr.commits_here(self.run.path, 1), [mine])
-        self.assertIn("are yours, not the contributor's: a new round reviews them in full", out.getvalue())
-        task = next(c["task"] for c in self.runner.calls if c["name"] == "r2-review-a")
-        self.assertIn("How the round before was answered:** the maintainer's own commits", task)
+        self.assertIn("are yours, not the contributor's: trusted, they go out with round 1's reviewed head",
+                      out.getvalue())
+        self.assertNotIn("r2-review-a", [c["name"] for c in self.runner.calls])
 
     def test_your_commit_on_a_fix_is_reviewed_with_it(self):
         pragents.review(self.ctx)
@@ -740,13 +740,17 @@ class AdoptTest(PRTestCase):
         rnd = pragents.review(self.ctx)
         mine = self.yours({".placido/notes/pr.md": "Run the browser suite too.\n"})
         with contextlib.redirect_stdout(io.StringIO()):
-            again = pragents.review(self.ctx)
+            self.assertEqual(pragents.review(self.ctx).number, 1)
         self.assertEqual(runlog.last_event(self.run.path, "pr.adopted")["host_files"], [".placido/notes/pr.md"])
         self.assertEqual(pr.trusted(self.run.path, rnd), mine)
+        fix = self.yours({"greet.py": "fixed here\n"})
+        self.run.event("pr.fixed", round=1, commit=fix, step="x")
+        with contextlib.redirect_stdout(io.StringIO()):
+            again = pragents.review(self.ctx)
         carried = runlog.last_event(self.run.path, "pr.trust_approved")
-        self.assertEqual((carried["round"], carried["head"], carried["carried"]), (2, mine, 1))
+        self.assertEqual((carried["round"], carried["head"], carried["carried"]), (2, fix, 1))
         self.assertEqual(self.asked, [])  # approved by committing it, not asked again
-        self.assertEqual(pr.trusted(self.run.path, again), mine)
+        self.assertEqual(pr.trusted(self.run.path, again), fix)
 
 
 class CreateRunTest(PRTestCase):

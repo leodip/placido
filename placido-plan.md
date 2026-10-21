@@ -721,8 +721,8 @@ them are the risk, not only the change's quality.
   its session (`claude --resume --fork-session`, `codex fork`), so the session placido
   resumes for a later fix is untouched, and read-only (Claude's plan mode, Codex's
   read-only sandbox), since a change made there skips the gates a fix gets; the user
-  can lift that in the agent, and what it commits waits for a full review like any
-  change made here. A session whose log is gone, or a round with
+  can lift that in the agent, and what it commits is the user's, trusted as their own
+  commits are (below). A session whose log is gone, or a round with
   neither, gets a new agent of the `fix` role's, told where the review's files are.
 - **Every behaviour gets a test, the fixes' included.** On #606 a fix added a row
   lock, a re-read under it, and a transaction's rerun; its tests were real (the check
@@ -741,9 +741,23 @@ them are the risk, not only the change's quality.
   gates, and reviews (2026-10-17). A contributor's commits reach the worktree only
   through placido following the pull request, so a commit on top of where placido
   left it was made there: it is adopted into the round, as a fix is, and its change
-  to a host path is trusted. The next round reviews it in full, as it does a fix
-  (below). A contributor's push on top of unpushed commits still stops, as for
-  unpushed fixes.
+  to a host path is trusted. A contributor's push on top of unpushed commits still
+  stops, as for unpushed fixes.
+- **The user's own commits are trusted, and go out unreviewed.** On #619 the round
+  had reviewed placido's fixes and said merge; from the ask tab the maintainer then
+  had Go bumped for a red CI, committed, and pushed, and picked the merge from the
+  menu shown before (2026-10-21). The merge, pinned to the head the round reviewed,
+  waited an hour for GitHub to show a head that was gone, and the rule then was that
+  the user's commit wait for a full round. "If the commit is mine it's safe. Trust any
+  commit from me." So adopted commits start no round and do not block: push and merge
+  take the head the latest round reviewed with only the user's commits on it. Mine
+  means made in the worktree, which is what adoption knows; an author's name on a
+  pushed commit proves nothing, so a push to the pull request that the worktree lacks
+  is still the contributor's, and reviewed. Placido's own fixes are still reviewed in
+  full (below), and a later fix's round reads the user's commits with it. Each menu
+  action now reads the state afresh when picked, not as the menu showed it, and the
+  merge's CI wait ends at once, merging nothing, when the pull request moves past the
+  head it waits on.
 - **Close does not count the host paths it puts back as the user's changes.** On
   #596 the maintainer committed browser tests under `e2e/` by hand, so placido never
   trusted them. Close put the old ones back before the teardown, as it should, then
@@ -788,8 +802,9 @@ them are the risk, not only the change's quality.
   before the push, while the contributor's own code had had two reviewers, their
   cross-checks, and a judge (2026-10-17). "I want any change that I ask to be made to
   be reviewed, possibly in multiple rounds if there is need." Now a round's review,
-  once answered here (a fix, with code or disputes alone, or the user's own commits),
-  starts a new round on the worktree's head, as a push of the contributor's does: no
+  once answered here by a fix, with code or disputes alone (the user's own commits
+  are trusted instead, above), starts a new round on the worktree's head, as a push
+  of the contributor's does: no
   scan, since the contributor's code is as its round scanned it, and the host paths
   trusted as the round before left them, but the gates, every reviewer, the
   cross-checks, and the judge. Its reviewers check each earlier finding's answer (a
@@ -798,7 +813,8 @@ them are the risk, not only the change's quality.
   fixed and reviewed again, on its own, up to `[pr] fix_rounds` (3) times before the
   menu asks; those rounds notify the user only for decisions. Push and merge are
   offered only at the head the latest round reviewed, with nothing it kept but minor
-  findings, and refuse otherwise; changes left uncommitted stop the next round rather
+  findings (and the user's own commits on it, since 2026-10-21), and refuse
+  otherwise; changes left uncommitted stop the next round rather
   than be put back by its agents. The `verify` role is gone: the round does its work,
   with more eyes.
 - **Fixes land on the base as it is now.** When the base has moved past the branch, the
