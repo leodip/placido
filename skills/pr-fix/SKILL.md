@@ -44,6 +44,11 @@ where one differs from anything else you read, the decision wins.
   branch before you, as a commit of its own, so you fix what will land, and your prompt
   names that commit. A finding that asks for a rebase or a merge is answered by it; fix
   what remains, such as tests the base's changes broke.
+- **Unless the branch changes host paths:** then placido does not merge the base in, and
+  you do not either, whatever a finding asks. Your prompt names the files that conflict
+  with the base. Where the base already makes the branch's change to such a file, put the
+  file back as the branch's own base has it, so the base's copy lands whole. A conflict
+  that cannot be settled that way you dispute, saying why.
 - **Run only the narrow tests** for what you change, through the project's commands in
   your prompt. Placido runs the full gates after you and commits only when they pass,
   so running them yourself only doubles the wait.

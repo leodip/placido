@@ -991,6 +991,24 @@ def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path) -> str:
             f" {merged['commit'][:12]}` shows how its conflicts were resolved). A finding that asks for a rebase"
             " or a merge is answered by it: fix what remains, such as tests the base's changes broke."
         )
+    skipped = pr.done(ctx.run.path, "pr.base_merge_skipped", rnd.number)
+    if skipped and not merged:
+        tip = skipped["tip"]
+        # #627: a finding asked for the merge, and a fixer that made it was refused, over and over.
+        clash = subprocess.run(
+            ["git", "-C", str(ctx.worktree), "merge-tree", "--write-tree", "--name-only", "--no-messages", tip, "HEAD"],
+            capture_output=True, text=True,
+        )
+        files = clash.stdout.splitlines()[1:] if clash.returncode == 1 else []
+        lines.append(
+            f"- **The base:** {ctx.pr.base} has moved on to {tip[:12]}, but the branch changes host paths, so"
+            " placido did not merge it in, and you must not either, whatever a finding asks. "
+            + (f"These files conflict with {ctx.pr.base}: {', '.join(f for f in files if f)}. Where"
+               f" {ctx.pr.base} already makes the branch's change to one, put it back as the branch's base"
+               f" ({rnd.base[:12]}) has it (`git checkout {rnd.base[:12]} -- <file>`), so {ctx.pr.base}'s copy"
+               " lands whole; dispute a conflict that cannot be settled that way."
+               if files else f"Nothing in the branch conflicts with {ctx.pr.base}.")
+        )
     gates = ", ".join(ctx.settings.pr.gates) or "none"
     host = ", ".join(ctx.settings.pr.host_paths) or "none"
     lines += [

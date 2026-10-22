@@ -440,7 +440,9 @@ any conflict, and only the conflicts. A merge, not a rebase, since the push is n
 forced. A merge that changes host paths, such as the Dockerfile the stack is built
 from, runs the setup again before the fix, so the fix and its gates run on what main
 has. A pull request that changes host paths, or whose fix did, is fixed on its own
-base instead. A fix that needs a host path changed, such as a browser test under a
+base instead, and the fixer, which never merges, is told which files conflict with the
+base: where the base already makes the branch's change, the branch leaves the file as
+its own base had it, so the base's copy lands whole. A fix that needs a host path changed, such as a browser test under a
 folder the last gates run, shows you that change and runs none of it until you
 approve it; refused, the fixer undoes it and disputes the findings that needed it.
 To ask about the work, the menu opens the round's fixer, or its judge when nothing was

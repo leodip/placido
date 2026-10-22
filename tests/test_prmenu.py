@@ -996,6 +996,19 @@ class BaseMergeTest(MenuTestCase):
         self.assertEqual(runlog.last_event(self.run.path, "pr.base_merge_skipped")["reason"], "host paths")
         self.assertNotIn("pr.base_merged", self.kinds())
         self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD^"), head)
+        fixer = next(c for c in self.runner.calls if c["name"] == "r1-fix-1")
+        self.assertIn("placido did not merge it in, and you must not either", fixer["task"])
+        self.assertIn("Nothing in the branch conflicts with main.", fixer["task"])
+
+    def test_a_conflict_with_a_base_not_merged_in_is_named_to_the_fixer(self):
+        self.push_new_head({".placido/stack.sh": "echo theirs\n"}, self.head)
+        self.answers = [True]
+        rnd = self.review()
+        self.advance_main({".placido/stack.sh": "echo main's\n", "later.txt": "later\n"})
+        self.act("fix", rnd)
+        fixer = next(c for c in self.runner.calls if c["name"] == "r1-fix-1")
+        self.assertIn("These files conflict with main: .placido/stack.sh. Where main already makes the branch's"
+                      f" change to one, put it back as the branch's base ({rnd.base[:12]}) has it", fixer["task"])
 
     def test_a_branch_whose_fix_changed_host_paths_is_fixed_on_its_own_base(self):
         rnd = self.review()
