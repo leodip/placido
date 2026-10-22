@@ -437,7 +437,9 @@ ends the wait at once, and nothing is merged.
 When the base branch has moved on, the fix first merges it into the branch, as a commit
 of its own, so the fixes are made and gated on what will land; the `fix` role resolves
 any conflict, and only the conflicts. A merge, not a rebase, since the push is never
-forced. A pull request that changes host paths, or whose fix did, is fixed on its own
+forced. A merge that changes host paths, such as the Dockerfile the stack is built
+from, runs the setup again before the fix, so the fix and its gates run on what main
+has. A pull request that changes host paths, or whose fix did, is fixed on its own
 base instead. A fix that needs a host path changed, such as a browser test under a
 folder the last gates run, shows you that change and runs none of it until you
 approve it; refused, the fixer undoes it and disputes the findings that needed it.

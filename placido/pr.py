@@ -745,7 +745,8 @@ def setup(ctx: Context, rnd: Round, lane: Lane | None = None) -> None:
 
 def stack_up(run_dir: Path, number: int, code: str | None) -> bool:
     """Whether the round's setup brought the lane's stack up (code None: the pull
-    request's own worktree), and no teardown took it down since."""
+    request's own worktree), and no teardown took it down since, nor a merge of the
+    base changed the host paths it was built from."""
 
     up = False
     for event in runlog.read_events(run_dir):
@@ -753,7 +754,7 @@ def stack_up(run_dir: Path, number: int, code: str | None) -> bool:
             continue
         if event.get("event") == "pr.setup":
             up = event.get("exit") == 0
-        elif event.get("event") == "pr.lane_down":
+        elif event.get("event") == "pr.lane_down" or (event.get("event") == "pr.base_merged" and event.get("host")):
             up = False
     return up
 

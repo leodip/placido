@@ -701,7 +701,8 @@ MARKER = re.compile(r"^(<{7}|>{7}|\|{7})( |$)", re.MULTILINE)
 def merge_base_in(ctx: Context, rnd: Round) -> None:
     """Merge the base branch into the branch, as a commit of its own, when it has moved
     past it and the pull request changes no host path. A conflict goes to the fix role,
-    which resolves the conflicts and nothing else; the gates run with the fix after."""
+    which resolves the conflicts and nothing else; the gates run with the fix after.
+    A merge that changes host paths sets the stack up again, from what it merged."""
 
     wt, run, base = ctx.worktree, ctx.run, ctx.pr.base
     tip = pr.git(wt, "rev-parse", pr.base_ref(base))
@@ -727,9 +728,16 @@ def merge_base_in(ctx: Context, rnd: Round) -> None:
     if conflicts:
         resolve_conflicts(ctx, rnd, tip, head, conflicts)
     commit = _commit(wt, f"Merge branch '{base}' into {ctx.pr.head_ref}", run, rnd)
-    run.event("pr.base_merged", round=rnd.number, commit=commit, tip=tip, conflicts=conflicts)
+    paths = ctx.settings.pr.host_paths
+    host = pr.git(wt, "diff", "--name-only", head, commit, "--", *paths).splitlines() if paths else []
+    run.event("pr.base_merged", round=rnd.number, commit=commit, tip=tip, conflicts=conflicts, host=host)
     print(f"merged {base} ({tip[:12]}) into the branch as {commit[:12]}"
           + (f", resolving {', '.join(conflicts)}" if conflicts else "") + "; not pushed")
+    if host:
+        # The stack was set up from the host paths before the merge, such as a container
+        # built from a Dockerfile main has since changed (#626): set it up again from them.
+        print(f"{base} changed {', '.join(host)}, so placido sets the stack up again")
+        pr.setup(ctx, rnd)
 
 
 def resolve_conflicts(ctx: Context, rnd: Round, tip: str, head: str, conflicts: list[str]) -> None:

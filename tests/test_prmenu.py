@@ -859,6 +859,33 @@ class BaseMergeTest(MenuTestCase):
         self.act("push", reviewed)
         self.assertEqual(self.fork_head(), fix)
 
+    def with_setup(self) -> Path:
+        log = self.tmp / "setup.log"
+        self.settings = self.load(CONFIG.replace('base = "main"', 'base = "main"\nsetup = "echo up >> $HOME_LOG"'))
+        self.ctx = self.context()
+        self.ctx.env = {"HOME_LOG": str(log)}
+        return log
+
+    def test_a_merge_that_changes_host_paths_sets_the_stack_up_again(self):
+        log = self.with_setup()
+        rnd = self.review()
+        self.advance_main({".placido/notes/pr.md": "Node is in the container now.\n"})
+        self.act("fix", rnd)
+        self.assertEqual(runlog.last_event(self.run.path, "pr.base_merged")["host"], [".placido/notes/pr.md"])
+        # For round 1, again after the merge, before the fix and its gates, then for round 2.
+        self.assertEqual(log.read_text(), "up\nup\nup\n")
+        r1 = [e["event"] for e in runlog.read_events(self.run.path) if e.get("round") == 1]
+        self.assertEqual([k for k in r1 if k in ("pr.setup", "pr.base_merged", "pr.fixed")],
+                         ["pr.setup", "pr.base_merged", "pr.setup", "pr.fixed"])
+
+    def test_a_merge_that_leaves_the_host_paths_keeps_the_stack(self):
+        log = self.with_setup()
+        rnd = self.review()
+        self.advance_main({"later.txt": "later\n"})
+        self.act("fix", rnd)
+        self.assertEqual(runlog.last_event(self.run.path, "pr.base_merged")["host"], [])
+        self.assertEqual(log.read_text(), "up\nup\n")  # for round 1 and round 2 alone
+
     def test_a_merge_outlives_a_fix_that_did_not_finish(self):
         rnd = self.review()
         self.advance_main({"later.txt": "later\n"})
