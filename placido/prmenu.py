@@ -692,6 +692,10 @@ def fix_round(ctx: Context, rnd: Round, items: list[dict[str, Any]]) -> None:
     attempt_no = len(pr.round_events(ctx.run.path, "pr.fixed", rnd.number)) + 1
     ctx.run.event("pr.fix_start", round=rnd.number, findings=[f["id"] for f in items])
     merge_base_in(ctx, rnd)
+    # The stack, unless it is up as the round set it: a merge that changed host paths,
+    # such as a Dockerfile main has since changed (#626), leaves it to be set up again
+    # from them, and a setup that failed is tried again when the fix is picked again (#630).
+    pr.setup(ctx, rnd)
     fix_once(ctx, rnd, items, attempt_no)
 
 
@@ -738,10 +742,7 @@ def merge_base_in(ctx: Context, rnd: Round) -> None:
     print(f"merged {base} ({tip[:12]}) into the branch as {commit[:12]}"
           + (f", resolving {', '.join(conflicts)}" if conflicts else "") + "; not pushed")
     if host:
-        # The stack was set up from the host paths before the merge, such as a container
-        # built from a Dockerfile main has since changed (#626): set it up again from them.
         print(f"{base} changed {', '.join(host)}, so placido sets the stack up again")
-        pr.setup(ctx, rnd)
 
 
 def resolve_conflicts(ctx: Context, rnd: Round, tip: str, head: str, conflicts: list[str]) -> None:

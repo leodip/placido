@@ -899,6 +899,24 @@ class BaseMergeTest(MenuTestCase):
         self.assertEqual([k for k in r1 if k in ("pr.setup", "pr.base_merged", "pr.fixed")],
                          ["pr.setup", "pr.base_merged", "pr.setup", "pr.fixed"])
 
+    def test_a_setup_that_failed_after_the_merge_is_tried_again_with_the_fix(self):
+        log, broken = self.with_setup(), self.tmp / "broken"
+        self.settings = self.load(CONFIG.replace(
+            'base = "main"', 'base = "main"\nsetup = "echo up >> $HOME_LOG; test ! -f $BROKEN"'))
+        self.ctx = self.context()
+        self.ctx.env = {"HOME_LOG": str(log), "BROKEN": str(broken)}
+        rnd = self.review()
+        self.advance_main({".placido/notes/pr.md": "Node is in the container now.\n"})
+        broken.touch()
+        with self.assertRaisesRegex(pr.PRStop, "setup failed with exit 1"):
+            self.act("fix", rnd)
+        self.assertNotIn("r1-fix-1", self.runner.names())
+        broken.unlink()
+        self.act("fix", rnd)  # main is merged in already: the setup comes back all the same
+        r1 = [e["event"] for e in runlog.read_events(self.run.path) if e.get("round") == 1]
+        self.assertEqual([k for k in r1 if k in ("pr.setup", "pr.base_merged", "pr.fixed")],
+                         ["pr.setup", "pr.base_merged", "pr.setup", "pr.setup", "pr.fixed"])
+
     def test_a_merge_that_leaves_the_host_paths_keeps_the_stack(self):
         log = self.with_setup()
         rnd = self.review()
