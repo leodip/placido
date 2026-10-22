@@ -26,6 +26,14 @@ class MenuTestCase(PRTestCase):
         self.confirms: list[bool] = []
         self.confirmed: list[str] = []
 
+    def advance_main(self, files: dict[str, str]) -> str:
+        for name, text in files.items():
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).write_text(text)
+        tip = git_commit(self.repo, "later on main")
+        sh(self.repo, "git", "push", "-q", "origin", "main")
+        return tip
+
     def review(self, **final) -> pr.Round:
         if final:
             data = self.runner.default_final()
@@ -664,6 +672,27 @@ class FixLoopTest(MenuTestCase):
         self.assertEqual((reviewed.number, self.runner.names().count("r2-review-a")), (2, 2))
         self.assertIn("push", self.keys(reviewed))
 
+    def test_a_fix_that_stops_in_a_later_round_leaves_the_menu_there(self):
+        self.runner.findings_in = {2: {"A": [finding("A", 1)], "B": []}}
+        rnd = self.review()
+        self.runner.during["r2-judge"] = lambda wt: self.advance_main({"later.txt": "later\n"})
+        self.runner.failures["r2-fix-1"] = ["invalid"]
+        listed = [key for key, _ in prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0]]
+        picks = iter([str(listed.index("fix") + 1), None])
+        shown = io.StringIO()
+        with redirect_stdout(shown):
+            prmenu.menu(self.ctx, rnd, lambda prompt: next(picks), self.confirm)
+        self.assertIn("placido: fix: the fix did not finish", shown.getvalue())
+        self.assertEqual(runlog.last_event(self.run.path, "pr.base_merged")["round"], 2)
+        # Round 2's merge of main is placido's, not a commit of the user's on round 1's head.
+        self.assertNotIn("pr.adopted", self.kinds())
+        self.assertNotIn("are trusted", shown.getvalue())
+        after = shown.getvalue().split("placido: fix:")[1]
+        self.assertIn(str(self.run.path / "rounds" / "2" / "comment.md"), after)
+        self.assertIn("Fix the 1 kept finding(s) here", after)
+        prmenu.state(self.ctx, rnd)  # read on round 1, as a menu still on it did
+        self.assertNotIn("pr.adopted", self.kinds())
+
     def test_a_fix_that_changed_no_code_is_reviewed_in_full_too(self):
         self.runner.fix_change = False
         reviewed = self.fixed()
@@ -813,14 +842,6 @@ class FixGatesTest(MenuTestCase):
 
 class BaseMergeTest(MenuTestCase):
     """The base branch moved on after the pull request started from it."""
-
-    def advance_main(self, files: dict[str, str]) -> str:
-        for name, text in files.items():
-            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
-            (self.repo / name).write_text(text)
-        tip = git_commit(self.repo, "later on main")
-        sh(self.repo, "git", "push", "-q", "origin", "main")
-        return tip
 
     def fix_label(self, rnd: pr.Round) -> str:
         return dict(prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))[0])["fix"]

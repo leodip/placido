@@ -289,6 +289,13 @@ def rounds(run_dir: Path) -> list[Round]:
     return [_round(run_dir, e) for e in runlog.read_events(run_dir) if e.get("event") == "pr.round"]
 
 
+def latest_judged(run_dir: Path) -> Round | None:
+    """The latest round whose review was judged: the one the menu acts on."""
+
+    found = [r for r in rounds(run_dir) if done(run_dir, "pr.judged", r.number)]
+    return found[-1] if found else None
+
+
 def contributor_round(run_dir: Path, rnd: Round) -> Round:
     """The latest round up to rnd that reviewed a head the contributor pushed."""
 
@@ -389,6 +396,8 @@ def adopt(ctx: Context, rnd: Round, local: str) -> None:
     if local == expected or not is_ancestor(wt, expected, local):
         return
     commits = git(wt, "rev-list", "--reverse", f"{expected}..{local}").splitlines()
+    if set(commits) & set(commits_here_all(ctx.run.path)):  # a later round's, not the user's (#628)
+        return
     paths = ctx.settings.pr.host_paths
     host = git(wt, "diff", "--name-only", expected, local, "--", *paths).splitlines() if paths else []
     ctx.run.event("pr.adopted", round=rnd.number, commit=local, commits=commits, host_files=host)

@@ -363,6 +363,10 @@ def menu(ctx: Context, rnd: Round, read: Callable[[str], str | None], confirm: A
             except (PRStop, prgh.PRError, implement.ImplementError) as error:
                 print(f"placido: {key}: {error}")
                 ctx.run.event("pr.action_failed", round=rnd.number, action=key, error=str(error)[:500])
+                # A fix goes on through rounds of its own; one that stops in a later round
+                # leaves the menu there. On the round it began in, the menu took the later
+                # rounds' commits, main's merged in among them, for the user's own (#628).
+                rnd = pr.latest_judged(ctx.run.path) or rnd
                 break
             if isinstance(reviewed, Round):
                 rnd = reviewed
