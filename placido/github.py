@@ -284,7 +284,9 @@ def _body(run_dir: Path) -> Path:
 
 def folded_issues(issue_dir: Path) -> list[int]:
     """GitHub issues the interview folded into the agreement, from its `## Folded in`
-    section (skills/spec/SKILL.md), in order."""
+    section (skills/spec/SKILL.md), in order: the numbers that lead a bullet, as in
+    `- **#5 Its title:**`. A number further on is not one: #641's said "Closes #630",
+    a merged pull request, from "- None. #630 built the OTP half…" (2026-10-23)."""
 
     try:
         text = (issue_dir / "agreement.md").read_text(encoding="utf-8")
@@ -294,7 +296,12 @@ def folded_issues(issue_dir: Path) -> list[int]:
     if not found:
         return []
     numbers: list[int] = []
-    for n in re.findall(r"#(\d+)\b", found.group(1)):
-        if int(n) not in numbers:
-            numbers.append(int(n))
+    for line in found.group(1).splitlines():
+        item = re.match(r"\s*[-*]\s+(\*\*)?(#\d+.*)", line)
+        if not item:
+            continue
+        lead = item.group(2).split("**", 1)[0] if item.group(1) else item.group(2).split(":", 1)[0]
+        for n in re.findall(r"#(\d+)\b", lead):
+            if int(n) not in numbers:
+                numbers.append(int(n))
     return numbers

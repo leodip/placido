@@ -289,3 +289,16 @@ class FoldedTest(unittest.TestCase):
             self.assertEqual(github.folded_issues(folder), [])
             (folder / "agreement.md").write_text("## Decisions\n- #1\n## Folded in\n- #5 and #7, #5 again\n## Seams\n#9\n")
             self.assertEqual(github.folded_issues(folder), [5, 7])
+
+    def test_only_the_numbers_that_lead_a_bullet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / "agreement.md").write_text(
+                "## Folded in\n"
+                "- None. #630 built the OTP half and left the issue open.\n"  # #641's
+                "- **#5 Greet in Spanish:** all of it, as #3 asked.\n"
+                "  Its sibling #6 stays open.\n"
+                "- **A stray space in the help:** fixed here, as #8 noticed.\n"
+                "- #9: the rest of it, which #10 left.\n"
+            )
+            self.assertEqual(github.folded_issues(folder), [5, 9])
