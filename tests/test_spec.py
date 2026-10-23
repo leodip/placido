@@ -132,6 +132,15 @@ class CheckTest(SpecTestCase):
             problems, ["slice 2 in slices.json has gate 'e2e', which is not a project command (commands: unit, data)."]
         )
 
+    def test_a_gate_may_give_its_command_arguments(self):
+        self.assertEqual(self.problems(slices=self.slices_with(2, gates=["data mysql", "data postgres"])), [])
+        problems = self.problems(slices=self.slices_with(2, gates=["nosuch mysql", "data 'open"]))
+        self.assertEqual(problems, [
+            "slice 2 in slices.json has gate 'nosuch mysql', whose command 'nosuch' is not a project command"
+            " (commands: unit, data).",
+            "slice 2 in slices.json has gate \"data 'open\", which is not a project command (commands: unit, data).",
+        ])
+
     def test_fields_are_required(self):
         problems = self.problems(slices=self.slices_with(1, delivers="", blocked_by="none", gates=None))
         self.assertIn("slice 1 in slices.json needs a non-empty 'delivers'.", problems)

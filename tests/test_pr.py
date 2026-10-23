@@ -550,6 +550,15 @@ class TreeTest(PRTestCase):
         evidence = (rnd.folder / restored["evidence"]).read_text()
         self.assertIn("--- untracked made.txt\nx", evidence)
 
+    def test_a_gate_may_give_its_command_arguments(self):
+        self.settings = self.load(CONFIG.replace('run = "true"\n[commands.lint]', 'run = "echo"\n[commands.lint]')
+                                  + '[pr]\ngates = ["unit mysql", "lint"]\n')
+        self.ctx = self.context()
+        rnd = pragents.review(self.ctx)
+        self.assertEqual((rnd.folder / "gates" / "unit-mysql.log").read_text(), "mysql\n")
+        self.assertIn("- **unit mysql:** passed in", (rnd.folder / "gates.md").read_text())
+        self.assertIn(str(rnd.folder / "gates" / "unit-mysql.log"), (rnd.folder / "gates.md").read_text())
+
     def test_a_gate_that_writes_a_host_path_stops_the_review(self):
         self.settings = self.load(CONFIG.replace('run = "true"\n[commands.lint]', 'run = "echo evil >> .placido/stack.sh"\n[commands.lint]'))
         self.ctx = self.context()

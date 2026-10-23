@@ -149,6 +149,11 @@ final = ["lint", "integration"]      # once every slice is in, before the review
 last  = []                           # once the review is done, before the push
 ```
 
+A gate can also give a command the arguments its `about` asks for, after its name:
+`"data mysql"` runs data's `run` with `mysql` appended, each argument quoted as one
+word, and keeps its output in `data-mysql.log`. The spec agent can gate a slice the
+same way, so one command covers every engine or target without a copy for each.
+
 The last gates are for a check too slow or costly to run more than once. A failing
 gate goes to a fixer, as with the final gates, and placido runs the gates again on
 its fix before committing it, and not after; when the fix cannot pass, the pull

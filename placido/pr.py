@@ -795,10 +795,10 @@ def gates(ctx: Context, rnd: Round) -> None:
     for name in names:
         verify_host_paths(ctx, rnd, f"the {name} gate")
         status.show(run.path, status.text(status.WORKING, f"gate {name}"))
-        command = ctx.settings.commands[name].run
+        command = config.gate_command(name, ctx.settings.commands)
         run.event("gate.start", gate=name, command=command)
         began = time.monotonic()
-        log = rnd.folder / "gates" / f"{name}.log"
+        log = rnd.folder / "gates" / f"{config.gate_log(name)}.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         with log.open("w", encoding="utf-8") as out:
             code = subprocess.run(
@@ -826,10 +826,10 @@ def last_gates(ctx: Context, rnd: Round, echo: TextIO) -> dict[str, int]:
     for name in ctx.settings.last_gates:
         verify_host_paths(ctx, rnd, f"the {name} gate")
         status.show(run.path, status.text(status.WORKING, f"last gate {name}"))
-        command = ctx.settings.commands[name].run
+        command = config.gate_command(name, ctx.settings.commands)
         run.event("gate.start", gate=name, command=command)
         began = time.monotonic()
-        log = rnd.folder / "last-gates" / f"{attempt}-{name}.log"
+        log = rnd.folder / "last-gates" / f"{attempt}-{config.gate_log(name)}.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         with log.open("w", encoding="utf-8") as out:
             proc = subprocess.Popen(
@@ -855,7 +855,7 @@ def gates_text(rnd: Round, results: dict[str, dict[str, Any]]) -> str:
     lines = ["# Gates", "", f"Placido ran these on {rnd.head[:12]}, each in the worktree, before the reviews.", ""]
     for name, result in results.items():
         verdict = "passed" if result["exit"] == 0 else f"FAILED (exit {result['exit']})"
-        lines.append(f"- **{name}:** {verdict} in {result['seconds']}s; log {rnd.folder / 'gates' / f'{name}.log'}")
+        lines.append(f"- **{name}:** {verdict} in {result['seconds']}s; log {rnd.folder / 'gates' / f'{config.gate_log(name)}.log'}")
         if result["changed"]:
             lines.append(
                 f"  It changed {', '.join(result['changed'])} in the worktree, which placido put back"

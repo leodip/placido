@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,6 +109,41 @@ class Command:
     about: str = ""
 
 
+# A gate is a command's name, alone or with the arguments its `about` asks for after it,
+# such as `data mysql`; placido runs the command with them appended (decided 2026-10-23).
+def gate_words(gate: str) -> list[str]:
+    """A gate's command name and then its arguments, split as a shell would; none when
+    it is empty or leaves a quote open."""
+
+    try:
+        return shlex.split(gate)
+    except ValueError:
+        return []
+
+
+def unknown_command(gate: str, commands: dict[str, Command]) -> str | None:
+    """What in a gate is not a command, its first word or else all of it; None when it
+    names one."""
+
+    words = gate_words(gate)
+    if words and words[0] in commands:
+        return None
+    return words[0] if words else gate
+
+
+def gate_command(gate: str, commands: dict[str, Command]) -> str:
+    """The line a gate runs: its command's, then each of its arguments quoted as one word."""
+
+    name, *args = gate_words(gate)
+    return " ".join([commands[name].run, *(shlex.quote(a) for a in args)])
+
+
+def gate_log(gate: str) -> str:
+    """A gate's log file name, less the .log: `data mysql` logs to data-mysql.log."""
+
+    return re.sub(r"[^A-Za-z0-9._-]", "-", gate)
+
+
 @dataclass(frozen=True)
 class Role:
     name: str
@@ -120,7 +156,7 @@ class PRSettings:
     """How `placido pr` reviews an outside contributor's pull request."""
 
     reviewers: tuple[Role, ...]  # in the order they review; each has its own fallback chain
-    gates: tuple[str, ...]  # command names placido runs once, before the reviews
+    gates: tuple[str, ...]  # gates placido runs once, before the reviews
     host_paths: tuple[str, ...]  # run on this machine: a change to them runs on the scan's word alone
     parallel: bool = True  # reviewers at once, each in a worktree and stack of its own
     fix_rounds: int = 3  # fixes, each reviewed in full in a round of its own, before the menu asks again
@@ -133,9 +169,9 @@ class Config:
     setup: str
     teardown: str
     commands: dict[str, Command]
-    slice_gates: tuple[str, ...]  # command names run after each slice, before its commit
-    final_gates: tuple[str, ...]  # command names run before the final review
-    last_gates: tuple[str, ...]  # command names run after the review, before the push
+    slice_gates: tuple[str, ...]  # gates (command names, maybe with arguments) run after each slice, before its commit
+    final_gates: tuple[str, ...]  # gates run before the final review
+    last_gates: tuple[str, ...]  # gates run after the review, before the push
     roles: dict[str, Role]
     test_first: bool
     mutations: int  # killed mutations each slice needs; 0 turns mutation checks off
@@ -292,11 +328,17 @@ def _gates(data: dict[str, Any], commands: dict[str, Command]) -> dict[str, tupl
         if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
             raise ConfigError(f"gates.{key}: must be a list of command names")
         for name in names:
-            if name not in commands:
-                known = ", ".join(commands) or "none defined"
-                raise ConfigError(f"gates.{key}: {name!r} is not a command (commands: {known})")
+            _known_gate(f"gates.{key}", name, commands)
         resolved[key] = tuple(names)
     return resolved
+
+
+def _known_gate(where: str, gate: str, commands: dict[str, Command]) -> None:
+    bad = unknown_command(gate, commands)
+    if bad is not None:
+        known = ", ".join(commands) or "none defined"
+        what = repr(gate) if bad == gate else f"{gate!r} names {bad!r}, which"
+        raise ConfigError(f"{where}: {what} is not a command (commands: {known})")
 
 
 MAX_REVIEWERS = 26  # each reviewer's findings carry a letter, A to Z
@@ -322,9 +364,7 @@ def _pr(
     if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
         raise ConfigError("pr.gates: must be a list of command names")
     for name in names:
-        if name not in commands:
-            known = ", ".join(commands) or "none defined"
-            raise ConfigError(f"pr.gates: {name!r} is not a command (commands: {known})")
+        _known_gate("pr.gates", name, commands)
     if not names:
         names = [*gates["slice"], *(g for g in gates["final"] if g not in gates["slice"])]
     paths = table.get("host_paths", DEFAULTS["pr"]["host_paths"])

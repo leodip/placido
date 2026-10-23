@@ -220,6 +220,21 @@ class ErrorTest(unittest.TestCase):
             "gates.final: 'e2e' is not a command (commands: unit)",
         )
         self.assertRejected('[gates]\nslice = "unit"\n', "gates.slice: must be a list")
+        self.assertRejected(
+            '[commands.data]\nrun = "x"\n[gates]\nlast = ["nosuch mysql"]\n',
+            "gates.last: 'nosuch mysql' names 'nosuch', which is not a command (commands: data)",
+        )
+
+    def test_a_gate_can_give_its_command_arguments(self):
+        cfg = load_text('[commands.data]\nrun = "x --db"\n[gates]\nslice = ["data"]\nfinal = ["data mysql"]\n'
+                   '[pr]\ngates = ["data postgres"]\n')
+        self.assertEqual((cfg.slice_gates, cfg.final_gates, cfg.pr.gates), (("data",), ("data mysql",), ("data postgres",)))
+        self.assertEqual(config.gate_command("data", cfg.commands), "x --db")
+        self.assertEqual(config.gate_command("data mysql", cfg.commands), "x --db mysql")
+        self.assertEqual(config.gate_command("""data 'a b' "it's" """, cfg.commands), """x --db 'a b' 'it'"'"'s'""")
+        self.assertEqual(config.gate_log("data mysql"), "data-mysql")
+        self.assertEqual(config.gate_log("data '../a b'"), "data--..-a-b-")
+        self.assertEqual(config.gate_log("data-sqlite"), "data-sqlite")
 
     def test_negative_rounds(self):
         self.assertRejected("[review]\nfinal_rounds = -1\n", "must not be negative")

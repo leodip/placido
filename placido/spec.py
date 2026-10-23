@@ -40,7 +40,8 @@ def prompt(run_dir: Path, worktree: Path, settings: config.Config) -> str:
         f" probes go in {folder / 'probe'}.",
         f"- **Project notes for this role:** {notes if notes.is_file() else 'none'}",
         f"- **Slice gates:** every slice runs {', '.join(settings.slice_gates) or 'no gates'};"
-        " give a slice extra gates only from the commands below.",
+        " give a slice extra gates only from the commands below, each a command's name with"
+        " the arguments its description asks for, if any, after it (\"data mysql\").",
     ]
     menu = config.command_menu(settings)
     return "\n".join(lines) + "\n\n" + (menu or "The project defines no commands.\n")
@@ -111,9 +112,11 @@ def _check_slice(n: int, entry: Any, settings: config.Config) -> list[str]:
         problems.append(f"{where} needs 'gates' as a list of command names.")
     else:
         for gate in gates:
-            if gate not in settings.commands:
+            bad = config.unknown_command(gate, settings.commands)
+            if bad is not None:
                 known = ", ".join(settings.commands) or "none"
-                problems.append(f"{where} has gate {gate!r}, which is not a project command (commands: {known}).")
+                which = "which" if bad == gate else f"whose command {bad!r}"
+                problems.append(f"{where} has gate {gate!r}, {which} is not a project command (commands: {known}).")
     return problems
 
 

@@ -162,7 +162,8 @@ build in one fresh session.
   own slice.
 - **Gates:** every slice runs the project's slice gates. Give a slice extra gates,
   from the commands in your prompt, when it needs more proof, such as data-layer
-  tests for a slice that changes storage.
+  tests for a slice that changes storage. A command whose description asks for an
+  argument takes it in the gate, as `"data mysql"`, one gate for each value needed.
 
 Slices stay coarse: a title, what it delivers, its blockers, its gates. Each
 implementer details its own slice against the code as it is then.
@@ -220,8 +221,9 @@ Then write `slices.json`, the same slices for placido to read:
 }
 ```
 
-`id`s count up from 1; `blocked_by` names earlier ids; `gates` lists extra gates by
-command name, beyond the project's slice gates.
+`id`s count up from 1; `blocked_by` names earlier ids; `gates` lists extra gates
+beyond the project's slice gates, each a command's name with the arguments its
+description asks for, if any, after it: `"data mysql"`.
 
 Finally, write the result file your prompt names: one line saying the agreement and
 slices are written, with the number of decisions and slices. Placido then checks the

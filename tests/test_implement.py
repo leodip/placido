@@ -125,6 +125,24 @@ class CheckTest(SliceTestCase):
         self.assertEqual([(e["gate"], e["exit"]) for e in ends], [("unit", 0), ("data", 0)])
         self.assertEqual((self.step / "gates" / "data.log").read_text(), "data checked\n")
 
+    def test_a_gate_gives_its_command_the_arguments_after_its_name(self):
+        self.settings = settings(self.CONFIG + "[commands.say]\nrun = \"printf '[%s]'\"\n")
+        (self.repo / "feature.txt").write_text("done\n")
+        gates = ["say mysql", 'say \'a b\' "it\'s"', "unit", "unit extra"]
+        problems = implement.run_gates(gates, self.settings, self.repo, self.step, self.env, self.run)
+        self.assertEqual((self.step / "gates" / "say-mysql.log").read_text(), "[mysql]")
+        self.assertEqual((self.step / "gates" / "say--a-b---it-s-.log").read_text(), "[a b][it's]")
+        starts = [(e["gate"], e["command"]) for e in runlog.read_events(self.run.path) if e["event"] == "gate.start"]
+        self.assertEqual(starts, [
+            ("say mysql", "printf '[%s]' mysql"),
+            ('say \'a b\' "it\'s"', """printf '[%s]' 'a b' 'it'"'"'s'"""),
+            ("unit", "test -f feature.txt"),
+            ("unit extra", "test -f feature.txt extra"),
+        ])
+        (problem,) = problems  # the bare unit passes; with an extra argument test refuses it
+        self.assertIn("gate unit extra (`test -f feature.txt extra`) failed with exit 2", problem)
+        self.assertIn(str(self.step / "gates" / "unit-extra.log"), problem)
+
     def test_failing_gate_is_a_problem(self):
         (self.repo / "other.txt").write_text("x\n")
         self.kill()

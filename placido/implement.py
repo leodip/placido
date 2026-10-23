@@ -83,8 +83,8 @@ def prompt(run_dir: Path, worktree: Path, entry: dict[str, Any], settings: confi
         f"- **This slice:** {entry['id']}, \"{entry['title']}\": {entry['delivers']}",
         f"- **Code:** the worktree you are in, {worktree}. Change it; do not commit.",
         f"- **Tests first:** {'yes' if settings.test_first else 'no, write them after the code'}.",
-        f"- **Gates for this slice:** {', '.join(gates) or 'none'}. Placido runs them after you,"
-        " and commits only when they pass.",
+        f"- **Gates for this slice:** {', '.join(gates) or 'none'}. Each is a command below, with any"
+        " arguments after its name. Placido runs them after you, and commits only when they pass.",
         f"- **Project notes for this role:** {notes if notes.is_file() else 'none'}",
         decisions.prompt_line(run_dir),
     ]
@@ -124,16 +124,16 @@ def run_gates(
     names: list[str], settings: config.Config, worktree: Path, step_dir: Path,
     env: dict[str, str], run: runlog.Run,
 ) -> list[str]:
-    """Run each gate in the worktree, its output in gates/<name>.log; problems for failures."""
+    """Run each gate in the worktree, its output in gates/<gate>.log; problems for failures."""
 
     folder = step_dir / "gates"
     folder.mkdir(exist_ok=True)
     problems = []
     for name in names:
-        command = settings.commands[name].run
+        command = config.gate_command(name, settings.commands)
         run.event("gate.start", gate=name, command=command)
         began = time.monotonic()
-        log = folder / f"{name}.log"
+        log = folder / f"{config.gate_log(name)}.log"
         with log.open("w", encoding="utf-8") as out:
             code = subprocess.run(
                 command, shell=True, cwd=worktree, stdout=out, stderr=subprocess.STDOUT,

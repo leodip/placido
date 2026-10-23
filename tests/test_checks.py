@@ -122,6 +122,13 @@ class FinalGatesTest(unittest.TestCase):
         self.assertEqual(checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high")), "failed")
         self.assertEqual(self.events().count("gate.start"), runs)  # a resumed delivery keeps the outcome
 
+    def test_a_gate_with_arguments_is_not_its_bare_command(self):
+        (self.repo / "ok.txt").write_text("x\n")  # full passes; full with an argument cannot
+        ctx = self.ctx(final="", last='full", "full x')
+        self.assertEqual(checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high")), "failed")
+        gave_up = [e for e in runlog.read_events(self.run.path) if e["event"] == "last_gates.gave_up"]
+        self.assertEqual(gave_up[0]["gates"], ["full x"])
+
     def test_a_fixer_that_finds_the_cause_outside_the_change_changes_nothing(self):
         self.fixer.unchanged = ("No code changes\n\nmain fails the same e2e tests:\n#620 changed them.\n\n"
                                 "## Evidence\n- the same failures on main\n")

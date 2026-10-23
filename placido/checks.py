@@ -69,7 +69,7 @@ def _gates(ctx: "driver.Context", fixer: "config.AgentSpec", kind: str, names: l
         # against a deployment) took ten more minutes for nothing (#580, 2026-10-14).
         run.event(f"{kind}_gates.passed", attempt=2, by="fix")
         return "passed"
-    failed = [n for n in names if any(p.startswith(f"gate {n} ") for p in problems)]
+    failed = [n for n in names if any(p.startswith(f"gate {n} (`") for p in problems)]
     run.event(f"{kind}_gates.gave_up", gates=failed)
     return "failed"
 
