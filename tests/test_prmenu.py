@@ -20,9 +20,10 @@ class MenuTestCase(PRTestCase):
         self.fork = self.tmp / "fork.git"
         sh(self.tmp, "git", "init", "-q", "--bare", str(self.fork))
         sh(self.repo, "git", "push", "-q", str(self.fork), f"{self.head}:refs/heads/greeting")
-        patch = mock.patch.object(prmenu, "PUSH_URL", str(self.fork))
-        patch.start()
-        self.addCleanup(patch.stop)
+        for name, value in (("PUSH_URL", str(self.fork)), ("PUSH_SHOWN", 0)):  # GitHub is not told of a push here
+            patch = mock.patch.object(prmenu, name, value)
+            patch.start()
+            self.addCleanup(patch.stop)
         self.confirms: list[bool] = []
         self.confirmed: list[str] = []
 
@@ -87,7 +88,7 @@ class SummaryTest(MenuTestCase):
 class OptionsTest(MenuTestCase):
     def test_after_a_fix_here_review(self):
         rnd = self.review()
-        self.assertEqual(self.keys(rnd), ["edit", "edit-merge", "fix", "post", "ask", "close", "quit"])
+        self.assertEqual(self.keys(rnd), ["fix", "post", "ask", "quit"])
 
     def test_merge_is_offered_when_nothing_is_kept(self):
         self.runner.findings = {"A": [], "B": []}
@@ -110,22 +111,6 @@ class OptionsTest(MenuTestCase):
             f"\nThe pull request is merged. To end the run, in {self.repo.name}'s workspace (not this one):\n"
             "  placido close pr-7\n"
         ))
-
-
-class EditTest(MenuTestCase):
-    def editor_used(self, environ: dict[str, str]) -> str:
-        with mock.patch.dict("os.environ", environ), mock.patch.object(prmenu.subprocess, "run") as run:
-            for name in ("VISUAL", "EDITOR"):
-                if name not in environ:
-                    prmenu.os.environ.pop(name, None)
-            prmenu._edit(self.tmp / "comment.md")
-        return run.call_args.args[0][0]
-
-    def test_nano_unless_the_user_chose_an_editor(self):
-        self.assertEqual(self.editor_used({}), "nano")
-
-    def test_the_users_editor_wins(self):
-        self.assertEqual(self.editor_used({"EDITOR": "vim"}), "vim")
 
 
 class PostTest(MenuTestCase):
@@ -183,7 +168,7 @@ class FixAndPushTest(MenuTestCase):
         self.assertEqual((reviewed.number, reviewed.head, reviewed.here, reviewed.previous), (2, fix, True, 1))
         self.assertEqual(self.runner.names()[6:], ["r1-fix-1", "r2-review-a", "r2-review-b", "r2-crosscheck-a",
                                                    "r2-crosscheck-b", "r2-judge"])
-        self.assertEqual(self.keys(reviewed), ["edit", "edit-merge", "push", "post", "ask", "close", "quit"])
+        self.assertEqual(self.keys(reviewed), ["push", "post", "ask", "quit"])
         self.assertEqual(dict(prmenu.options(self.ctx, reviewed, prmenu.state(self.ctx, reviewed))[0])["push"],
                          "Push the 1 commit(s) made here, reviewed in full in round 2, to alice/proj:greeting")
 
@@ -195,6 +180,64 @@ class FixAndPushTest(MenuTestCase):
         self.act("push", reviewed)
         self.assertEqual(self.fork_head(), fix)
         self.assertEqual(runlog.last_event(self.run.path, "pr.pushed")["commit"], fix)
+
+    def test_the_menu_lists_the_commits_made_here_that_the_branch_lacks(self):
+        reviewed = self.fixed()
+        fix = sh(self.worktree, "git", "rev-parse", "HEAD")
+        shown = io.StringIO()
+        with redirect_stdout(shown):
+            prmenu.menu(self.ctx, reviewed, lambda prompt: None, self.confirm)
+        self.assertIn(f"\nNot pushed: 1 commit(s) here that alice/proj:greeting lacks\n  {fix[:12]} Greet properly\n",
+                      shown.getvalue())
+        self.publish(fix)
+        self.assertEqual(prmenu._unpushed_text(prmenu.state(self.ctx, reviewed)),
+                         "Not pushed: nothing; alice/proj:greeting has every commit here")
+
+    def pushed_as_github_catches_up(self, *steps: str) -> pr.Round:
+        """A push, with GitHub showing it a moment after: one step a wait, the
+        pull request's head or its ref."""
+
+        reviewed = self.fixed()
+        left = list(steps)
+
+        def sleep(seconds):
+            step, commit = left.pop(0), self.fork_head()
+            if step == "head":
+                self.hub.pull = self.pull(commit)
+            else:
+                sh(self.repo, "git", "push", "-q", "-f", str(self.origin), f"{commit}:refs/pull/7/head")
+
+        self.confirms = [True]
+        shown = io.StringIO()
+        with mock.patch.object(prmenu, "PUSH_SHOWN", 60), mock.patch.object(prmenu.time, "sleep", sleep), \
+                redirect_stdout(shown):
+            self.act("push", reviewed)
+        self.assertEqual(left, [])
+        self.assertNotIn("GitHub does not show", shown.getvalue())
+        return reviewed
+
+    def test_a_push_waits_for_github_to_show_it_so_the_menu_offers_it_no_more(self):
+        reviewed = self.pushed_as_github_catches_up("head", "ref")
+        self.assertNotIn("push", self.keys(reviewed))  # #630's menu offered the same push again
+        self.assertIn("merge", self.keys(reviewed))
+
+    def test_a_push_waits_for_the_pull_request_s_head_too(self):
+        self.pushed_as_github_catches_up("ref", "head")
+
+    def test_a_push_github_does_not_show_in_time_is_said(self):
+        reviewed = self.fixed()
+        now = [0.0]
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        self.confirms = [True]
+        shown = io.StringIO()
+        with mock.patch.object(prmenu, "PUSH_SHOWN", 60), mock.patch.object(prmenu.time, "sleep", sleep), \
+                mock.patch.object(prmenu.time, "monotonic", lambda: now[0]), redirect_stdout(shown):
+            self.act("push", reviewed)
+        self.assertEqual(now[0], 60)
+        self.assertIn("GitHub does not show #7 at", shown.getvalue())
 
     def test_a_push_never_overwrites_what_the_contributor_pushed_meanwhile(self):
         rnd = self.fixed()
@@ -221,34 +264,13 @@ class FixAndPushTest(MenuTestCase):
             (wt / ".placido" / "spec.ts").write_text(text)
         return write
 
-    def test_a_fix_s_change_to_a_host_path_the_user_refuses_is_sent_back(self):
-        rnd = self.review()
-        self.runner.during["r1-fix-1"] = self.write_spec("test('no')\n")
-        self.answers = [False]
-        with self.assertRaisesRegex(pr.PRStop, "the fix did not finish"):
-            self.act("fix", rnd)
-        self.assertIn("the user refused your change to .placido/spec.ts", self.runner.problems[-1][1][0])
-        self.assertIn("dispute the findings that needed it", self.runner.problems[-1][1][0])
-        self.assertEqual(self.asked, ["Have you read that change, and may it run here?"])
-        self.assertEqual(runlog.last_event(self.run.path, "pr.host_change_refused")["files"], [".placido/spec.ts"])
-        self.assertEqual(sh(self.worktree, "git", "status", "--porcelain"), "")  # set aside in a stash
-        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD"), self.head)
-
-    def test_with_nobody_to_approve_it_a_fix_s_change_to_a_host_path_is_sent_back(self):
-        rnd = self.review()
-        self.runner.during["r1-fix-1"] = self.write_spec("test('no')\n")
-        with self.assertRaisesRegex(pr.PRStop, "the fix did not finish"):
-            self.act("fix", rnd)
-        self.assertIn("nobody was at the terminal to approve", self.runner.problems[-1][1][0])
-
-    def test_a_fix_s_change_to_a_host_path_the_user_approves_is_committed_and_trusted(self):
+    def test_a_fix_s_change_to_a_host_path_is_trusted_unasked_and_committed(self):
         rnd = self.review()
         self.runner.during["r1-fix-1"] = self.write_spec("test('declines')\n")
-        self.answers = [True]
         reviewed = self.act("fix", rnd)
         head = sh(self.worktree, "git", "rev-parse", "HEAD")
         self.assertEqual(sh(self.worktree, "git", "show", "HEAD:.placido/spec.ts"), "test('declines')")
-        self.assertEqual(len(self.asked), 1)  # the round reviewing the fix trusts what the user approved
+        self.assertEqual(self.asked, [])
         self.assertEqual(runlog.last_event(self.run.path, "pr.trust_approved")["carried"], 1)
         self.assertEqual(pr.trusted(self.run.path, reviewed), head)
         self.assertIn("test('declines')", (rnd.folder / "host-paths-fix-1.diff").read_text())
@@ -258,18 +280,17 @@ class FixAndPushTest(MenuTestCase):
         pr.verify_host_paths(self.ctx, rnd, "the last gates")  # what comes next runs on it
         self.assertNotIn("pr.host_paths_changed", self.kinds())
 
-    def test_an_approval_holds_for_that_content_only(self):
+    def test_the_trust_in_a_fix_s_change_holds_for_that_content_only(self):
         rnd = self.review()
         self.write_spec("test('declines')\n")(self.worktree)
-        self.answers = [True, False]
-        self.assertTrue(pr.approve_host_change(self.ctx, rnd, "fix 1"))
-        self.assertTrue(pr.approve_host_change(self.ctx, rnd, "fix 1"))  # not asked again
+        pr.approve_host_change(self.ctx, rnd, "fix 1")
+        pr.approve_host_change(self.ctx, rnd, "fix 1")  # trusted already
+        self.assertEqual(self.kinds().count("pr.host_change_approved"), 1)
         pr.verify_host_paths(self.ctx, rnd, "the gates")
-        self.write_spec("test('declines'); fetch('https://evil')\n")(self.worktree)
+        self.write_spec("test('declines'); fetch('https://evil')\n")(self.worktree)  # as a gate could
         with self.assertRaisesRegex(pr.PRStop, "changed since they were trusted"):
             pr.verify_host_paths(self.ctx, rnd, "the gates")
-        self.assertFalse(pr.approve_host_change(self.ctx, rnd, "fix 1"))
-        self.assertEqual(len(self.asked), 2)
+        self.assertEqual(self.asked, [])
 
 
 class MergeTest(MenuTestCase):
@@ -390,18 +411,7 @@ class MergeTest(MenuTestCase):
         self.assertEqual(self.hub.calls, [])
 
 
-class CloseAndCITest(MenuTestCase):
-    def test_close_posts_the_comment_then_closes(self):
-        rnd = self.review(verdict="close")
-        self.confirms = [True]
-        shown = io.StringIO()
-        with redirect_stdout(shown):
-            self.act("close", rnd)
-        self.assertIn("---- the comment to the contributor ----\nThanks for this.", shown.getvalue())
-        self.assertEqual(self.confirmed, ["Close #7, posting this comment?"])
-        self.assertEqual([c[0] for c in self.hub.calls], ["comment", "close"])
-        self.assertIn(prgh.marker(1, self.head), self.hub.calls[0][1])
-
+class CITest(MenuTestCase):
     def test_ci_runs_are_approved_and_workflow_changes_asked_about(self):
         rnd = self.review()
         self.hub.waiting = [{"databaseId": 5}, {"databaseId": 6}]
@@ -444,15 +454,6 @@ class MenuLoopTest(MenuTestCase):
         self.assertIn("Scan: clear (round 1's)", shown.getvalue())
         self.assertEqual(self.hub.calls, [])  # the post picked with the fix waits for the menu on round 2
         self.assertIn(f"Push the 1 commit(s) made here, reviewed in full in round 2", shown.getvalue())
-
-    def test_merge_and_close_together_are_refused(self):
-        self.runner.findings = {"A": [], "B": []}
-        rnd = self.review()
-        listed, _ = prmenu.options(self.ctx, rnd, prmenu.state(self.ctx, rnd))
-        numbers = {key: str(n) for n, (key, _) in enumerate(listed, 1)}
-        answers = iter([f"{numbers['merge']},{numbers['close']}", None])
-        prmenu.menu(self.ctx, rnd, lambda prompt: next(answers), self.confirm)
-        self.assertEqual(self.hub.calls, [])
 
     def test_resolutions_answer_every_finding(self):
         path = self.tmp / "resolutions.json"
@@ -655,7 +656,7 @@ class FixLoopTest(MenuTestCase):
         reviewed = self.act("fix", self.review())
         self.assertEqual(reviewed.number, 2)
         self.assertNotIn("r2-fix-1", self.runner.names())
-        self.assertEqual(self.keys(reviewed), ["edit", "edit-merge", "post", "ask", "close", "quit"])
+        self.assertEqual(self.keys(reviewed), ["post", "ask", "quit"])
 
     def test_a_fix_whose_review_stopped_is_reviewed_from_the_menu(self):
         rnd = self.review()
@@ -688,8 +689,8 @@ class FixLoopTest(MenuTestCase):
         self.assertNotIn("pr.adopted", self.kinds())
         self.assertNotIn("are trusted", shown.getvalue())
         after = shown.getvalue().split("placido: fix:")[1]
-        self.assertIn(str(self.run.path / "rounds" / "2" / "comment.md"), after)
         self.assertIn("Fix the 1 kept finding(s) here", after)
+        self.assertNotIn("Review the branch with the fix in full", after)  # round 1's, whose finding was fixed
         prmenu.state(self.ctx, rnd)  # read on round 1, as a menu still on it did
         self.assertNotIn("pr.adopted", self.kinds())
 
@@ -1027,7 +1028,6 @@ class BaseMergeTest(MenuTestCase):
 
     def test_a_pull_request_that_changes_host_paths_is_fixed_on_its_own_base(self):
         head = self.push_new_head({".placido/stack.sh": "echo theirs\n"}, self.head)
-        self.answers = [True]
         rnd = self.review()
         self.advance_main({"later.txt": "later\n"})
         self.assertTrue(self.fix_label(rnd).startswith("Fix the 1 kept finding(s)"))
@@ -1041,7 +1041,6 @@ class BaseMergeTest(MenuTestCase):
 
     def test_a_conflict_with_a_base_not_merged_in_is_named_to_the_fixer(self):
         self.push_new_head({".placido/stack.sh": "echo theirs\n"}, self.head)
-        self.answers = [True]
         rnd = self.review()
         self.advance_main({".placido/stack.sh": "echo main's\n", "later.txt": "later\n"})
         self.act("fix", rnd)
@@ -1054,13 +1053,12 @@ class BaseMergeTest(MenuTestCase):
         self.runner.during["r1-fix-1"] = lambda wt: (wt / ".placido" / "stack.sh").write_text("echo approved\n")
         self.runner.during["r2-judge"] = lambda wt: self.advance_main({"later.txt": "later\n"})
         self.runner.findings_in = {2: {"A": [finding("A", 1)], "B": []}}
-        self.answers = [True]
         reviewed = self.act("fix", rnd)
         first = pr.round_by_number(self.run.path, 2).head
         skipped = runlog.last_event(self.run.path, "pr.base_merge_skipped")
         self.assertEqual((skipped["round"], skipped["reason"]), (2, "host paths"))
         self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD^"), first)
-        self.assertEqual((reviewed.number, len(self.asked)), (3, 1))  # each later round trusts the approved change
+        self.assertEqual((reviewed.number, self.asked), (3, []))
 
     def test_an_up_to_date_branch_is_fixed_without_a_merge(self):
         rnd = self.review()
@@ -1108,7 +1106,7 @@ class LastGatesTest(MenuTestCase):
         s = prmenu.state(self.ctx, rnd)
         self.assertEqual(prmenu._last_text(self.ctx, s), " · last gates not run")
         listed, _ = prmenu.options(self.ctx, rnd, s)
-        self.assertEqual([k for k, _ in listed], ["edit", "edit-merge", "last", "push", "post", "ask", "close", "quit"])
+        self.assertEqual([k for k, _ in listed], ["last", "push", "post", "ask", "quit"])
         self.assertEqual(dict(listed)["last"], f"Run the last gates (e2e) on {fix[:12]}")
         shown = self.run_last(rnd)
         self.assertIn("the browser suite ran\n", shown)
@@ -1284,7 +1282,7 @@ class DecisionsTest(MenuTestCase):
         self.assertIn("Verdict: close (yours; the judge's was fix-here). It greets", text)
         self.assertIn("F2  significant gaps        `steps.go:9` close in the step helpers [decision 1: yours]\n", text)
         self.assertIn("F1  the greeting [A1, B1]: Your decision 1: narrow it", text)
-        self.assertEqual(self.keys(rnd), ["edit", "post", "ask", "close", "quit"])
+        self.assertEqual(self.keys(rnd), ["post", "ask", "quit"])
         self.confirms = [True]
         self.act("post", rnd)
         self.assertEqual(self.hub.calls[-1][:2], ("review", "comment"))

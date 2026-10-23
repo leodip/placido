@@ -45,8 +45,8 @@ DEFAULTS: dict[str, Any] = {
     "limits": {"stage_attempts": 3, "quota_wait": "2h", "ci_wait": "1h"},
     # `placido pr`: two reviewers from different vendors, one after the other; the gates
     # placido runs once for both (none named: the slice and the final gates); and the
-    # paths a pull request may not change without the user's approval, since setup and
-    # the gates run them on this machine (decided 2026-10-16).
+    # paths setup and the gates run on this machine, which a pull request changes only as
+    # the scan read them (decided 2026-10-16; the user's approval too until 2026-10-22).
     "pr": {
         "reviewers": [
             {"agent": "claude", "model": "opus", "effort": "xhigh"},
@@ -121,7 +121,7 @@ class PRSettings:
 
     reviewers: tuple[Role, ...]  # in the order they review; each has its own fallback chain
     gates: tuple[str, ...]  # command names placido runs once, before the reviews
-    host_paths: tuple[str, ...]  # a pull request changing these waits for the user's approval
+    host_paths: tuple[str, ...]  # run on this machine: a change to them runs on the scan's word alone
     parallel: bool = True  # reviewers at once, each in a worktree and stack of its own
     fix_rounds: int = 3  # fixes, each reviewed in full in a round of its own, before the menu asks again
 

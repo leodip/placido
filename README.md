@@ -240,7 +240,7 @@ reviewers = [          # each reviews on its own, in this order; each may name a
   { agent = "codex", model = "gpt-6.1-sol", effort = "max", tier = "fast" },
 ]
 gates = []             # commands run once before the reviews; none named: the slice and final gates
-host_paths = [".placido", ".claude", ".codex", ".mcp.json"]  # changes wait for your approval
+host_paths = [".placido", ".claude", ".codex", ".mcp.json"]  # run here: changes run on the scan's word
 parallel   = true      # reviewers at once, each in a worktree and stack of its own
 fix_rounds = 3         # fixes, each reviewed in full in a round of its own, before the menu asks again
 ```
@@ -376,14 +376,15 @@ keeps it in yours).
    note instead: shown, and handed to the reviewers, without stopping.
 2. **Host paths.** The paths in `[pr] host_paths` run on your machine: your scripts and
    the agents' project settings, whose hooks and MCP servers start with an agent in
-   the worktree. A pull request that changes them waits for your approval, and they
+   the worktree. A pull request that changes them runs on the scan's word alone, which
+   says what each such change would do and stops the review on one that reaches beyond
+   the project; placido never asks you to read them. They
    are checked again before every command placido runs from the worktree, since the
    pull request's own tests can write to it. After every command and every agent the
    worktree must be clean: what changed is kept as evidence and put back, and a change
    under a host path stops the review.
 3. **Setup and gates.** Your setup brings up a stack for each reviewer, while the scan
-   reads when the pull request changes no host path, and after your approval when it
-   does. Then the `[pr] gates`, once, for every reviewer.
+   reads when the pull request changes no host path, and after it when it does. Then the `[pr] gates`, once, for every reviewer.
 4. **Reviews.** Every reviewer at once, each in a lane of its own: the pull request's
    worktree for the first, a detached worktree in the run's folder for each other, each
    with its own stack (`PLACIDO_NAME` such as `goiabada-pr-602-b`), so their test runs
@@ -414,16 +415,16 @@ keeps it in yours).
    comment and squash message the role brought in line. Stop halfway, and the next
    `placido pr` asks again.
 
-Then placido prints the review and a menu. Nothing happens that you do not pick, and
-pushing, merging, and closing ask again: edit the comment or the squash message (in
-`$VISUAL`, `$EDITOR`, or nano), fix the findings here on the contributor's branch, run
+Then placido prints the review, the commits made here that the contributor's branch
+lacks, and a menu. Nothing happens that you do not pick, and pushing and merging ask
+again: fix the findings here on the contributor's branch, run
 the project's last gates on the branch as it is here (the checks an issue run keeps
 for after the review, such as a browser suite against a real deployment; a failure
 stops the push or merge picked with them), push them (never forced, and only when
 the contributor allows maintainers to), post the comment (shown in full first, as it
 will go out), approve CI runs GitHub holds
-for first-time contributors, squash-merge pinned to the commit the review covered, or
-close. A fix is the `fix` role's, committed locally once the gates pass. Then a new
+for first-time contributors, or squash-merge pinned to the commit the review covered. A
+push waits for GitHub to show it before the menu comes back. A fix is the `fix` role's, committed locally once the gates pass. Then a new
 round reviews the branch with it in full, as the contributor's head was: every
 reviewer, the cross-checks, and the judge, checking each finding's fix with a test
 that fails without it, each dispute against its evidence, and the fixes like any new
@@ -442,9 +443,9 @@ from, runs the setup again before the fix, so the fix and its gates run on what 
 has. A pull request that changes host paths, or whose fix did, is fixed on its own
 base instead, and the fixer, which never merges, is told which files conflict with the
 base: where the base already makes the branch's change, the branch leaves the file as
-its own base had it, so the base's copy lands whole. A fix that needs a host path changed, such as a browser test under a
-folder the last gates run, shows you that change and runs none of it until you
-approve it; refused, the fixer undoes it and disputes the findings that needed it.
+its own base had it, so the base's copy lands whole. A fix may change a host path, such
+as a browser test under a folder the last gates run, when a finding needs it: the
+change is kept in the round's folder, and the round after the fix reviews it in full.
 To ask about the work, the menu opens the round's fixer, or its judge when nothing was
 fixed, in a new tab of the workspace: a copy of its session, so placido's own stays as
 it was, started read-only, since a change made there skips the gates a fix gets; what

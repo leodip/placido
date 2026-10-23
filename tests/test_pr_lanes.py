@@ -92,13 +92,13 @@ class LanesTest(LaneTestCase):
         self.assertEqual(sorted(self.setups()), ["proj-pr-7", "proj-pr-7-b"])
         self.assertTrue((self.run.path / "setup-b.log").is_file())
 
-    def test_a_host_path_change_is_approved_before_any_setup(self):
+    def test_a_host_path_change_is_trusted_before_any_setup(self):
         self.with_setup()
         self.push_new_head({".placido/stack.sh": "echo changed\n"}, "main")
         self.ctx.pr = self.hub.pull
-        self.answers = [True]
         pragents.review(self.ctx)
         kinds = self.kinds()
+        self.assertEqual(self.asked, [])
         self.assertLess(kinds.index("pr.trust_approved"), kinds.index("setup.start"))
         self.assertLess(kinds.index("pr.scan"), kinds.index("setup.start"))
 

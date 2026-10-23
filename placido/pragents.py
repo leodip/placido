@@ -140,8 +140,8 @@ def prepare(ctx: Context, rnd: Round) -> None:
     """The scan, the host paths, and the stacks: the pull request's own, and the lane of
     each reviewer whose cross-check is still to come. When the pull request changes no
     host path, the stacks come up while the scan reads, since setup then runs only what
-    the base had (decided 2026-10-16); otherwise the scan and the user's approval of the
-    change come first."""
+    the base had (decided 2026-10-16); otherwise the scan comes first, since its word is
+    what lets the change run."""
 
     working = [code for code, _ in reviewers(ctx) if not done(ctx.run.path, "pr.crosschecked", rnd.number, letter=code)]
     needed = [primary_lane(ctx), *(lane_for(ctx, rnd, code) for code in working)]
@@ -232,8 +232,8 @@ def scan_prompt(ctx: Context, rnd: Round, folder: Path) -> str:
         f" {rnd.folder / 'commits.txt'}",
         f"- **The code at its head:** {ctx.worktree}. You can read it, and nothing else outside"
         " your step folder; you cannot change it or run anything.",
-        f"- **Paths that run on this machine:** {paths}. Placido waits for the user's approval"
-        " of any change to them; report what such a change would do anyway.",
+        f"- **Paths that run on this machine:** {paths}. A change to them runs here on your"
+        " verdict alone: nobody else reads it first.",
         notes_line(rnd, "scan"),
         f"- **Write:** {folder / 'scan.md'} and {folder / 'scan.json'}",
     ]

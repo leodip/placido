@@ -1,7 +1,9 @@
 """The end of `placido pr`: the review's summary, and the actions the user picks.
 
 Nothing reaches GitHub or the contributor's branch until the user picks it here, and
-pushing, merging, and closing ask once more (decided 2026-10-16). Fixes made here go on
+pushing and merging ask once more (decided 2026-10-16). The menu offers no editing of
+the comment or the squash message, nor closing the pull request: the user never picked
+them (decided 2026-10-22). Fixes made here go on
 the contributor's own branch, so the pull request stays the one way the change lands
 and keeps its author. Whatever the review finds, the maintainer fixes it here: nothing
 goes back to the contributor, whose comment says the change is good, or what was
@@ -30,7 +32,6 @@ paths placido trusts are then its approved ones.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shlex
 import subprocess
@@ -49,7 +50,10 @@ PUSH_URL = "https://github.com/{repo}.git"  # where the contributor's branch is 
 RESOLUTIONS = ("fixed", "disputed")
 # The last gates run before the push, as in an issue run, so a failing one stops the
 # push, the post, and the merge picked with it.
-ORDER = ("edit", "edit-merge", "fix", "review", "last", "push", "post", "ci", "merge", "ask", "close")
+ORDER = ("fix", "review", "last", "push", "post", "ci", "merge", "ask")
+# How long a push waits for GitHub to show the pull request at the commit pushed: it takes
+# seconds, and a menu read before then offered the same push again (#630, 2026-10-22).
+PUSH_SHOWN = 60
 # How each verdict's comment is posted: the review's kind on GitHub, and in words.
 POSTED_AS = {
     "merge": ("approve", "as an approving review"),
@@ -75,7 +79,8 @@ class State:
     yours: list[str]  # the user's own commits in the worktree this round: trusted, no round reviews them
     local: str  # the worktree's head
     outgoing: str  # what push and merge take: the round's head with only the user's commits on it, else ""
-    ahead: int  # commits made here that the pull request's branch lacks, the base's own not counted
+    unpushed: list[str]  # the commits made here that the pull request's branch lacks, newest first, as "sha subject"
+    ahead: int  # how many: the base's own, merged in, not counted
     merges_base: bool  # a fix merges the base in first: it moved past the branch, which changes no host path
     pushed: bool
     posted: bool
@@ -99,7 +104,7 @@ def state(ctx: Context, rnd: Round) -> State:
     since = (pr.git(wt, "rev-list", "--reverse", f"{expected}..{local}").splitlines()
              if local != expected and pr.is_ancestor(wt, expected, local) else [])
     above = pr.git(wt, "rev-list", f"{rnd.head}..{local}").splitlines() if pr.is_ancestor(wt, rnd.head, local) else None
-    ahead = int(pr.git(wt, "rev-list", "--count", "--first-parent", f"{pr.pr_ref(number)}..HEAD") or 0)
+    unpushed = pr.git(wt, "log", "--first-parent", "--format=%H %s", f"{pr.pr_ref(number)}..HEAD").splitlines()
     merges_base = (
         pull.state == "OPEN" and not pr.is_ancestor(wt, pr.base_ref(pull.base), "HEAD")
         and not pr.branch_changes_host_paths(ctx, rnd)
@@ -117,7 +122,8 @@ def state(ctx: Context, rnd: Round) -> State:
         yours=taken + since,
         local=local,
         outgoing=local if above is not None and set(above) <= set(taken + since) else "",
-        ahead=ahead,
+        unpushed=unpushed,
+        ahead=len(unpushed),
         merges_base=merges_base,
         pushed=bool(pr.round_events(run_dir, "pr.pushed", rnd.number)),
         posted=bool(pr.round_events(run_dir, "pr.posted", rnd.number)),
@@ -270,16 +276,13 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
     if final(rnd).get("verdict") == "request-changes":
         notes.append("This review is from before placido stopped asking contributors for changes, and its comment"
                      " asks the contributor for them: fix them here, and the next round writes one that says what"
-                     " you changed, or edit it before posting.")
+                     " you changed.")
     if s.yours:
         notes.append(f"Your {len(s.yours)} commit(s) in the worktree, up to {s.yours[-1][:12]}, are trusted:"
                      f" they go out with the head round {rnd.number} reviewed.")
     if pr.git(wt, "status", "--porcelain"):
         notes.append(f"The worktree has uncommitted changes: commit them to have them go out, or drop them"
                      f" (git -C {wt} status).")
-    out.append(("edit", f"Edit the comment ({rnd.folder / 'comment.md'})"))
-    if (rnd.folder / "merge.md").is_file():
-        out.append(("edit-merge", f"Edit the squash message ({rnd.folder / 'merge.md'})"))
     merge = f"Merge {s.pull.base} into the branch, then " if s.merges_base else ""
     if s.fixed:
         out.append(("review", f"Review the branch with the fix in full, in round {rnd.number + 1}: every reviewer,"
@@ -316,7 +319,6 @@ def options(ctx: Context, rnd: Round, s: State) -> tuple[list[tuple[str, str]], 
     asked = to_ask(ctx, rnd)
     if asked is not None:
         out.append(("ask", f"Ask {_who(asked)} questions, read-only, in a new tab"))
-    out.append(("close", "Close the pull request, posting the comment if it is not posted"))
     out.append(("quit", f"Nothing more now: placido pr {s.pull.number} shows this again"))
     return out, notes
 
@@ -333,7 +335,8 @@ def menu(ctx: Context, rnd: Round, read: Callable[[str], str | None], confirm: A
             print("\n" + "\n".join(notes))
             return
         print(f"\nCI {s.ci}{_last_text(ctx, s)} · {'posted' if s.posted else 'not posted'} · "
-              f"{s.ahead} commit(s) here not pushed · {len(s.waiting)} CI run(s) waiting")
+              f"{len(s.waiting)} CI run(s) waiting")
+        print(_unpushed_text(s))
         for note in notes:
             print(note)
         for n, (_, label) in enumerate(listed, 1):
@@ -350,9 +353,6 @@ def menu(ctx: Context, rnd: Round, read: Callable[[str], str | None], confirm: A
             picked.discard("quit")
             if not picked:
                 return
-        if {"merge", "close"} <= picked:
-            print("placido: merge or close, not both")
-            continue
         for key in [k for k in ORDER if k in picked]:
             # As things are now, not as the menu showed them: the answer can come long
             # after, with a commit or a push made meanwhile, as #619's merge was picked
@@ -374,20 +374,19 @@ def menu(ctx: Context, rnd: Round, read: Callable[[str], str | None], confirm: A
                 break
 
 
-def _edit(path: Path) -> None:
-    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "nano"  # nano unless the user chose one
-    subprocess.run([*shlex.split(editor), str(path)])
+def _unpushed_text(s: State, shown: int = 10) -> str:
+    """The commits made here that the pull request's branch lacks, one a line."""
 
-
-def edit(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
-    _edit(rnd.folder / "comment.md")
-    ctx.run.event("pr.edited", round=rnd.number, file="comment.md")
-    print((rnd.folder / "comment.md").read_text(encoding="utf-8"))
-
-
-def edit_merge(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
-    _edit(rnd.folder / "merge.md")
-    ctx.run.event("pr.edited", round=rnd.number, file="merge.md")
+    target = f"{s.pull.head_repo}:{s.pull.head_ref}"
+    if not s.unpushed:
+        return f"Not pushed: nothing; {target} has every commit here"
+    lines = [f"Not pushed: {len(s.unpushed)} commit(s) here that {target} lacks"]
+    for line in s.unpushed[:shown]:
+        sha, _, subject = line.partition(" ")
+        lines.append(f"  {sha[:12]} {subject}")
+    if len(s.unpushed) > shown:
+        lines.append(f"  and {len(s.unpushed) - shown} more")
+    return "\n".join(lines)
 
 
 # ---- questions to an agent ------------------------------------------------------------
@@ -502,8 +501,8 @@ def _body(ctx: Context, rnd: Round) -> Path:
 
 
 def post(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
-    """Post the comment, shown first as it goes out: a fix or an edit may have changed it
-    since the summary showed it (decided 2026-10-16, after #592's comment went out unseen)."""
+    """Post the comment, shown first as it goes out: a fix may have changed it since the
+    summary showed it (decided 2026-10-16, after #592's comment went out unseen)."""
 
     kind, how = POSTED_AS[s.verdict]
     unpushed = " It may say what was changed on the branch, which is not pushed yet." if s.ahead else ""
@@ -561,6 +560,24 @@ def push(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
     commit = s.outgoing
     ctx.run.event("pr.pushed", round=rnd.number, commit=commit, to=target)
     print(f"pushed {commit[:12]} to {target}")
+    if not _shown(ctx, commit):
+        print(f"GitHub does not show #{s.pull.number} at {commit[:12]} yet: until it does, the menu counts"
+              " the commits as not pushed")
+
+
+def _shown(ctx: Context, commit: str) -> bool:
+    """Whether GitHub shows the pull request at the commit pushed within PUSH_SHOWN
+    seconds: as its head, and as the ref the commits not pushed are counted against."""
+
+    end = time.monotonic() + PUSH_SHOWN
+    while True:
+        pull = ctx.hub.pull_request(ctx.pr.number)
+        pr.fetch(ctx.root, pull.base, pull.number)
+        if pull.head_sha == commit and pr.git(ctx.root, "rev-parse", pr.pr_ref(pull.number)) == commit:
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(2)
 
 
 def approve_ci(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
@@ -628,20 +645,6 @@ def merge(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
     if later != "?":
         pr.notify(ctx, "merged", f"#{number} into {s.pull.base} once CI was green; placido close pr-{number}")
     print(f"merged #{number}")  # the menu then says how to end the run
-
-
-def close_pr(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
-    if not s.posted:
-        print("\n" + "\n".join(comment_block(rnd)))
-    if not confirm(f"Close #{s.pull.number}" + ("" if s.posted else ", posting this comment") + "?"):
-        return
-    if not s.posted:
-        ctx.hub.comment(s.pull.number, _body(ctx, rnd))
-        ctx.run.event("pr.posted", round=rnd.number, kind="comment")
-    ctx.hub.close(s.pull.number)
-    ctx.run.event("pr.closed_pr", round=rnd.number)
-    status.show(ctx.run.path, status.text(status.DONE, f"closed; placido close pr-{s.pull.number}"))
-    print(f"closed #{s.pull.number}")
 
 
 # ---- fixing it here ---------------------------------------------------------------------------
@@ -910,12 +913,7 @@ def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: 
             return problems
         host = pr.changed_files(wt, *ctx.settings.pr.host_paths) if ctx.settings.pr.host_paths else []
         if host:
-            # Asked before the gates below run any of it.
-            answer = pr.approve_host_change(ctx, rnd, f"fix {attempt_no}")
-            if not answer:
-                who = "the user refused" if answer is False else "nobody was at the terminal to approve"
-                return [f"{who} your change to {', '.join(host)}, which run on this machine; undo it,"
-                        " and dispute the findings that needed it, saying so."]
+            pr.approve_host_change(ctx, rnd, f"fix {attempt_no}")  # before the gates below run any of it
         if result.read_text(encoding="utf-8").strip().splitlines()[:1] == [NO_CHANGES]:
             return [f"the result says '{NO_CHANGES}', but the worktree has changes."] if pr.git(wt, "status", "--porcelain") else []
         return implement.check(result, wt, head, entry, settings, ctx.env, run)
@@ -1018,7 +1016,7 @@ def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path) -> str:
     host = ", ".join(ctx.settings.pr.host_paths) or "none"
     lines += [
         f"- **Paths that run on this machine:** {host}. Change them only when a finding needs it:"
-        " placido shows the change to the user, who approves it before anything runs it.",
+        " the round after yours reviews the change in full, as it does the rest.",
         f"- **Gates:** {gates}. Placido runs them after you and commits only when they pass, so"
         " run only the narrow tests for what you change. Then a new round reviews the pull request"
         " with your fixes in full, as it reviewed the contributor's head.",
@@ -1041,8 +1039,6 @@ def _commit(worktree: Path, message: str, run: runlog.Run, rnd: Round) -> str:
 
 
 ACTIONS: dict[str, Callable[[Context, Round, State, Ask], None]] = {
-    "edit": edit,
-    "edit-merge": edit_merge,
     "fix": fix,
     "review": review_here,
     "last": last,
@@ -1051,5 +1047,4 @@ ACTIONS: dict[str, Callable[[Context, Round, State, Ask], None]] = {
     "ci": approve_ci,
     "merge": merge,
     "ask": ask,
-    "close": close_pr,
 }

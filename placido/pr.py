@@ -5,7 +5,7 @@ checks. A scan agent, confined (step.CONFINABLE), reads the change and the pull
 request's text first, for anything that would harm this machine or steer the agents
 that read it later; a concern stops the review until the user says to go on. Then the
 paths that run on this machine (`[pr] host_paths`: the project's own scripts, the
-agents' project settings) must be the base's, or what the user approved, and they are
+agents' project settings) must be the base's, or what placido trusted, and they are
 checked again before every command placido runs from the worktree, since the pull
 request's own tests run with write access to it. After every command and every agent
 the worktree must be clean: what changed is kept as evidence and put back, and a
@@ -523,9 +523,9 @@ TRUSTED_HERE = ("pr.base_merged", "pr.host_change_committed")
 def trusted(run_dir: Path, rnd: Round, primary: bool = True) -> str:
     """What the host paths must match. In the pull request's own worktree, the latest
     of: the base branch's tip once placido merged it in, which it does only into a pull
-    request that changes no host path, and a fix's commit whose change to them the user
-    approved. Otherwise the round's head once the user approved its changes to them, or
-    else the merge base."""
+    request that changes no host path, and a fix's commit whose change to them placido
+    trusted. Otherwise the round's head once its changes to them were trusted, or else
+    the merge base."""
 
     made = [e for e in runlog.read_events(run_dir) if e.get("event") in TRUSTED_HERE and e.get("round") == rnd.number]
     if primary and made:
@@ -561,14 +561,14 @@ def host_changes(ctx: Context, rnd: Round) -> list[str]:
 
 def branch_changes_host_paths(ctx: Context, rnd: Round) -> bool:
     """Whether the branch changes host paths: the pull request itself, or a fix made
-    here whose change to them the user approved."""
+    here, whose change to them placido trusted."""
 
     return bool(host_changes(ctx, rnd)) or done(ctx.run.path, "pr.host_change_committed", rnd.number) is not None
 
 
 def verify_host_paths(ctx: Context, rnd: Round, before: str, lane: Lane | None = None) -> None:
     """Stop unless the host paths hold what was trusted, right before `before` runs: in
-    the pull request's own worktree, a change the user approved counts as trusted."""
+    the pull request's own worktree, a fix's change placido trusted counts too."""
 
     if not ctx.settings.pr.host_paths:
         return
@@ -601,7 +601,7 @@ def host_state(wt: Path, files: list[str]) -> dict[str, str]:
 
 
 def approved_here(ctx: Context, rnd: Round, state: dict[str, str]) -> bool:
-    """Whether the user approved exactly this change to the host paths, made here by
+    """Whether placido trusted exactly this change to the host paths, made here by
     placido's own agent, since the worktree last trusted a commit."""
 
     approved = []
@@ -615,36 +615,26 @@ def approved_here(ctx: Context, rnd: Round, state: dict[str, str]) -> bool:
     return bool(state) and state in approved
 
 
-def approve_host_change(ctx: Context, rnd: Round, by: str) -> bool | None:
-    """Put a change placido's own agent made to the host paths to the user, before
-    anything runs it, as a pull request's own change is (decided 2026-10-16: on #596
-    the fix role could not add the browser tests a finding asked for, since e2e/ runs
-    here, and went round in circles). True once they approved this very content, False
-    when they refused it, None with nobody to ask."""
+def approve_host_change(ctx: Context, rnd: Round, by: str) -> None:
+    """Trust a change placido's own agent made to the host paths, before anything runs
+    it (decided 2026-10-16: on #596 the fix role could not add the browser tests a
+    finding asked for, since e2e/ runs here, and went round in circles). The user was
+    asked until 2026-10-22, and never read them: the agent can run any command already,
+    and the round after the fix reviews the change in full. The trust holds for this
+    content alone, so what a gate writes there afterwards stops the next command."""
 
     wt, paths = ctx.worktree, ctx.settings.pr.host_paths
     files = untrusted_host_files(ctx, rnd, primary_lane(ctx))
     state = host_state(wt, files)
     if approved_here(ctx, rnd, state):
-        return True
+        return
     text = git(wt, "diff", trust_reference(ctx, rnd), "--", *paths) + "\n"
     for name in git(wt, "ls-files", "--others", "--exclude-standard", "--", *paths).splitlines():
         text += f"\n--- new file {name}\n{_read(wt / name)}"
     evidence = rnd.folder / f"host-paths-{_slug(by)}.diff"
     evidence.write_text(text, encoding="utf-8")
-    print(f"\n{by} changed files that run on this machine ({', '.join(paths)}):")
-    for name in files:
-        print(f"  {name}")
-    print(f"The whole change to them: {evidence}")
-    status.show(ctx.run.path, status.text(status.YOU, f"{by} changed host paths: approve or refuse"))
-    notify(ctx, "host paths changed", f"{by} changed {', '.join(files)[:140]}; approve or refuse")
-    answer = ctx.ask("Have you read that change, and may it run here?")
-    status.show(ctx.run.path, status.text(status.WORKING, by))
-    if answer:
-        ctx.run.event("pr.host_change_approved", round=rnd.number, by=by, files=files, state=state)
-    else:
-        ctx.run.event("pr.host_change_refused", round=rnd.number, by=by, files=files, asked=answer is not None)
-    return answer
+    print(f"\n{by} changed {', '.join(files)}, which run on this machine; the change is in {evidence}")
+    ctx.run.event("pr.host_change_approved", round=rnd.number, by=by, files=files, state=state)
 
 
 def settle(ctx: Context, rnd: Round, after: str, lane: Lane | None = None) -> list[str]:
@@ -699,7 +689,10 @@ def _slug(text: str) -> str:
 
 
 def trust(ctx: Context, rnd: Round) -> None:
-    """Stop for the user's approval when the pull request changes a host path."""
+    """Trust the host paths the pull request changes on the scan's word: it read the
+    change, and a concern of its own stopped the review until the user said to go on.
+    The user was asked as well until 2026-10-22, and never read them: "I just want to
+    trust the workflow + AI have verified things for me"."""
 
     run, paths = ctx.run, ctx.settings.pr.host_paths
     if not paths or done(run.path, "pr.trust_approved", rnd.number, head=rnd.head):
@@ -712,25 +705,14 @@ def trust(ctx: Context, rnd: Round) -> None:
     if rnd.here and rnd.previous is not None:
         before = trusted(run.path, round_by_number(run.path, rnd.previous))
         if not git(ctx.worktree, "diff", "--name-only", before, rnd.head, "--", *paths):
-            # As the round before trusted them: changed here only as the user approved.
+            # As the round before trusted them: changed here only as placido trusted.
             run.event("pr.trust_approved", round=rnd.number, head=rnd.head, files=changed, carried=rnd.previous)
             return
     diff = rnd.folder / "host-paths.diff"
     diff.write_text(git(ctx.worktree, "diff", rnd.base, rnd.head, "--", *paths) + "\n", encoding="utf-8")
-    print(f"\n#{ctx.pr.number} changes files that run on this machine ({', '.join(paths)}):")
-    for name in changed:
-        print(f"  {name}")
-    print(f"The whole change to them: {diff}")
-    status.show(run.path, status.text(status.YOU, f"host paths changed: placido pr {ctx.pr.number}"))
-    notify(ctx, "host paths changed", f"#{ctx.pr.number} changes {', '.join(changed)[:140]}; approve or stop")
-    answer = ctx.ask("Have you read that change, and may it run here?")
-    if not answer:
-        run.event("pr.stopped", round=rnd.number, reason="host paths")
-        raise PRStop(
-            "stopped: the pull request changes host paths"
-            + ("" if answer is False else "; run placido pr again in a terminal to decide")
-        )
-    run.event("pr.trust_approved", round=rnd.number, head=rnd.head, files=changed)
+    print(f"\n#{ctx.pr.number} changes {', '.join(changed)}, which run on this machine, as the scan read"
+          f" them; the change is in {diff}")
+    run.event("pr.trust_approved", round=rnd.number, head=rnd.head, files=changed, by="scan")
 
 
 def setup(ctx: Context, rnd: Round, lane: Lane | None = None) -> None:

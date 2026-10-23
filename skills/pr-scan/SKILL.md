@@ -33,8 +33,9 @@ Code that runs at setup, build, install, or test time, and what it reaches:
   services, reads home folders, credentials, SSH or cloud keys, tokens, browser data,
   or environment variables it has no business with, writes outside the repository and
   temporary folders, or starts processes that outlive it.
-- **The machine-side paths:** any change to the paths your prompt lists (placido waits
-  for the user's approval of those anyway; say what the change would do), to container
+- **The machine-side paths:** any change to the paths your prompt lists, which runs on
+  this machine on your verdict alone (say what each change would do; one that reaches
+  beyond the project is a concern), to container
   definitions (what a compose file mounts from the host, privileged containers, the
   Docker socket), to CI workflows, and to scripts and Makefiles.
 - **Agent instructions:** any change to `AGENTS.md`, `CLAUDE.md`, `.claude/`, `.codex/`,
