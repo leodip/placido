@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from placido import decisions, runlog, spec
+from placido import checks, decisions, runlog, spec
 
 CI_WORDS = {
     "red": "CI is red after placido's fixes",
@@ -40,7 +40,8 @@ def build(run_dir: Path, folded: list[int]) -> str:
     last = next((e for e in reversed(events) if e.get("event") == "last_gates.gave_up"), None)
     if last:
         failed = f" ({', '.join(last.get('gates') or [])})" if last.get("gates") else ""
-        lines += [f"> **{LAST_GATES_FAIL}{failed}.**", ""]
+        why = checks.outside(run_dir, "the last gates")
+        lines += [f"> **{LAST_GATES_FAIL}{failed}.**" + (f" Nothing in this change causes it: {why}" if why else ""), ""]
     solution = section(agreement, "Solution")
     if solution:
         lines += ["## What this changes", "", solution, ""]

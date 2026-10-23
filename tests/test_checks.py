@@ -20,15 +20,22 @@ class FakeFixer:
         self.run, self.worktree = run, worktree
         self.repairs: list[bool] = []
         self.prompts: list[str] = []
+        self.unchanged: str | None = None  # a result saying nothing in the change causes the failure
+        self.touch = False  # and a file written all the same
 
     def __call__(self, role, agent, task, name=None, check=None, ask=None, **kwargs):
         self.prompts.append(task)
         folder = self.run.step_dir(len(self.prompts), name)
-        repair = self.repairs.pop(0) if self.repairs else True
-        (self.worktree / ("ok.txt" if repair else f"try-{len(self.prompts)}.txt")).write_text("x\n")
-        (folder / "result.md").write_text(RESULT)
-        problems = check(folder / "result.md")
-        return StepResult("invalid" if problems else "success", folder)
+        if self.unchanged is not None:
+            if self.touch:
+                (self.worktree / "try.txt").write_text("x\n")
+            (folder / "result.md").write_text(self.unchanged)
+        else:
+            repair = self.repairs.pop(0) if self.repairs else True
+            (self.worktree / ("ok.txt" if repair else f"try-{len(self.prompts)}.txt")).write_text("x\n")
+            (folder / "result.md").write_text(RESULT)
+        self.problems = check(folder / "result.md")
+        return StepResult("invalid" if self.problems else "success", folder)
 
 
 class FinalGatesTest(unittest.TestCase):
@@ -114,6 +121,32 @@ class FinalGatesTest(unittest.TestCase):
         runs = self.events().count("gate.start")
         self.assertEqual(checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high")), "failed")
         self.assertEqual(self.events().count("gate.start"), runs)  # a resumed delivery keeps the outcome
+
+    def test_a_fixer_that_finds_the_cause_outside_the_change_changes_nothing(self):
+        self.fixer.unchanged = ("No code changes\n\nmain fails the same e2e tests:\n#620 changed them.\n\n"
+                                "## Evidence\n- the same failures on main\n")
+        ctx = self.ctx(final="", last="full")
+        self.assertEqual(checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high")), "failed")
+        self.assertEqual(self.fixer.problems, [])
+        self.assertEqual(len(self.fixer.prompts), 1)
+        self.assertEqual(self.events().count("gate.start"), 1)  # the gates failed on this very tree
+        self.assertEqual(sh(self.repo, "git", "rev-list", "--count", "HEAD"), "1")
+        self.assertEqual(checks.outside(self.run.path, "the last gates"), "main fails the same e2e tests: #620 changed them.")
+        self.assertIn("last_gates.gave_up", self.events())
+
+    def test_the_reason_may_follow_on_the_first_line(self):
+        result = self.tmp / "result.md"
+        result.write_text("No code changes: main fails them too.\n\n## Evidence\n- x\n")
+        self.assertEqual(checks.unchanged(result), "main fails them too.")
+        result.write_text(RESULT)
+        self.assertIsNone(checks.unchanged(result))
+
+    def test_a_result_of_no_changes_beside_changes_is_sent_back(self):
+        self.fixer.unchanged, self.fixer.touch = "No code changes\n\nmain's.\n", True
+        self.assertEqual(checks.last_gates(self.ctx(final="", last="full"), config.AgentSpec("claude", "opus", "high")),
+                         "failed")
+        self.assertIn("the result says 'No code changes', but the worktree changed", self.fixer.problems[0])
+        self.assertIsNone(checks.outside(self.run.path, "the last gates"))
 
     def test_the_fixer_is_given_the_projects_fix_notes(self):
         notes = self.repo / ".placido" / "notes" / "fix.md"

@@ -32,11 +32,14 @@ where the failure touches what they decided.
   end your turn while a background command or monitor is running: placido reads the
   end of your turn as the end of your work.
 
-When the failure is not the change's fault (a flaky test, an outage, a broken CI
-setup) or fixing it needs the user's decision, write the result as
-`Blocked: <the question, in one line>` followed by the evidence, and wait in this
-tab: placido brings the user here. Record their decision in the decisions file your
-prompt names, as the implement skill shows, then go on.
+When nothing in the change causes the failure (a test the base branch fails the same
+way, a flaky test, an outage, a broken CI setup), change nothing and write the result
+as `No code changes` (below): placido leaves the check failing, and the pull request
+says why. Do not ask the user about it. When fixing the failure needs the user's
+decision, write the result as `Blocked: <the question, in one line>` followed by the
+evidence, and wait in this tab: placido brings the user here. Record their decision
+in the decisions file your prompt names, as the implement skill shows, then go on; a
+decision to leave the failure as it is ends in `No code changes` too.
 
 ## 3. Write
 
@@ -52,5 +55,19 @@ Fix <what failed>: <the gist>
 - The failing output's key line, and the same check passing after the fix.
 ```
 
+With nothing changed, the first line is `No code changes` instead, then why, in a
+sentence or two the pull request can quote:
+
+```markdown
+No code changes
+
+<what causes the failure, and why it is not this change's>
+
+## Evidence
+- The failing output's key line, and what places its cause outside the change, such
+  as the same failure on the base branch.
+```
+
 **Done when** the checks your prompt names pass locally, or you have said why they
-cannot run here, and the result file is written.
+cannot run here, and the result file is written; or nothing in the change causes the
+failure, the worktree is as you found it, and the result says so.

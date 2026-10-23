@@ -82,6 +82,13 @@ class BodyTest(unittest.TestCase):
         body = prbody.build(self.run.path, [])
         self.assertTrue(body.startswith("Closes #331\n\n> **The last gates fail after placido's fixes (slow).**"))
 
+    def test_last_gates_failing_from_outside_the_change_say_why(self):
+        self.run.event("checks.unchanged", what="the last gates", why="main fails them too.")
+        self.run.event("last_gates.gave_up", gates=["slow"])
+        body = prbody.build(self.run.path, [])
+        self.assertTrue(body.startswith("Closes #331\n\n> **The last gates fail after placido's fixes (slow).**"
+                                        " Nothing in this change causes it: main fails them too.\n"))
+
     def test_no_review_yet(self):
         body = prbody.build(self.run.path, [])
         self.assertNotIn("## Review", body)

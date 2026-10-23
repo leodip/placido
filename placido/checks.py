@@ -8,7 +8,10 @@ the checks again on the fix before it commits it: for gates, that run is the pro
 and they do not run a third time; CI gets up to MAX_FIXES fixes. When a fix cannot
 pass, a failing final gate stops the run; failing last gates or CI leave the pull
 request flagged. A fix never commits by itself, and never weakens a check
-(skills/checks/SKILL.md).
+(skills/checks/SKILL.md). A fixer that finds the cause outside the change, such as a
+test the base branch fails too, changes nothing and says why, and the check stays
+failing with that reason (decided 2026-10-23: #489's fixer could end only with a
+change, and asked the user twice while main's own e2e tests failed).
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from placido.step import Step
 
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "checks" / "SKILL.md"
 MAX_FIXES = 2
+NO_CHANGES = "No code changes"  # a fixer's first line when nothing in the change causes the failure
 NOTES = Path(".placido") / "notes" / "fix.md"
 
 
@@ -81,15 +85,44 @@ def fix(
     settings = replace(ctx.settings, mutations=0, slice_gates=())
 
     def check(result: Path) -> list[str]:
-        return implement.check(result, ctx.worktree, head, entry, settings, ctx.env, ctx.run)
+        if unchanged(result) is None:
+            return implement.check(result, ctx.worktree, head, entry, settings, ctx.env, ctx.run)
+        # Nothing to run again: the checks failed on this very tree.
+        problems = decisions.check(result.parent, ctx.run.path)
+        if implement.git(ctx.worktree, "rev-parse", "HEAD") != head or implement.git(ctx.worktree, "status", "--porcelain"):
+            problems.append(f"the result says '{NO_CHANGES}', but the worktree changed: put it back as it was"
+                            f" (`git reset --hard {head}`), or write the result of a fix.")
+        return problems
 
     step = ctx.runner("fix", fixer, prompt(ctx, what, logs, gates), name=f"fix-{label}",
                       check=check, ask=implement.blocked)
     if step.outcome != "success":
         ctx.run.event("checks.fix_failed", what=what, outcome=step.outcome)
         return False
+    why = unchanged(step.path / "result.md")
+    if why is not None:
+        ctx.run.event("checks.unchanged", what=what, why=why)
+        return False
     commit(ctx.worktree, step.path / "result.md", ctx.run, label)
     return True
+
+
+def unchanged(result: Path) -> str | None:
+    """Why the fixer changed nothing, when its result says it did not: what it wrote
+    above the evidence, in one paragraph; else None."""
+
+    text = result.read_text(encoding="utf-8").strip() if result.is_file() else ""
+    if not text.startswith(NO_CHANGES):
+        return None
+    why = " ".join(text[len(NO_CHANGES):].split(implement.EVIDENCE, 1)[0].split()).lstrip(":.;, ")
+    return why[:500] or "the fixer gave no reason"
+
+
+def outside(run_dir: Path, what: str) -> str | None:
+    """The fixer's reason for changing nothing on what failed, if it did."""
+
+    found = [e for e in runlog.read_events(run_dir) if e.get("event") == "checks.unchanged" and e.get("what") == what]
+    return found[-1].get("why") if found else None
 
 
 def prompt(ctx: "driver.Context", what: str, logs: list[Path], gates: list[str]) -> str:  # noqa: F821

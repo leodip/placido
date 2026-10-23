@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from placido import decisions, runlog, spec
+from placido import checks, decisions, runlog, spec
 
 CI_WORDS = {
     "green": "green",
@@ -74,7 +74,9 @@ def _facts(
     last = next((e for e in reversed(events) if e.get("event") == "last_gates.gave_up"), None)
     if last:
         failed = f" ({', '.join(last.get('gates') or [])})" if last.get("gates") else ""
-        facts.append(f"- **Last gates:** fail after placido's fixes{failed}; logs in {run_dir / 'last-gates'}")
+        why = checks.outside(run_dir, "the last gates")
+        cause = f"; nothing in this change causes it: {why}" if why else ""
+        facts.append(f"- **Last gates:** fail after placido's fixes{failed}{cause}; logs in {run_dir / 'last-gates'}")
     if events:
         took = _seconds(events[0].get("ts"), events[-1].get("ts"))
         facts.append(f"- **Time:** {str(events[0].get('ts', ''))[:16].replace('T', ' ')}"
