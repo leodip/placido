@@ -761,7 +761,7 @@ class NamesTest(unittest.TestCase):
         self.assertEqual(
             step.launch_args(AgentSpec("codex", "gpt-6.1-sol", "max", "fast")),
             ["-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=max", "-c", "service_tier=fast",
-             "-c", "features.memories=false",
+             "-c", "features.memories=false", "-c", "check_for_update_on_startup=false",
              "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust"],
         )
         self.assertEqual(
@@ -777,6 +777,11 @@ class NamesTest(unittest.TestCase):
         self.assertIn("--settings", step.launch_args(AgentSpec("claude", "opus", "high"), Path("/s"), ()))
         for confined in (None, Path("/s")):
             self.assertIn("features.memories=false", step.launch_args(AgentSpec("codex", "gpt-6.1-sol", "max"), confined))
+
+    def test_codex_starts_without_offering_an_update(self):
+        for confined in (None, Path("/s")):
+            args = step.launch_args(AgentSpec("codex", "gpt-6.1-sol", "max"), confined)
+            self.assertEqual(args[args.index("check_for_update_on_startup=false") - 1], "-c")
 
 
 class ActiveRunTest(unittest.TestCase):

@@ -463,7 +463,8 @@ def ask_command(ctx: Context, rnd: Round, asked: Asked) -> list[str]:
         prompt = ASK_COPY.format(number=ctx.pr.number)
     else:
         fork, prompt = [], ASK_NEW.format(number=ctx.pr.number, folder=rnd.folder)
-    return [spec.agent, *fork, *spec.args(), *step.NO_MEMORY[spec.agent], *READ_ONLY[spec.agent], prompt]
+    return [spec.agent, *fork, *spec.args(), *step.NO_MEMORY[spec.agent], *step.NO_UPDATE_PROMPT[spec.agent],
+            *READ_ONLY[spec.agent], prompt]
 
 
 def ask(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:

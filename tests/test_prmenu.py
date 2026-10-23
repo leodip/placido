@@ -763,7 +763,8 @@ class AskTest(MenuTestCase):
         command, label = self.opened()
         self.assertEqual(label, "ask-judge")
         self.assertEqual(command[:4], ["codex", "fork", "judge-id", "-m"])
-        self.assertEqual(command[-7:-1], ["-c", "features.memories=false", "-s", "read-only", "-a", "on-request"])
+        self.assertEqual(command[-9:-1], ["-c", "features.memories=false", "-c", "check_for_update_on_startup=false",
+                                          "-s", "read-only", "-a", "on-request"])
 
     def test_a_new_agent_when_no_session_of_the_round_can_be_copied(self):
         self.session("02-r1-fix-1", "fix", "claude", "old-round")

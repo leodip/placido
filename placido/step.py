@@ -36,6 +36,16 @@ NO_MEMORY = {
     "pi": [],
 }
 
+# Decided 2026-10-23: no agent stops at its start to offer an update. On #638 codex
+# 0.163.0 offered 0.164.0, its reviewer's tab waited on that, and the update the user
+# picked there quit codex, so placido's prompt went to the shell and the review
+# stopped. Claude updates itself in the background without asking.
+NO_UPDATE_PROMPT = {
+    "claude": [],
+    "codex": ["-c", "check_for_update_on_startup=false"],
+    "pi": [],
+}
+
 INSTRUCTION = "Read {prompt} and do what it asks."
 
 FOOTER = """
@@ -155,9 +165,10 @@ class StepResult:
 
 
 def launch_args(spec: AgentSpec, confined_to: Path | None = None, reads: tuple[Path, ...] = ()) -> list[str]:
+    quiet = [*NO_MEMORY[spec.agent], *NO_UPDATE_PROMPT[spec.agent]]
     if confined_to is not None:
-        return [*spec.args(), *NO_MEMORY[spec.agent], *confined_args(spec.agent, confined_to, reads)]
-    return [*spec.args(), *NO_MEMORY[spec.agent], *UNATTENDED[spec.agent]]
+        return [*spec.args(), *quiet, *confined_args(spec.agent, confined_to, reads)]
+    return [*spec.args(), *quiet, *UNATTENDED[spec.agent]]
 
 
 # Agents that can run confined: reading only their step folder and the folders they are
