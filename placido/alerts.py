@@ -1,8 +1,11 @@
 """Telling the user: a Herdr notification and, when the user turned it on, an email.
 
-Decided with the user on 2026-10-03: everything that needs the user or ends a run
-(each Herdr notification placido sends) is also emailed, in simple HTML, with both
-subscriptions' quota. Email is off unless the user's own config
+Decided with the user on 2026-10-03: what needs the user or ends a run is also emailed,
+in simple HTML, with both subscriptions' quota. Since 2026-10-22 only what went wrong
+or waits unforeseen is: a stop, a failure, a fallback, a quota wait, an agent's
+question. What a run does in its course, a review ready, fixes reviewed, a merge, a
+pull request opened, gets Herdr's notification alone ("I want to receive
+notifications only on exceptional / errors states"). Email is off unless the user's own config
 (~/.config/placido/config.toml) enables it; the Resend API key is read from a file at
 send time and never copied. A failed email is logged and never stops a run.
 """
@@ -45,7 +48,8 @@ def notify(
     run: runlog.Run, herdr: Herdr, title: str, body: str, times: bool = False, mail: bool = True,
 ) -> None:
     """A Herdr notification naming the issue, and the same as an email unless mail is
-    False; times adds how long each stage of the run took."""
+    False, as it is for what a run does in its course; times adds how long each stage
+    of the run took."""
 
     try:
         herdr.notify(f"placido · {run.path.parent.name}: {title}", body, "request")
@@ -195,7 +199,7 @@ def test(settings: config.UserConfig | None = None, now: float | None = None) ->
     ) or f'<tr><td style="{CELL}">No reading yet.</td></tr>'
     page = (
         f'<div style="{STYLE}max-width:640px"><h2 style="font-size:18px;margin:0 0 6px">Placido can email you</h2>'
-        f'<p style="margin:0 0 16px">This is a test. Runs will email you here when they need you or end.</p>'
+        f'<p style="margin:0 0 16px">This is a test. Runs will email you here when something goes wrong or waits for you unforeseen.</p>'
         f'<h3 style="font-size:15px;margin:0 0 4px">Quota</h3>'
         f'<table style="border-collapse:collapse">{rows}</table></div>'
     )

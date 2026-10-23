@@ -260,10 +260,12 @@ slice still gets a fresh agent session.
 
 ### Email alerts (your own settings)
 
-Placido can email you whenever a run needs you or ends: an agent asks a question, a
-dialog waits (the interview's own questions only get Herdr's notification, since you
-started it), an agent falls back or is logged out, a check or CI stays red, a run
-stops, the pull request is ready. Each email says what happened and what to do, links
+Placido can email you when something goes wrong or waits for you unforeseen: an agent
+asks a question, a dialog waits (the interview's own questions only get Herdr's
+notification, since you started it), an agent falls back, waits for quota, or is logged
+out, a check or CI stays red, the scan has concerns, a run stops. What a run does in its
+course, such as a review ready, fixes reviewed, a merge, or a pull request opened with
+its gates green, gets Herdr's notification alone. Each email says what happened and what to do, links
 the issue and the pull request, and shows how much of your Claude and Codex quota is
 used. Email settings are yours, not the project's, so they live in
 `~/.config/placido/config.toml` (or `$PLACIDO_USER_CONFIG`), never in a repository:

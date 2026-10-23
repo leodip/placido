@@ -643,7 +643,8 @@ def merge(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
     ctx.run.event("pr.merged", round=rnd.number, head=head, subject=subject)
     status.show(ctx.run.path, status.text(status.DONE, f"merged; placido close pr-{number}"))
     if later != "?":
-        pr.notify(ctx, "merged", f"#{number} into {s.pull.base} once CI was green; placido close pr-{number}")
+        pr.notify(ctx, "merged", f"#{number} into {s.pull.base} once CI was green; placido close pr-{number}",
+                  mail=False)
     print(f"merged #{number}")  # the menu then says how to end the run
 
 
@@ -674,7 +675,7 @@ def fix(ctx: Context, rnd: Round, s: State, confirm: Ask) -> Round:
     verdict = prcheck.verdict_of(final(rnd))
     more = (f"; still fix-here after {rounds} fix(es): placido pr {ctx.pr.number} fixes again"
             if verdict == "fix-here" else f"; placido pr {ctx.pr.number}")
-    pr.notify(ctx, "the fixes are reviewed", f"#{ctx.pr.number}: round {rnd.number}, {verdict}{more}")
+    pr.notify(ctx, "the fixes are reviewed", f"#{ctx.pr.number}: round {rnd.number}, {verdict}{more}", mail=False)
     return rnd
 
 

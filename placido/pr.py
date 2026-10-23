@@ -901,5 +901,5 @@ def close_orphans(ctx: Context) -> None:
         ended.add(event.get("step"))
 
 
-def notify(ctx: Context, title: str, body: str) -> None:
-    alerts.notify(ctx.run, ctx.herdr, title, body)
+def notify(ctx: Context, title: str, body: str, mail: bool = True) -> None:
+    alerts.notify(ctx.run, ctx.herdr, title, body, mail=mail)

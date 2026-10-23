@@ -252,12 +252,12 @@ def _status(ctx: Context, text: str) -> None:
     status.show(ctx.run.path, text)
 
 
-def notify(ctx: Context, title: str, body: str, times: bool = False) -> None:
-    _notify(ctx, title, body, times)
+def notify(ctx: Context, title: str, body: str, times: bool = False, mail: bool = True) -> None:
+    _notify(ctx, title, body, times, mail)
 
 
-def _notify(ctx: Context, title: str, body: str, times: bool = False) -> None:
-    alerts.notify(ctx.run, ctx.herdr, title, body, times=times)
+def _notify(ctx: Context, title: str, body: str, times: bool = False, mail: bool = True) -> None:
+    alerts.notify(ctx.run, ctx.herdr, title, body, times=times, mail=mail)
 
 
 class Lock:

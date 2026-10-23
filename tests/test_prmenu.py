@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 from unittest import mock
 
-from placido import decisions, pr, pragents, prcheck, prgh, prmenu, runlog
+from placido import alerts, decisions, pr, pragents, prcheck, prgh, prmenu, runlog
 from tests.test_pr import CONFIG, PRTestCase, finding, git_commit, sh
 
 
@@ -24,8 +24,15 @@ class MenuTestCase(PRTestCase):
             patch = mock.patch.object(prmenu, name, value)
             patch.start()
             self.addCleanup(patch.stop)
+        self.mailed: list[str] = []  # the titles placido emailed
+        patch = mock.patch.object(alerts, "email", lambda run, title, body, **kwargs: self.mailed.append(title))
+        patch.start()
+        self.addCleanup(patch.stop)
         self.confirms: list[bool] = []
         self.confirmed: list[str] = []
+
+    def notes(self) -> list[tuple[str, str]]:
+        return [(argv[3], argv[5]) for argv in self.fake.calls if argv[1:3] == ["notification", "show"]]
 
     def advance_main(self, files: dict[str, str]) -> str:
         for name, text in files.items():
@@ -330,6 +337,8 @@ class MergeTest(MenuTestCase):
                                              f" {fix[:12]}? Placido waits up to 1h and merges then")
         self.assertEqual(self.hub.calls[-1][:2], ("merge", fix))
         self.assertEqual([k for k in self.kinds() if k in ("pr.merge_waiting", "pr.merged")], ["pr.merge_waiting", "pr.merged"])
+        self.assertIn("placido · pr-7: merged", [title for title, _ in self.notes()])
+        self.assertEqual(self.mailed, [])  # the review, the fixes, and the merge went as they should
 
     def test_ci_that_goes_red_while_waited_on_merges_nothing(self):
         rnd, _ = self.fixed_and_pushed()
@@ -343,6 +352,7 @@ class MergeTest(MenuTestCase):
             self.act("merge", rnd)
         self.assertNotIn("merge", [c[0] for c in self.hub.calls])
         self.assertNotIn("pr.merged", self.kinds())
+        self.assertEqual(self.mailed, ["not merged"])
 
     def test_declining_merges_nothing_and_waits_for_nothing(self):
         rnd, _ = self.fixed_and_pushed()
@@ -598,9 +608,6 @@ class YoursTest(MenuTestCase):
 class FixLoopTest(MenuTestCase):
     """A fix and the full review of it, again, until a round keeps nothing."""
 
-    def notes(self) -> list[tuple[str, str]]:
-        return [(argv[3], argv[5]) for argv in self.fake.calls if argv[1:3] == ["notification", "show"]]
-
     def test_what_a_round_keeps_is_fixed_and_reviewed_again(self):
         self.runner.findings_in = {2: {"A": [finding("A", 1, title="the fix broke es-MX")], "B": []}}
         rnd = self.review()
@@ -620,6 +627,7 @@ class FixLoopTest(MenuTestCase):
             ("placido · pr-7: the review is ready", "#7: fix-here; placido pr 7"),
             ("placido · pr-7: the fixes are reviewed", "#7: round 3, merge; placido pr 7"),
         ])  # rounds 2 and 3 waited for nobody
+        self.assertEqual(self.mailed, [])
 
     def test_after_fix_rounds_the_menu_asks_again_and_nothing_goes_out(self):
         self.settings = self.load(CONFIG_WITH_ROUNDS.format(rounds=1))
@@ -1194,9 +1202,6 @@ class DecisionsTest(MenuTestCase):
 
     def final(self, rnd: pr.Round) -> dict:
         return json.loads((rnd.folder / "final.json").read_text())
-
-    def notes(self) -> list[tuple[str, str]]:
-        return [(argv[3], argv[5]) for argv in self.fake.calls if argv[1:3] == ["notification", "show"]]
 
     def test_every_open_question_is_put_to_the_user_before_the_menu(self):
         rnd = self.review(decisions=TWO)

@@ -352,7 +352,7 @@ def _review(ctx: driver.Context, reviewer: config.AgentSpec) -> int:
         return 1
     if account.escalated:
         driver.notify(ctx, "review needs your decision",
-                      f"{len(account.escalated)} finding(s); see {ctx.run.path / 'review.md'}")
+                      f"{len(account.escalated)} finding(s); see {ctx.run.path / 'review.md'}", mail=False)
     return _deliver(ctx, account.outcome)
 
 
@@ -390,7 +390,7 @@ def _deliver(ctx: driver.Context, outcome: str) -> int:
         driver.show(ctx, status.DONE, f"pull request {pr.rsplit('/', 1)[-1]}" if pr else "review passed")
     if pr:
         title = "the pull request is ready, but the last gates fail" if failing else "the pull request is ready"
-        driver.notify(ctx, title, f"{pr} · CI {ci}", times=True)
+        driver.notify(ctx, title, f"{pr} · CI {ci}", times=True, mail=failing)
         print(f"\npull request: {pr} (CI {ci})")
     if failing:
         print(f"placido: the last gates still fail after the fixes; see {ctx.run.path / 'last-gates'}.",

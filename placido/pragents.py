@@ -670,7 +670,8 @@ def review(ctx: Context, quiet: bool = False) -> Round:
         waiting = f"; {count} decision(s) wait for you in the r{rnd.number}-decide tab" if count else ""
         if count or not quiet:
             notify(ctx, "the review is ready" + (", with decisions for you" if count else ""),
-                   f"#{ctx.pr.number}: {verdict.get('verdict', '?')}{waiting}; placido pr {ctx.pr.number}")
+                   f"#{ctx.pr.number}: {verdict.get('verdict', '?')}{waiting}; placido pr {ctx.pr.number}",
+                   mail=False)
     decide(ctx, rnd)
     status.show(ctx.run.path, status.text(status.YOU, f"review ready: placido pr {ctx.pr.number}"))
     return rnd
