@@ -184,6 +184,10 @@ The problem from the user's point of view.
 ## Solution
 The solution from the user's point of view.
 
+## Release notes
+Only when upgrading asks something of the people who run the project, or changes
+what they see: each step or change, one bullet each. Leave the section out otherwise.
+
 ## Decisions
 1. **<decision>.** Reasoning. Rejected: <alternative>, because <reason>.
 
@@ -209,6 +213,12 @@ What a good test looks like here, and the existing tests to follow.
 ## Out of scope
 What this work does not do, and any follow-ups drafted, each with its evidence.
 ```
+
+Placido writes the pull request description from the agreement, the Solution and
+each decision's bold lead, then what the review found, and posts the Release notes
+as written in a comment on the pull request. Whatever the pull request must tell
+its readers goes in one of those, since nothing else reaches it: write release notes
+in their section, not a decision that the pull request will carry them.
 
 Then write `slices.json`, the same slices for placido to read:
 

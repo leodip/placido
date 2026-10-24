@@ -1,6 +1,6 @@
 """Delivering a finished run on GitHub: push the branch once, open the pull request
-ready for review, post the follow-ups as a comment on it and the notes on other
-issues the change affects, then wait for CI and fix a red run.
+ready for review, post the agreement's release notes and the follow-ups as comments on
+it and the notes on other issues the change affects, then wait for CI and fix a red run.
 
 Decided with the user (step 13): nothing is pushed before the review is done, so a
 stopped or abandoned run leaves nothing on GitHub; the body closes the run's issue,
@@ -140,6 +140,7 @@ def deliver(
         url = github.open_pr(record.get("base", "main"), branch, _title(record, run.path), _body(run.path))
         run.event("pr.opened", url=url, number=number_of(url))
     number = int((runlog.last_event(run.path, "pr.opened") or {})["number"])
+    _post_release_notes(github, run, number)
     _post_follow_ups(github, run, record, number)
     github.edit_pr(number, _body(run.path))
 
@@ -249,6 +250,16 @@ def _save_logs(github: GitHub, folder: Path, failed: list[dict[str, Any]]) -> li
         path.write_text(f"# {check.get('name')}: {check.get('link')}\n" + "\n".join(lines) + "\n", encoding="utf-8")
         logs.append(path)
     return logs
+
+
+def _post_release_notes(github: GitHub, run: runlog.Run, pr_number: int) -> None:
+    """The agreement's release notes as a comment on the pull request; once."""
+
+    text = prbody.release_notes(run.path)
+    if text and not runlog.last_event(run.path, "release_notes.posted"):
+        body = run.path / "release-notes-comment.md"
+        body.write_text(text, encoding="utf-8")
+        run.event("release_notes.posted", url=github.comment("pr", pr_number, body), on=f"pr {pr_number}")
 
 
 def _post_follow_ups(github: GitHub, run: runlog.Run, record: dict[str, Any], pr_number: int) -> None:

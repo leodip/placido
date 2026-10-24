@@ -3,7 +3,10 @@ the decisions behind it, what the review found, and where the follow-ups are. Th
 run's own story (attempts, waits, tabs, times) stays in summary.md.
 
 Decided with the user on 2026-10-02, after the first real pull request read as a run
-log with "Follow-ups" three times and never said what the change does.
+log with "Follow-ups" three times and never said what the change does. The agreement's
+release notes, what upgrading asks of the people who run the project, go as written
+into a comment of their own, which the body links to (decided 2026-10-24, after an
+agreement promised notes no step could write).
 """
 
 from __future__ import annotations
@@ -45,11 +48,22 @@ def build(run_dir: Path, folded: list[int]) -> str:
     solution = section(agreement, "Solution")
     if solution:
         lines += ["## What this changes", "", solution, ""]
+    noted = next((e for e in reversed(events) if e.get("event") == "release_notes.posted"), None)
+    if noted:
+        lines += ["## Release notes", "", f"What upgrading asks of the people who run the project:"
+                  f" [the release notes comment]({noted.get('url')}).", ""]
     lines += _decisions(agreement, run_dir, events)
     lines += _review(run_dir)
     lines += _follow_ups(events)
     lines += ["---", f"Built by placido · run `{run_dir.parent.name}/{run_dir.name}`"]
     return "\n".join(lines).strip() + "\n"
+
+
+def release_notes(run_dir: Path) -> str:
+    """The release notes comment: the agreement's section as written, or nothing."""
+
+    notes = section(_read(spec.issue_dir(run_dir) / "agreement.md"), "Release notes")
+    return f"## Release notes\n\n{notes}\n" if notes else ""
 
 
 def _read(path: Path) -> str:

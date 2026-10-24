@@ -26,7 +26,9 @@ testing notes, the slices. Then read the decisions the user made during the run,
 your prompt names any: each overrides the agreement where they differ, so code that
 follows a decision is not a deviation. Read the project's standards where they exist:
 `CODING_STANDARDS.md`, `CONTRIBUTING.md`, `AGENTS.md` or `CLAUDE.md`, `GLOSSARY.md`,
-the ADRs for the area, and the role notes your prompt names. Then read the change:
+the ADRs for the area, and the role notes your prompt names. The agreement's Problem,
+Solution and Release notes are placido's to carry into the pull request, not the
+change's. Then read the change:
 `git log <start>..HEAD` and `git diff <start>...HEAD`, and the code around it.
 
 Run the tests and any command in your prompt that helps you judge. Facts are yours

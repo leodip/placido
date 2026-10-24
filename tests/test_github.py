@@ -266,6 +266,19 @@ class FollowUpsTest(DeliverCase):
         self.assertIn("Noted on [#396](https://github.com/leodip/goiabada/issues/396#issuecomment-9001)",
                       self.gh.bodies["pr edit last"])
 
+    def test_the_release_notes_are_a_comment_of_their_own_once(self):
+        agreement = self.run.path.parent / "agreement.md"
+        agreement.write_text(agreement.read_text().replace(
+            "## Decisions", "## Release notes\n- Copy the templates again.\n\n## Decisions"))
+        self.deliver()
+        comments = [Path(a[a.index("--body-file") + 1]).name for a in self.gh.calls if a[1:3] == ["pr", "comment"]]
+        self.assertEqual(comments, ["release-notes-comment.md", "followups-comment.md"])
+        self.assertEqual(self.gh.bodies["pr comment"], "## Release notes\n\n- Copy the templates again.\n")
+        self.assertIn("[the release notes comment](https://github.com/leodip/goiabada/pull/450#issuecomment-9002)",
+                      self.gh.bodies["pr edit last"])
+        self.deliver()
+        self.assertEqual(self.gh.made("pr comment"), 2)
+
     def test_a_resumed_delivery_posts_nothing_again(self):
         self.deliver()
         self.deliver()

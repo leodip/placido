@@ -56,6 +56,18 @@ class BodyTest(unittest.TestCase):
         self.assertNotIn("Replace chi", body)  # follow-ups live in their own comment
         self.assertTrue(body.endswith(f"Built by placido · run `331-strip/{self.run.path.name}`\n"))
 
+    def test_the_agreement_s_release_notes_are_a_comment_the_body_links(self):
+        self.assertEqual(prbody.release_notes(self.run.path), "")
+        notes = "- Copy the console's templates again.\n- Durations read \"1 hour, 30 minutes\"."
+        (self.run.path.parent / "agreement.md").write_text(
+            AGREEMENT.replace("## Decisions", f"## Release notes\n{notes}\n\n## Decisions"))
+        self.assertEqual(prbody.release_notes(self.run.path), f"## Release notes\n\n{notes}\n")
+        self.assertNotIn("Release notes", prbody.build(self.run.path, []))
+        self.run.event("release_notes.posted", url="https://x/pull/7#issuecomment-1", on="pr 7")
+        self.assertIn("stops the server.\n\n## Release notes\n\nWhat upgrading asks of the people who run the"
+                      " project: [the release notes comment](https://x/pull/7#issuecomment-1).\n\n## Decisions\n",
+                      prbody.build(self.run.path, []))
+
     def test_findings_left_for_the_user_are_kept(self):
         self.review("escalated")
         body = prbody.build(self.run.path, [])

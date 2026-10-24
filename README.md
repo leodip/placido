@@ -53,7 +53,9 @@ is posted, pushed, or merged until you pick it (see
    reviewed change, then pushes the branch once, opens the pull request ready for
    review (`Closes #N`, then a summary of everything the run did and decided), and
    waits for CI. A red run's failed logs go to a fixer agent, up to twice. The body
-   says what the change does, its decisions, and what the review found. The
+   says what the change does, its decisions, and what the review found. Release
+   notes, when upgrading asks something of the people who run the project, go in a
+   comment of their own, as the agreement wrote them. The
    follow-ups, those the interview drafted and those the review left out (drafted by an
    agent with evidence and a duplicate search), go into one comment
    on the pull request, each with the `gh issue create` command that files it;
