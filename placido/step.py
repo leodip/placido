@@ -595,14 +595,7 @@ class Step:
         return False
 
     def _progress(self, folder: Path, agent: str, seconds: float, doing: str = "working") -> None:
-        """A live-view line only, not an event: the log records what happened, not waiting."""
-
-        if self.run.echo is None:
-            return
-        minutes, secs = divmod(int(seconds), 60)
-        stamp = time.strftime("%H:%M:%S")
-        print(f"{stamp}  …             {folder.name} · {agent} {doing} ({minutes}:{secs:02d})",
-              file=self.run.echo, flush=True)
+        self.run.progress(f"{folder.name} · {agent} {doing}", seconds)
 
     def _needs_user(self, agent: str, pane: str, folder: Path, phase: str) -> None:
         (folder / f"blocked-{phase}.txt").write_text(self._screen(pane), encoding="utf-8")

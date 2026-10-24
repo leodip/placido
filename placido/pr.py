@@ -48,7 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, TextIO
 
-from placido import __version__, alerts, config, doctor, prgh, runlog, status
+from placido import __version__, alerts, config, doctor, prgh, proc, runlog, status
 from placido.herdr import Herdr, HerdrError
 from placido.step import Step
 
@@ -774,11 +774,8 @@ def run_command(ctx: Context, name: str, command: str, log: Path, lane: Lane | N
     ctx.run.event(f"{name}.start", command=command, **({} if lane.primary else {"lane": lane.code}))
     began = time.monotonic()
     log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("w", encoding="utf-8") as out:
-        code = subprocess.run(
-            command, shell=True, cwd=lane.worktree, stdout=out, stderr=subprocess.STDOUT,
-            env={**os.environ, **lane.env},
-        ).returncode
+    doing = f"{name} running" if lane.primary else f"{name} of lane {lane.code} running"
+    code = proc.run_shell(command, lane.worktree, lane.env, log, lambda s: ctx.run.progress(doing, s))
     ctx.run.event(f"{name}.end", exit=code, seconds=round(time.monotonic() - began, 1),
                   **({} if lane.primary else {"lane": lane.code}))
     return code
@@ -800,11 +797,8 @@ def gates(ctx: Context, rnd: Round) -> None:
         began = time.monotonic()
         log = rnd.folder / "gates" / f"{config.gate_log(name)}.log"
         log.parent.mkdir(parents=True, exist_ok=True)
-        with log.open("w", encoding="utf-8") as out:
-            code = subprocess.run(
-                command, shell=True, cwd=ctx.worktree, stdout=out, stderr=subprocess.STDOUT,
-                env={**os.environ, **ctx.env},
-            ).returncode
+        code = proc.run_shell(command, ctx.worktree, ctx.env, log,
+                              lambda s, n=name: run.progress(f"gate {n} running", s))
         seconds = round(time.monotonic() - began, 1)
         run.event("gate.end", gate=name, exit=code, seconds=seconds)
         changed = settle(ctx, rnd, f"the {name} gate")

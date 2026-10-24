@@ -1,10 +1,12 @@
+import io
 import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from placido import config, implement, mutate, runlog, spec
+from placido import config, implement, mutate, proc, runlog, spec
 
 SLICES = [
     {"id": 1, "title": "Prefactor", "delivers": "a", "blocked_by": [], "gates": []},
@@ -142,6 +144,16 @@ class CheckTest(SliceTestCase):
         (problem,) = problems  # the bare unit passes; with an extra argument test refuses it
         self.assertIn("gate unit extra (`test -f feature.txt extra`) failed with exit 2", problem)
         self.assertIn(str(self.step / "gates" / "unit-extra.log"), problem)
+
+    def test_a_long_gate_says_it_still_runs_without_logging_it(self):
+        self.settings = settings(self.CONFIG + '[commands.slow]\nrun = "sleep 0.5; echo done"\n')
+        self.run.echo = io.StringIO()
+        with mock.patch.object(proc, "PROGRESS_SECONDS", 0.1):
+            self.assertEqual(implement.run_gates(["slow"], self.settings, self.repo, self.step, self.env, self.run), [])
+        progress = [line for line in self.run.echo.getvalue().splitlines() if "gate slow running (0:00)" in line]
+        self.assertGreaterEqual(len(progress), 3)
+        self.assertNotIn("running (", (self.run.path / "events.jsonl").read_text())
+        self.assertEqual((self.step / "gates" / "slow.log").read_text(), "done\n")
 
     def test_failing_gate_is_a_problem(self):
         (self.repo / "other.txt").write_text("x\n")

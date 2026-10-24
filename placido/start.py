@@ -12,6 +12,7 @@ from typing import TextIO
 
 from placido import __version__, alerts, config, doctor, driver, issues, runlog, spec, status
 from placido.herdr import Herdr, HerdrError, Worktree
+from placido import proc
 from placido.proc import Runner, run_command
 
 
@@ -467,10 +468,7 @@ def run_project_command(run: runlog.Run, name: str, command: str, cwd: Path, env
 
     run.event(f"{name}.start", command=command)
     began = time.monotonic()
-    with (run.path / f"{name}.log").open("w", encoding="utf-8") as log:
-        code = subprocess.run(
-            command, shell=True, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, env={**os.environ, **env}
-        ).returncode
+    code = proc.run_shell(command, cwd, env, run.path / f"{name}.log", lambda s: run.progress(f"{name} running", s))
     run.event(f"{name}.end", exit=code, seconds=round(time.monotonic() - began, 1))
     return code
 

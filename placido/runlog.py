@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, TextIO
@@ -82,6 +83,16 @@ class Run:
             if self.echo is not None:
                 print(format_event(record), file=self.echo, flush=True)
         return record
+
+    def progress(self, label: str, seconds: float) -> None:
+        """A live-view line only, not an event: the log records what happened, not waiting."""
+
+        if self.echo is None:
+            return
+        minutes, secs = divmod(int(seconds), 60)
+        with WRITING:
+            print(f"{time.strftime('%H:%M:%S')}  …             {label} ({minutes}:{secs:02d})",
+                  file=self.echo, flush=True)
 
     def step_dir(self, number: int, name: str) -> Path:
         path = self.path / "steps" / f"{number:02d}-{name}"

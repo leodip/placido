@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
-from placido import config, decisions, mutate, runlog, spec
+from placido import config, decisions, mutate, proc, runlog, spec
 
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "implement" / "SKILL.md"
 NOTES = Path(".placido") / "notes" / "implement.md"
@@ -134,11 +133,7 @@ def run_gates(
         run.event("gate.start", gate=name, command=command)
         began = time.monotonic()
         log = folder / f"{config.gate_log(name)}.log"
-        with log.open("w", encoding="utf-8") as out:
-            code = subprocess.run(
-                command, shell=True, cwd=worktree, stdout=out, stderr=subprocess.STDOUT,
-                env={**os.environ, **env},
-            ).returncode
+        code = proc.run_shell(command, worktree, env, log, lambda s, n=name: run.progress(f"gate {n} running", s))
         run.event("gate.end", gate=name, exit=code, seconds=round(time.monotonic() - began, 1))
         if code != 0:
             problems.append(f"gate {name} (`{command}`) failed with exit {code}; its output is in {log}.")

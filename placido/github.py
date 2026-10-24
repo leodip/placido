@@ -231,11 +231,7 @@ def _progress(run: runlog.Run, label: str) -> Callable[[str, float], None]:
     """A live-view line only, not an event, as the agents' "working" lines (step.py)."""
 
     def say(text: str, seconds: float) -> None:
-        if run.echo is None:
-            return
-        minutes, secs = divmod(int(seconds), 60)
-        stamp = time.strftime("%H:%M:%S")
-        print(f"{stamp}  …             {label} · {text} ({minutes}:{secs:02d})", file=run.echo, flush=True)
+        run.progress(f"{label} · {text}", seconds)
 
     return say
 
