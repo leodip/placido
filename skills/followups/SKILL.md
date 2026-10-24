@@ -7,28 +7,33 @@ description: Draft each piece of work a placido change left out as a GitHub issu
 
 The change is built and reviewed. The review left some work out of it, and the user
 chose not to fold it in. Each piece becomes a draft issue that the user reads in the
-pull request and files with one command. Nothing you write is filed by you.
+pull request and files with one command. Your prompt lists the follow-ups, each with
+an id, what it is and why it was left out, and names the agreement, the decisions,
+the review, the worktree, and any drafts the interview already wrote.
 
-Your prompt lists the follow-ups, each with an id, what it is and why it was left
-out, and names the agreement, the decisions, the review, the worktree, and any
-drafts the interview already wrote.
+**Done when** every follow-up in your prompt has its file, and every affected issue
+its note. Then write your result file: one line per follow-up, naming its draft or
+the draft it duplicates, and one per note.
 
-## 1. Understand each one
+## Rules
 
-Read what the review said about it, then the code it concerns, in the worktree.
-Find the evidence a stranger needs: the files and lines, the behavior today, how to
-see it. A follow-up the review only sketched needs this work most.
+- **Change nothing in the worktree.** No code, no files, no commits. Placido checks
+  the worktree is untouched.
+- **File and post nothing.** No `gh issue create`, no `gh issue comment`: placido
+  gives the user the commands and posts the notes.
+- **Run commands in the foreground and wait for them.** Placido reads the end of
+  your turn as the end of your work.
 
-## 2. Look for duplicates
+## One draft per follow-up
 
-- **Already drafted by the interview:** when one of those drafts covers the
-  follow-up, write its file as one line, `Duplicate of followup-<name>.md`, and
-  nothing else.
-- **Already an issue:** search with `gh issue list --state all --search "<terms>"`,
-  twice with different terms. When an open issue covers it, still draft it, and say
-  so in the Searched line, naming the issue; the user decides.
+A draft stands alone, for someone who never saw this run: find in the code the
+evidence a stranger needs (the files and lines, the behavior today, how to see it),
+most of all for a follow-up the review only sketched.
 
-## 3. Write one draft per follow-up
+**Duplicates.** When a draft the interview wrote covers the follow-up, write its file
+as one line, `Duplicate of followup-<name>.md`, and nothing else. When an open issue
+covers it (search `gh issue list --state all` with more than one set of terms), still
+draft it, naming the issue in the Searched line: the user decides.
 
 Write `<id>.md` in the folder your prompt names, exactly in this shape:
 
@@ -42,15 +47,13 @@ Searched: `gh issue list --state all --search "<terms>"`: <what it found>
 <the issue's body>
 ```
 
-- **Labels** come from `gh label list`; pick the ones the repository's similar
-  issues use.
-- **The body** stands alone, for someone who never saw this run: the problem, the
-  evidence (file paths and lines are welcome here), and a last paragraph starting
-  "Done when:" that says how to tell it is finished. Name the pull request or issue
-  it came from only as context.
-- **Plain and short.** A paragraph or two and the done-when; no headings needed.
+- **Labels** come from `gh label list`: the ones the repository's similar issues use.
+- **The body:** the problem, the evidence (file paths and lines are welcome here),
+  and a last paragraph starting "Done when:" that says how to tell it is finished.
+  Name the pull request or issue it came from only as context. Plain and short: a
+  paragraph or two and the done-when, no headings.
 
-## 4. Notes for other issues
+## Notes for other issues
 
 When the change affects another open issue (it finishes part of it, removes one of
 its constraints, or changes what it assumes), write a short comment for that issue
@@ -58,19 +61,6 @@ as `notes/<number>.md` in the same folder: what this change does that matters to
 the issue, in two to five sentences, plain, with no file-by-file detail. Placido
 posts each note on its issue once the pull request exists, with a link to it, and
 before anyone merges it: say what the pull request does, never that it has landed
-or that the issue is done. Write
-none when no other issue is affected; never one for the issue this change closes.
-Take the issues from the agreement, the review, and the follow-ups' searches.
-
-## Rules
-
-- **Change nothing in the worktree.** No code, no files, no commits. Placido checks
-  the worktree is untouched.
-- **File and post nothing.** No `gh issue create`, no `gh issue comment`: placido
-  gives the user the commands and posts the notes.
-- **Run commands in the foreground and wait for them.** Placido reads the end of
-  your turn as the end of your work.
-
-**Done when** every follow-up in your prompt has its file, and every affected issue
-its note. Then write your result file: one line per follow-up, naming its draft or
-the draft it duplicates, and one per note.
+or that the issue is done. Write none when no other issue is affected, and never one
+for the issue this change closes. Take the issues from the agreement, the review,
+and the follow-ups' searches.

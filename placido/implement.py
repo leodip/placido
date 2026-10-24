@@ -87,6 +87,12 @@ def prompt(run_dir: Path, worktree: Path, entry: dict[str, Any], settings: confi
         f"- **Project notes for this role:** {notes if notes.is_file() else 'none'}",
         decisions.prompt_line(run_dir),
     ]
+    if spec.benchmark(folder):
+        lines.append(
+            f"- **Benchmark:** the agreement's {spec.BENCHMARK} section. When this slice can move the"
+            " number, measure it with its command before you change anything and again at the end,"
+            " and report both on a `- **Benchmark:** <before> → <after>` line of your evidence."
+        )
     if settings.mutations:
         lines.append(
             f"- **Mutations:** at least {settings.mutations} killed, aimed at the riskiest behavior of"

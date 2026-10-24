@@ -36,7 +36,10 @@ is posted, pushed, or merged until you pick it (see
    then asks you one question at a time until no decision is left open. It also looks
    for adjacent work (problems next to the change, open issues on the same area) and
    asks whether to fold it in. The result is an *agreement*, sealed, with the work
-   cut into *slices*.
+   cut into *slices*. When the issue's goal is a number (faster, smaller, fewer), the
+   agreement makes it a *benchmark*: a command, today's baseline, and a target. Each
+   slice reports the number before and after, the review holds the change to the
+   target, and the pull request shows how it moved.
 3. **Build.** `placido run` builds the slices in order, each by a fresh agent: tests
    at the agreed seams first, then the code, then a few deliberate mutations to prove
    the tests notice breakage. Placido runs your project's checks after each slice and

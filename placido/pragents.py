@@ -320,7 +320,7 @@ def answered_line(ctx: Context, rnd: Round) -> list[str]:
         return []
     answers = fix_answers(ctx, rnd)
     how = f"a fixer's, whose answer to each of its findings is in {answers}" if answers else "the maintainer's own commits"
-    return [f"- **How the round before was answered:** {how}. Check each answer as the skill's section 4 says."]
+    return [f"- **How the round before was answered:** {how}. Check each answer as the skill's Earlier rounds section says."]
 
 
 def reviewer_prompt(ctx: Context, rnd: Round, code: str, folder: Path, lane: Lane | None = None) -> str:
@@ -552,7 +552,7 @@ def judge_prompt(ctx: Context, rnd: Round, folder: Path) -> str:
         lines.append(
             f"- **The changes made here:** `git -C {ctx.worktree} log -p --first-parent --remerge-diff"
             f" {first.head[:12]}..{rnd.head[:12]}`, on the contributor's branch since the head they pushed;"
-            " the comment and the squash message say what they changed, as the skill's section 4 does."
+            " the comment and the squash message say what they changed, as the skill's Draft for the contributor section does."
         )
     lines += [
         f"- **Write:** {folder / 'final.json'}, {folder / 'comment.md'}, and, when the verdict is"

@@ -10,25 +10,26 @@ suggest changes to the **project**, so the next run goes better without anyone
 remembering this one. You change nothing: the user decides what to adopt. Your
 prompt names the run folder, the issue folder, the code, and where to write.
 
-## 1. Read
+**Done when** `retro.md` and the result file are written, and nothing in the project
+was changed.
 
-- `summary.md` first: the slices, the decisions, the review, and what went wrong
-  along the way.
-- The event log, `events.jsonl`: failed attempts (`slice.failed`), rejected results
+## Where the run's story is
+
+- `summary.md`: the slices, the decisions, the review, and what went wrong.
+- `events.jsonl`: failed attempts (`slice.failed`), rejected results
   (`result.rejected`, with the problems placido found), nudges, fallbacks, questions
   (`agent.question`), and how long each step took.
-- The steps that went wrong, in `steps/`: their `prompt.md`, `result.md`, `gates/`
-  logs, and `mutations.jsonl` (survivors especially). Read the transcript only when
-  the rest does not explain what happened.
-- Every review round: `review.md`, `findings.json`, and the fixer's
-  `resolutions.json`, including disputes and how they were judged.
-- The issue folder: the agreement, and `decisions.md`, the questions the user had
-  to answer.
-- The project's standing knowledge: `AGENTS.md` or `CLAUDE.md`, `CODING_STANDARDS.md`,
-  `CONTRIBUTING.md`, `GLOSSARY.md`, the ADRs, the linters' and type checkers'
-  configuration, `.placido/config.toml`, and the role notes in `.placido/notes/`.
+- `steps/`: each step's `prompt.md`, `result.md`, `gates/` logs, and `mutations.jsonl`
+  (survivors especially). A transcript only when the rest does not explain it.
+- Each review round's `review.md`, `findings.json`, and the fixer's `resolutions.json`.
+- The issue folder: the agreement, and `decisions.md`, the questions the user had to
+  answer.
 
-## 2. Find the lessons
+Compare it with what the project already writes down for agents: its standards and
+glossary, its ADRs, its linters' and type checkers' configuration,
+`.placido/config.toml`, and the role notes in `.placido/notes/`.
+
+## The lessons
 
 Look for trouble that a change to the project would prevent, cheapest fix first:
 
@@ -45,13 +46,12 @@ Look for trouble that a change to the project would prevent, cheapest fix first:
 
 Skip what went fine, one-off accidents no rule would prevent, and anything already
 written down that an agent simply missed; for those, say so in one line at most.
-
 Problems with placido itself (its prompts, checks, or flow) are not the project's:
 list them separately so the user can report them.
 
-## 3. Write
+## Write
 
-Write `retro.md` where your prompt says:
+`retro.md` where your prompt says:
 
 ```markdown
 # Retro: <issue>
@@ -71,9 +71,5 @@ Write `retro.md` where your prompt says:
 ```
 
 Order suggestions by how much trouble each would have saved. No suggestions is a
-valid retro: say the run went cleanly and why.
-
-Then write the result file your prompt names: one line, the number of suggestions.
-
-**Done when** `retro.md` and the result file are written, and nothing in the
-project was changed.
+valid retro: say the run went cleanly and why. Then write the result file your prompt
+names: one line, the number of suggestions.

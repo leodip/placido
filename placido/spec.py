@@ -14,6 +14,26 @@ SKILL = Path(__file__).resolve().parent.parent / "skills" / "spec" / "SKILL.md"
 NOTES = Path(".placido") / "notes" / "spec.md"
 SEALED_FILES = ("agreement.md", "slices.json")
 SECTIONS = ("## Problem", "## Solution", "## Decisions", "## Seams", "## Slices")
+# When the issue's goal is a number, the agreement measures it: each implementer reports
+# it before and after, the reviewer holds the change to the target, and the pull request
+# shows how it moved (decided 2026-10-24).
+BENCHMARK = "Benchmark"
+BENCHMARK_LINES = ("Command", "Baseline", "Target")
+
+
+def section(text: str, name: str, level: int = 2) -> str:
+    """A markdown section's text, without its heading."""
+
+    marks = "#" * level
+    found = re.search(rf"^{marks} {re.escape(name)}\b[^\n]*\n(.*?)(?=^#{{1,{level}}} |\Z)", text, re.M | re.S)
+    return found.group(1).strip() if found else ""
+
+
+def benchmark(folder: Path) -> str:
+    """The agreement's Benchmark section, or "" when the issue's goal is not a number."""
+
+    agreement = folder / "agreement.md"
+    return section(agreement.read_text(encoding="utf-8"), BENCHMARK) if agreement.is_file() else ""
 
 
 def issue_dir(run_dir: Path) -> Path:
@@ -56,9 +76,14 @@ def check(folder: Path, settings: config.Config) -> list[str]:
     if not text.strip():
         problems.append(f"{agreement} is missing or empty.")
     else:
-        for section in SECTIONS:
-            if section not in text:
-                problems.append(f"agreement.md has no '{section}' section.")
+        for heading in SECTIONS:
+            if heading not in text:
+                problems.append(f"agreement.md has no '{heading}' section.")
+        if re.search(rf"^## {BENCHMARK}\b", text, re.M):
+            measured = section(text, BENCHMARK)
+            for name in BENCHMARK_LINES:
+                if not re.search(rf"^- \*\*{name}:\*\*[ \t]*\S", measured, re.M):
+                    problems.append(f"agreement.md's {BENCHMARK} section has no '- **{name}:**' line.")
     slices, error = _slices(folder / "slices.json")
     if error:
         return problems + [error]

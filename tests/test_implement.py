@@ -239,6 +239,16 @@ class PromptTest(SliceTestCase):
         self.assertIn("- **unit**, `test -f feature.txt`", text)
 
 
+class BenchmarkPromptTest(SliceTestCase):
+    def test_only_an_agreement_with_a_benchmark_asks_for_the_measurement(self):
+        agreement = spec.issue_dir(self.run.path) / "agreement.md"
+        agreement.write_text("# Agreement\n\n## Decisions\n1. **x.**\n\n")
+        self.assertNotIn("Benchmark", implement.prompt(self.run.path, self.repo, SLICES[1], self.settings))
+        agreement.write_text("# Agreement\n\n" + "## Benchmark\nThe suite's wall time, in minutes.\n- **Command:** e2e\n- **Baseline:** 14.7, this morning\n- **Target:** 8 or less\n\n")
+        self.assertIn("`- **Benchmark:** <before> → <after>` line of your evidence",
+                      implement.prompt(self.run.path, self.repo, SLICES[1], self.settings))
+
+
 class OverrideTest(unittest.TestCase):
     base = config.AgentSpec("claude", "opus", "high")
 

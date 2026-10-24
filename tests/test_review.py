@@ -456,6 +456,13 @@ class FollowUpTest(LoopTestCase):
             self.assertTrue(text.split("\n", 2)[2].startswith("This review is for the project's owner"), args)
             self.assertIn("Show any problem with a test, not with an attack.", text)
 
+    def test_a_benchmark_is_the_reviewer_s_to_measure(self):
+        (self.run.path.parent / "agreement.md").write_text("# Agreement\n\n" + "## Benchmark\nThe suite's wall time, in minutes.\n- **Command:** e2e\n- **Baseline:** 14.7, this morning\n- **Target:** 8 or less\n\n")
+        text = review.reviewer_prompt(self.run.path, self.repo, self.tmp / "f", 1, 3, self.settings)
+        self.assertIn("a number that misses its target is a blocking spec finding", text)
+        fixer = review.fixer_prompt(self.run.path, self.repo, self.tmp / "f", self.tmp / "o", self.tmp / "r", self.settings)
+        self.assertNotIn("Benchmark", fixer)
+
     def test_the_first_round_prompt_lists_the_slices_results(self):
         self.run.event("slice.committed", slice=1)
         folder = self.run.step_dir(1, "implement-slice-1")

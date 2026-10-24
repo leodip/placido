@@ -6,20 +6,18 @@ description: Answer every finding of a review round on a placido change, fixing,
 # Findings to fixes
 
 A reviewer has reviewed the change, and you answer **every** finding of the round.
-You are a fresh session: the agreement, the findings, and the code are all you need.
-Your prompt names the agreement, the review (`review.md` and `findings.json`), the
-worktree, the commands and gates, and where to write.
+You are a fresh session: the agreement, the decisions, the findings, and the code are
+all you need. Your prompt names them, with the worktree, the commands and gates, and
+where to write. The agreement and the user's decisions during the run are the
+contract (a decision overrides the agreement where they differ): a finding asking for
+something they decided against is a dispute, not a fix.
 
-## 1. Read
+**Done when** `resolutions.json` answers every finding, the gates your prompt lists
+pass, and the result file is written.
 
-Read the agreement in full, the decisions the user made during the run if your
-prompt names any (each overrides the agreement where they differ), then the review.
-The agreement and the decisions are the contract: a finding asking for something they
-decided against is a dispute, not a fix.
+## Answer each finding
 
-## 2. Answer each finding
-
-For each finding, exactly one answer:
+Exactly one answer for each:
 
 - **fixed:** you changed the code so the finding no longer holds, with a test that
   would catch it coming back where the finding is about behavior.
@@ -42,11 +40,9 @@ Rules:
 - **Tests first where a finding is about behavior:** a test that fails before the
   fix and passes after.
 - **Never commit.** Placido runs the gates and commits.
-- **Run commands in the foreground and wait for them,** however long they take. Do not
-  end your turn while a background command or monitor is running: placido reads the
+- **Run commands in the foreground and wait for them,** however long they take, and
+  do not end your turn while a background command or monitor runs: placido reads the
   end of your turn as the end of your work.
-
-**Done when** every finding has an answer and the gates your prompt lists pass.
 
 ### Asking the user
 
@@ -67,9 +63,9 @@ your prompt names (`## D<n> · <your step folder's name> · <date>`, then
 finding as fixed, disputed, or deferred under the decision, or as escalated if the
 user wants it left for the pull request.
 
-## 3. Write
+## Write
 
-Write `resolutions.json` where your prompt says:
+`resolutions.json` where your prompt says:
 
 ```json
 {
@@ -80,9 +76,9 @@ Write `resolutions.json` where your prompt says:
 }
 ```
 
-Then write the result file your prompt names. When you changed code, its first line
-is a commit subject of at most 72 characters and the lines after it, up to
-`## Evidence`, are the commit body, as in a slice:
+Then the result file your prompt names. When you changed code, its first line is a
+commit subject of at most 72 characters and the lines after it, up to `## Evidence`,
+are the commit body, as in a slice:
 
 ```markdown
 Fix review round 1: <the gist>
@@ -95,5 +91,3 @@ Fix review round 1: <the gist>
 
 When you changed no code, because every finding is disputed, deferred, or
 escalated, the first line is `No code changes` instead.
-
-**Done when** `resolutions.json` answers every finding and the result file is written.

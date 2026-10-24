@@ -5,37 +5,45 @@ description: Build one slice of a sealed agreement, tests at the agreed seams fi
 
 # Slice to change
 
-You build **one slice** of a sealed agreement in the worktree. The agreement is the
-contract: what it decided is settled, and what it did not decide is not yours to
-decide. Your prompt names the agreement, the slice, the worktree, whether tests come
-first, the commands you may run, and the slice's gates. Without a prompt, ask the user
-for them.
+You build **one slice** of a sealed agreement in the worktree, and leave it
+uncommitted for placido to check and commit. The agreement is the contract: what it
+decided is settled, and what it did not decide is not yours to decide. Your prompt
+names the agreement, the slice, the worktree, whether tests come first, the commands
+you may run, and the slice's gates. Without a prompt, ask the user for them.
 
-## 1. Read
+**Done when** the slice's tests pass at the agreed seams, every gate your prompt lists
+passes, the mutations your prompt asks for are killed, and the result file is written.
 
-Read the agreement **in full**: the decisions, the seams, the testing notes, and every
-slice, so you know what this slice must not do as well as what it must. Read the
-decisions the user made during the run, if your prompt names any: each one overrides
-the agreement where they differ. Then read the
-project's knowledge where it exists: `AGENTS.md` or `CLAUDE.md`, `GLOSSARY.md` (use its
-words in names and tests), the ADRs for the area you touch, and the role notes your
-prompt names.
+## Before you build
 
-**Done when** you can say what this slice delivers, which seams prove it, and what the
-later slices will add, so you do not build them now.
+Know what this slice delivers, which seams prove it, and what the later slices will
+add, so you do not build them now: read the agreement in full, every slice included,
+and the decisions the user made during the run, if your prompt names any (each
+overrides the agreement where they differ). Use the words of the project's glossary in
+names and tests. The agreement keeps slices coarse on purpose: detail this one against
+the code as it is now, and find every place it touches rather than guess.
 
-## 2. Detail the slice
+## Rules
 
-The agreement keeps slices coarse on purpose; you detail this one against the code as
-it is now. Find where the change lands, what calls it, and the existing tests at the
-agreed seams to follow. Facts are yours to find: read the code and the history
-(`git log -S`) rather than guessing.
+- **Stay in the slice.** Do not build later slices, refactor beyond what this slice
+  needs, or fix unrelated defects; note anything worth doing under Follow-ups.
+- **The agreement decides.** When the code shows it cannot work as written, or needs a
+  decision it does not contain, **stop**: do not choose for the user. Write a blocked
+  result (below) instead.
+- **Never commit,** amend, push, or switch branches. Placido commits the slice after
+  checking it, using the message in your result.
+- **Run every gate your prompt lists before you finish:** placido runs them again
+  after you, and commits only when they pass.
+- **Run commands in the foreground and wait for them,** however long they take, and
+  do not end your turn while a background command or monitor runs: placido reads the
+  end of your turn as the end of your work.
 
-**Done when** you know every place the change touches.
+## Tests
 
-## 3. Tests first, at the seams
-
-When your prompt says tests come first, write the slice's tests **before** the code:
+When your prompt says tests come first, write the slice's tests before the code and
+see them **fail for the right reason**: an assertion about the missing behavior, not
+an import error or a typo. Keep that run for your evidence. Otherwise write them
+after the code. Either way:
 
 - **Only at the agreed seams,** through public interfaces, never against internals.
 - **Expected values from an independent source:** a literal from the agreement, a
@@ -44,63 +52,32 @@ When your prompt says tests come first, write the slice's tests **before** the c
 - **No mocks of the project's own internals;** mock only what crosses a boundary
   you do not own.
 
-Run them and confirm they **fail for the right reason**: an assertion about the
-missing behavior, not an import error or a typo. Keep that output for your evidence.
-Tests that pass before the code exists are testing nothing; fix them first.
+## Mutations
 
-When tests do not come first, write them after the code, to the same rules.
-
-**Done when** the slice's tests exist and, when tests come first, fail for the
-right reason.
-
-## 4. Build
-
-Write the code until the slice's tests pass. Run narrow tests often, and before you
-finish, run every gate your prompt lists for this slice: placido runs them again
-after you, and the slice is committed only when they pass.
-
-- **Stay in the slice.** Do not build later slices, refactor beyond what this slice
-  needs, or fix unrelated defects; note anything worth doing under Follow-ups.
-- **The agreement decides.** When the code shows the agreement cannot work as
-  written, or needs a decision it does not contain, **stop**: do not choose for the
-  user. Write a blocked result (below) instead.
-- **Run commands in the foreground and wait for them,** however long they take. Do not
-  end your turn while a background command or monitor is running: placido reads the
-  end of your turn as the end of your work.
-- **Never commit,** amend, push, or switch branches. Placido commits the slice after
-  checking it, using the message in your result.
-
-**Done when** the tests pass and every gate passes.
-
-## 5. Mutations
-
-Tests that went red before green prove they fail while the code is missing; they do
-not prove they catch code that is **wrong**. A mutation checks that: break one piece
-of the new code on purpose and see whether a test notices.
+Tests that went red before green prove they fail while the code is missing, not that
+they catch code that is **wrong**. A mutation checks that: break one piece of the new
+code on purpose and see whether a test notices.
 
 ```
 placido mutate <file> --replace "<exact text>" --with "<broken text>" -- <narrow test command>
 ```
 
-The text must match once in the file. The tool runs the tests, restores the file
-exactly, and records the outcome for placido.
+The text must match once in the file; the tool runs the tests, restores the file
+exactly, and records the outcome for placido. Aim at the riskiest behavior of the
+slice (conditions, boundaries, error paths, security checks, what the decisions are
+about), each mutation a plausible bug, run with the narrow tests that should catch
+it. **Killed** means a test failed: good. **Survived** means no test noticed: add or
+strengthen a test and mutate again, or say in your evidence why the mutation does not
+change behavior. When your prompt asks for no mutations, skip this.
 
-- **Aim at the riskiest behavior of this slice:** conditions, boundaries, error paths,
-  security checks, and the behaviors the agreement's decisions are about. A mutation
-  of trivial code tells nothing.
-- **Make each mutation a plausible bug:** flip a comparison, drop a branch, change a
-  boundary or a constant, skip a check.
-- **Killed** means a test failed: good. **Survived** means no test noticed: add or
-  strengthen a test and mutate again, or, when the mutation does not change behavior,
-  say why in your evidence.
-- Run them with **narrow tests**, the ones that should catch it, not the whole suite.
+## Benchmark
 
-When your prompt asks for no mutations, skip this part.
+When your prompt names the agreement's benchmark and this slice can move the number,
+measure it with its command before you change anything and again at the end. When it
+falls short of what this slice should achieve, try another approach within the slice
+rather than stopping at the first. Report both values in your evidence.
 
-**Done when** your prompt's number of mutations are killed and every survivor is
-fixed or explained.
-
-## 6. Result
+## Result
 
 Write the result file your prompt names, in this shape:
 
@@ -114,6 +91,7 @@ Write the result file your prompt names, in this shape:
 - **Green:** the passing run of the slice's gates.
 - **Mutations:** each one, what it broke, and killed or survived; why any survivor
   does not change behavior.
+- **Benchmark:** <before> → <after>, when your prompt names one.
 
 ## Follow-ups
 - Anything worth doing that this slice did not, or "None".
@@ -122,8 +100,8 @@ Write the result file your prompt names, in this shape:
 Everything above `## Evidence` becomes the commit message, so it describes the change,
 not your process. If tests did not come first, the Red line says so.
 
-When you cannot go on because the agreement cannot be followed, or only the user
-can decide, ask instead of guessing. Write the result as:
+When you cannot go on because the agreement cannot be followed, or only the user can
+decide, ask instead of guessing. Write the result as:
 
 ```markdown
 Blocked: <the question the user must answer, in one line>
@@ -133,15 +111,8 @@ Blocked: <the question the user must answer, in one line>
 
 Placido brings the user to your tab and keeps your question. **Then wait:** the user
 answers here, in this conversation, and may ask you things first. Once they have
-decided:
-
-1. Append the decision to the decisions file your prompt names, as the next entry:
-   `## D<n> · <your step folder's name> · <date>`, then `**Question:**`,
-   `**Decision:**` (the user's answer, in their words where you can), and `**Why:**`.
-2. Finish the slice under the decision, and write your result again, as normal.
-
-A decision overrides the agreement where they differ; never edit the agreement.
-Leave your changes in place throughout. Placido checks the result, runs the gates,
-and commits.
-
-**Done when** the result file is written.
+decided, append the decision to the decisions file your prompt names, as the next
+entry: `## D<n> · <your step folder's name> · <date>`, then `**Question:**`,
+`**Decision:**` (the user's answer, in their words where you can), and `**Why:**`.
+Then finish the slice under the decision and write your result again, as normal. A
+decision overrides the agreement where they differ; never edit the agreement.

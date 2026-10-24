@@ -141,6 +141,18 @@ class CheckTest(SpecTestCase):
             "slice 2 in slices.json has gate \"data 'open\", which is not a project command (commands: unit, data).",
         ])
 
+    def test_a_benchmark_names_its_command_baseline_and_target(self):
+        measured = AGREEMENT.replace("## Seams", "## Benchmark\nThe suite's wall time, in minutes.\n- **Command:** e2e\n- **Baseline:** 14.7, this morning\n- **Target:** 8 or less\n\n" + "## Seams")
+        self.assertEqual(self.problems(agreement=measured), [])
+        self.assertIn("- **Target:** 8 or less", spec.benchmark(self.folder))
+        self.assertEqual(self.problems(agreement=measured.replace("- **Target:** 8 or less\n", "").replace(
+            "- **Command:** e2e", "- **Command:**")), [
+            "agreement.md's Benchmark section has no '- **Command:**' line.",
+            "agreement.md's Benchmark section has no '- **Target:**' line.",
+        ])
+        self.write()
+        self.assertEqual(spec.benchmark(self.folder), "")
+
     def test_fields_are_required(self):
         problems = self.problems(slices=self.slices_with(1, delivers="", blocked_by="none", gates=None))
         self.assertIn("slice 1 in slices.json needs a non-empty 'delivers'.", problems)

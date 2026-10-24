@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from placido import checks, decisions, runlog, spec
+from placido import checks, decisions, implement, runlog, spec
 
 CI_WORDS = {
     "red": "CI is red after placido's fixes",
@@ -25,6 +25,7 @@ LAST_GATES_FAIL = "The last gates fail after placido's fixes"
 LEAD = re.compile(r"^\d+\.\s+\*\*(.+?)\*\*", re.MULTILINE | re.DOTALL)
 FINDING = re.compile(r"^- \*\*(?P<id>[^*]+)\*\* (?P<severity>\w+) · (?P<rest>.*)$")
 REVIEW_KEPT = ("Needs your decision", "Fixed, not verified by a later round")
+MEASURED = re.compile(r"^\s*- \*\*Benchmark:\*\*\s*(.+)$", re.M)  # a slice's evidence line
 
 
 def build(run_dir: Path, folded: list[int]) -> str:
@@ -48,6 +49,7 @@ def build(run_dir: Path, folded: list[int]) -> str:
     solution = section(agreement, "Solution")
     if solution:
         lines += ["## What this changes", "", solution, ""]
+    lines += _benchmark(run_dir)
     noted = next((e for e in reversed(events) if e.get("event") == "release_notes.posted"), None)
     if noted:
         lines += ["## Release notes", "", f"What upgrading asks of the people who run the project:"
@@ -66,6 +68,24 @@ def release_notes(run_dir: Path) -> str:
     return f"## Release notes\n\n{notes}\n" if notes else ""
 
 
+def _benchmark(run_dir: Path) -> list[str]:
+    """The agreement's benchmark, then what each slice measured on it."""
+
+    agreed = spec.benchmark(spec.issue_dir(run_dir))
+    if not agreed:
+        return []
+    measured = []
+    for result in implement.slice_results(run_dir):
+        found = MEASURED.search(_read(result))
+        number = re.search(r"implement-slice-(\d+)", result.parent.name)
+        if found and number:
+            measured.append(f"- Slice {number.group(1)}: {found.group(1).strip()}")
+    lines = ["## Benchmark", "", agreed, ""]
+    if measured:
+        lines += ["Measured by the slices, before → after:", "", *measured, ""]
+    return lines
+
+
 def _read(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -73,12 +93,7 @@ def _read(path: Path) -> str:
         return ""
 
 
-def section(text: str, name: str, level: int = 2) -> str:
-    """A markdown section's text, without its heading."""
-
-    marks = "#" * level
-    found = re.search(rf"^{marks} {re.escape(name)}\b[^\n]*\n(.*?)(?=^#{{1,{level}}} |\Z)", text, re.M | re.S)
-    return found.group(1).strip() if found else ""
+section = spec.section
 
 
 def leads(decided: str) -> list[str]:

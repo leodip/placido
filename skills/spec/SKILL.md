@@ -8,49 +8,34 @@ description: Turn an issue into a sealed agreement through an interview with the
 You interview the user about one issue until no decision is left open, then write
 the agreement and the slice list that the rest of the run builds from without them.
 **Every decision settled here is one the run does not have to bring back to the user.**
+Your prompt gives the paths: the issue, the worktree, where to write, any project
+notes, and the project's commands. Without a prompt, ask the user for them.
 
-Your prompt gives you the paths: the issue, the worktree, where to write, any
-project notes, and the project's commands. Without a prompt, ask the user for them.
+**Do not change the worktree.** You write the agreement, the slice list, follow-up
+drafts, and throwaway programs in the `probe/` folder beside the agreement.
 
-## 1. Gather
+## 1. Understand, then read back
 
-Read the issue in full, including its comments. Then read the project's knowledge,
-where it exists: `AGENTS.md` or `CLAUDE.md`, `GLOSSARY.md`, the ADRs in `docs/adr/`
-for the area the issue touches, and the role notes your prompt names.
+Before the first question, know what the code does today where the issue touches it,
+and where that lives, without guessing. **Facts are yours to find, never the user's
+to supply:** the code, its history, the tools, a published specification, or a probe
+you run settle them. The project's own documents (`AGENTS.md` or `CLAUDE.md`, a
+glossary, ADRs) and the role notes your prompt names say how the project thinks.
 
-Explore the code the issue touches until you can say what it does today. **Facts are
-yours to find, never the user's to supply:** anything the code, the history
-(`git log -S`, `git blame`), the tools, or a published specification can answer, you
-look up. "Why is it like that" is usually in a commit message. When a claim is
-cheap to settle by running something, run it; keep throwaway programs in the
-`probe/` folder next to the agreement, never in the worktree.
+Note adjacent work as you go: the user would rather fold related work into this
+change than leave it for later. That is problems in the code the issue touches (a bug
+next to the change, a missing test, a name the change makes worse), and open issues
+on the same area (`gh issue list --state open --search "<words>"` when the repository
+is on GitHub).
 
-**Do not change the worktree.** Specifying writes nothing but the agreement, the
-slice list, and probes.
-
-**Look for adjacent work while you read.** The user would rather fold related work
-into this change than leave it for later, so note two kinds:
-
-- **Problems in the code the issue touches:** a bug next to the change, a missing
-  test, a confusing name the change will make worse.
-- **Open issues on the same area:** when the repository is on GitHub, search them
-  (`gh issue list --state open --search "<words>"`) and read the likely ones.
-
-**Done when** you can describe the current behavior the issue is about, and where
-it lives, without guessing, and you have your list of adjacent work.
-
-## 2. Read back
-
-Tell the user, briefly: what the issue asks for; what the code shows, especially
-where it **contradicts** the issue; the adjacent work you found, each with its
-evidence; the decisions you are about to ask, numbered,
-with the count marked **provisional**; and the **assumptions** you will make
-without asking, each with its citation, so the user can object before the first
-question. Answering one decision routinely exposes another, and saying so now makes
-a later addition read as the process working.
+Then tell the user, briefly: what the issue asks for; what the code shows, especially
+where it **contradicts** the issue; the adjacent work, each with its evidence; the
+decisions you will ask, numbered, the count marked **provisional** (one answer often
+exposes another); and the **assumptions** you will make without asking, each with its
+citation, so the user can object before the first question.
 
 **Decisions are the user's; an assumption is a decision that is not really a
-choice.** You may assume rather than ask only when all four hold, and ask otherwise:
+choice.** Assume rather than ask only when all four hold:
 
 1. The issue's words or today's behavior already settle it, and you can cite the
    sentence or the probe: "greeting **each** name in the order given" settles that
@@ -68,18 +53,12 @@ step, keeping the issue's instruction: "**The farewell wording is decided during
 implementation: the implementer asks the user.**" Confirm it with the user like any
 decision; the implementer and the reviewer follow the decisions, not the assumptions.
 
-**Done when** the user has seen the read-back.
+## 2. Interview
 
-## 3. Interview
-
-Ask **one question at a time**, and wait for the answer before the next. Batching
-hides dependencies: an early answer can invalidate a question already asked.
-
-Ask in plain text in the conversation, never through a question tool or menu: the
-user needs the context and your recommendation in front of them, and a menu shows
-only the options.
-
-Each question has this shape:
+Ask **one question at a time**, and wait for the answer before the next: an early
+answer can invalidate a question already asked. Ask in plain text in the
+conversation, never through a question tool or menu, which shows only the options
+and hides the context and your recommendation. Each question has this shape:
 
 ```
 **Question <n> of <count> (provisional): <title>**
@@ -93,27 +72,24 @@ does not differ between them.
 **Recommendation:** your answer first, then the reasoning.
 ```
 
-Rules, in order:
-
 1. **Root of the dependency tree first.** Ask what other questions depend on before
    the questions that depend on it.
 2. **Number as you go, and explain every change to the count:** "question 3 showed
    the cache is shared, so this is now 6".
-3. **Hunt the questions the run would otherwise bring back.** Walk the design for
-   anything touching an interface, a schema or persisted data, a wire format, or a
-   security property, and ask it now. An unasked one stalls the run later.
-4. **When an answer invalidates an earlier assumption, say so at once:** name the
-   conflict and re-ask.
-5. **When a question rests on a false premise, withdraw it,** give the verified
-   facts, and ask the narrower question that remains.
-6. **Ask adjacent work as work.** Each adjacent problem and open issue you found is a
-   question: fold it in, draft it as a follow-up, or drop it, with its size and your
-   recommendation. The user prefers folding in when it is small and close; recommend
-   that unless it would change the nature or the risk of this change. What is folded
-   in is part of the agreement: decide it, slice it, and list it under `## Folded in`.
-   A draft is a `followup-<slug>.md` beside the agreement, complete enough to file
-   as an issue unedited, in this shape (placido builds the command that files it
-   from the header lines):
+3. **Hunt the questions the run would otherwise bring back:** anything touching an
+   interface, a schema or persisted data, a wire format, or a security property. An
+   unasked one stalls the run later.
+4. **When an answer invalidates an earlier assumption, say so at once,** name the
+   conflict, and re-ask. When a question rests on a false premise, withdraw it, give
+   the verified facts, and ask the narrower question that remains.
+5. **Ask adjacent work as work.** Each adjacent problem and open issue is a question:
+   fold it in, draft it as a follow-up, or drop it, with its size and your
+   recommendation. Recommend folding in when it is small and close, unless it would
+   change the nature or the risk of this change. What is folded in is part of the
+   agreement: decide it, slice it, and list it under `## Folded in`. A draft is a
+   `followup-<slug>.md` beside the agreement, complete enough to file unedited, in
+   this shape (placido builds the command that files it from the header lines, and
+   posts every draft on the pull request for the user to file or not):
 
    ```
    # <issue title>
@@ -124,42 +100,33 @@ Rules, in order:
 
    <the body: the problem, the evidence, and a last paragraph "Done when: …">
    ```
-
-   When the pull request opens, placido posts every draft in a comment on it, with
-   its `gh issue create` command, and the user files the ones they want.
-7. **Offer the escape.** The user may skip the remaining questions; then say plainly
+6. **Offer the escape.** The user may skip the remaining questions; then say plainly
    that the agreement cannot be sealed while any decision is open.
 
 Write each decision into `agreement.md` **as it is settled**, with its reasoning and
-the rejected alternative, so the interview survives an interruption.
-
-**Seams** and **slices** are decisions too. When there is a real choice in either,
-it is a question like any other. Otherwise propose them in your final summary.
+the rejected alternative, so the interview survives an interruption. Seams, slices,
+and a benchmark are decisions too: a real choice in any of them is a question like any
+other; otherwise propose them in your final summary.
 
 **Done when** no decision is open.
 
-## 4. Seams
+## 3. Seams, slices, and a benchmark
 
 A **seam** is an observable boundary where tests show the behavior: a command's
 output, a public function, an HTTP endpoint, a stored record. Choose **as few as
 possible, as high as possible**, preferring seams the project already tests at; the
 ideal number is one. Tests at seams survive refactoring; tests of internals do not.
+Record what each observes and why it was chosen over the alternatives.
 
-For each seam, record what it observes and why it was chosen over the alternatives.
-
-## 5. Slices
-
-Split the work into **slices**: tracer bullets, each a narrow but complete path
-through every layer the change touches, verifiable on its own, and small enough to
-build in one fresh session.
+**Slices** are tracer bullets: each a narrow but complete path through every layer the
+change touches, verifiable on its own, and small enough to build in one fresh session.
 
 - **Refactoring first:** "make the change easy, then make the easy change". A
   preparatory refactor is its own slice, blocking the slices that need it.
 - **Blockers are only real constraints:** slice B is blocked by slice A only when B
   cannot be built or verified before A exists.
 - **Wide refactors are the exception to vertical slicing:** a rename or retype that
-  breaks many call sites at once goes expand, migrate in batches, contract, each its
-  own slice.
+  breaks many call sites at once goes expand, migrate in batches, contract.
 - **Gates:** every slice runs the project's slice gates. Give a slice extra gates,
   from the commands in your prompt, when it needs more proof, such as data-layer
   tests for a slice that changes storage. A command whose description asks for an
@@ -168,7 +135,15 @@ build in one fresh session.
 Slices stay coarse: a title, what it delivers, its blockers, its gates. Each
 implementer details its own slice against the code as it is then.
 
-## 6. Write and hand over
+**When the issue's goal is a number** (faster, smaller, fewer, lighter), make it a
+**benchmark**, so each slice measures its progress instead of claiming it. Agree on
+the command that measures it, today's baseline, and the target. Measure the baseline
+now, in a probe, and say on what. When nothing can measure it yet, the first slice
+builds the benchmark, and the baseline is what it measures before anything else
+changes. Each implementer then reports the number before and after its slice, the
+reviewer holds the change to the target, and the pull request shows how it moved.
+
+## 4. Write and hand over
 
 Write `agreement.md` in this shape, describing behavior rather than procedure, with
 no file paths or line numbers, since those go stale:
@@ -187,6 +162,12 @@ The solution from the user's point of view.
 ## Release notes
 Only when upgrading asks something of the people who run the project, or changes
 what they see: each step or change, one bullet each. Leave the section out otherwise.
+
+## Benchmark
+Only when the goal is a number: what is measured, in which unit, and why.
+- **Command:** how to measure it, runnable in the worktree.
+- **Baseline:** today's value, and how and where it was measured.
+- **Target:** the value that means done.
 
 ## Decisions
 1. **<decision>.** Reasoning. Rejected: <alternative>, because <reason>.
@@ -214,11 +195,11 @@ What a good test looks like here, and the existing tests to follow.
 What this work does not do, and any follow-ups drafted, each with its evidence.
 ```
 
-Placido writes the pull request description from the agreement, the Solution and
-each decision's bold lead, then what the review found, and posts the Release notes
-as written in a comment on the pull request. Whatever the pull request must tell
-its readers goes in one of those, since nothing else reaches it: write release notes
-in their section, not a decision that the pull request will carry them.
+Placido writes the pull request description from the agreement (the Solution, the
+Benchmark, and each decision's bold lead), then what the review found, and posts the
+Release notes as written in a comment on the pull request. Whatever the pull request
+must tell its readers goes in one of those, since nothing else reaches it: write
+release notes in their section, not a decision that the pull request will carry them.
 
 Then write `slices.json`, the same slices for placido to read:
 

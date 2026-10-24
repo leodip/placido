@@ -642,7 +642,7 @@ class RoundTest(PRTestCase):
         self.assertIn("fixed here", (rnd.folder / "diff.patch").read_text())  # the whole change, the fix in it
         task = next(c["task"] for c in self.runner.calls if c["name"] == "r2-review-a")
         self.assertIn("kept findings whether this head addresses it: F1", task)
-        self.assertIn("r1-fix-1/resolutions.json. Check each answer as the skill's section 4 says.", task)
+        self.assertIn("r1-fix-1/resolutions.json. Check each answer as the skill's Earlier rounds section says.", task)
         self.assertIn(f"The contributor's own head is {self.head[:12]}", task)
         self.assertIn("steps/01-r1-scan/scan.md", task)  # round 1's scan stands
         judge = next(c["task"] for c in self.runner.calls if c["name"] == "r2-judge")

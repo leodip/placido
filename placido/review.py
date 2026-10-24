@@ -146,13 +146,19 @@ def check_resolutions(path: Path, open_findings: list[dict[str, Any]]) -> list[s
 def _paths(run_dir: Path, worktree: Path, role: str) -> list[str]:
     record = runlog.read_record(run_dir)
     notes = worktree / ".placido" / "notes" / f"{role}.md"
-    return [
+    lines = [
         f"- **Agreement:** {spec.issue_dir(run_dir) / 'agreement.md'} (sealed; read it in full)",
         f"- **The change:** commits from {record.get('base_commit', '?')[:12]} to HEAD in {worktree}"
         f" (`git log {record.get('base_commit', '?')[:12]}..HEAD`).",
         f"- **Project notes for this role:** {notes if notes.is_file() else 'none'}",
         decisions.prompt_line(run_dir),
     ]
+    if role == "review" and spec.benchmark(spec.issue_dir(run_dir)):
+        lines.append(
+            f"- **Benchmark:** the agreement's {spec.BENCHMARK} section. Measure it on the change with"
+            " its command: a number that misses its target is a blocking spec finding."
+        )
+    return lines
 
 
 # Said first in every review prompt: what this work is. OpenAI's safety system refused

@@ -68,6 +68,19 @@ class BodyTest(unittest.TestCase):
                       " project: [the release notes comment](https://x/pull/7#issuecomment-1).\n\n## Decisions\n",
                       prbody.build(self.run.path, []))
 
+    def test_the_benchmark_and_what_each_slice_measured(self):
+        self.assertNotIn("## Benchmark", prbody.build(self.run.path, []))
+        benchmark = "Wall time, in minutes.\n- **Command:** e2e\n- **Baseline:** 14.7\n- **Target:** 8"
+        (self.run.path.parent / "agreement.md").write_text(
+            AGREEMENT.replace("## Decisions", f"## Benchmark\n{benchmark}\n\n## Decisions"))
+        for n, evidence in ((1, "- **Benchmark:** 14.7 → 11.2 min\n"), (2, "- **Green:** passed\n")):
+            self.run.event("slice.committed", slice=n)
+            (self.run.step_dir(n + 2, f"implement-slice-{n}") / "result.md").write_text(
+                f"Speed it up\n\n## Evidence\n{evidence}")
+        body = prbody.build(self.run.path, [])
+        self.assertIn(f"stops the server.\n\n## Benchmark\n\n{benchmark}\n\nMeasured by the slices, before → after:"
+                      "\n\n- Slice 1: 14.7 → 11.2 min\n\n## Decisions", body)
+
     def test_findings_left_for_the_user_are_kept(self):
         self.review("escalated")
         body = prbody.build(self.run.path, [])

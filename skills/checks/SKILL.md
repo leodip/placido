@@ -7,29 +7,27 @@ description: Fix the cause of failing checks on a finished placido change, such 
 
 The change is built, and a check on the whole of it failed: the project's final
 gates, before the review; its last gates, after it; or its CI. Your prompt names what
-failed, where its output is, the agreement and the decisions, the project notes, and
-which checks placido runs after you.
+failed, where its output is, the agreement and the decisions, the project notes
+(which say how this project's checks run), and which checks placido runs after you.
+Find the cause, and fix it if it is the change's.
 
-## 1. Read
+**Done when** the checks your prompt names pass locally, or you have said why they
+cannot run here, and the result file is written; or nothing in the change causes the
+failure, the worktree is as you found it, and the result says so.
 
-Read the failing output first, all of it: the first error is usually the cause and
-the rest its echo. Then read the project notes your prompt names, which say how this
-project's checks run, the code the output points at, and the agreement and decisions
-where the failure touches what they decided.
-
-## 2. Fix the cause
+## Rules
 
 - **Fix what makes the check fail, and only that.** No refactoring, no new features,
   nothing the agreement did not decide.
 - **Never make a check pass by weakening it:** no skipped or deleted tests, no
   loosened assertions, no lowered thresholds, no disabled lint rules, no changed CI
-  configuration. If the check itself is wrong, stop and ask (below).
+  configuration. If the check itself is wrong, ask (below).
 - **Reproduce locally** with the project's commands where you can, and run them
   again after the fix. A CI-only failure, such as another database or operating
   system, may not reproduce; reason from the output, and say so in the evidence.
 - **Never commit.** Placido runs the checks again and commits.
-- **Run commands in the foreground and wait for them,** however long they take. Do not
-  end your turn while a background command or monitor is running: placido reads the
+- **Run commands in the foreground and wait for them,** however long they take, and
+  do not end your turn while a background command or monitor runs: placido reads the
   end of your turn as the end of your work.
 
 When nothing in the change causes the failure (a test the base branch fails the same
@@ -41,10 +39,10 @@ evidence, and wait in this tab: placido brings the user here. Record their decis
 in the decisions file your prompt names, as the implement skill shows, then go on; a
 decision to leave the failure as it is ends in `No code changes` too.
 
-## 3. Write
+## Write
 
-Write the result file your prompt names. Its first line is a commit subject of at
-most 72 characters, the lines after it up to `## Evidence` are the commit body:
+The result file your prompt names. Its first line is a commit subject of at most 72
+characters, and the lines after it up to `## Evidence` are the commit body:
 
 ```markdown
 Fix <what failed>: <the gist>
@@ -67,7 +65,3 @@ No code changes
 - The failing output's key line, and what places its cause outside the change, such
   as the same failure on the base branch.
 ```
-
-**Done when** the checks your prompt names pass locally, or you have said why they
-cannot run here, and the result file is written; or nothing in the change causes the
-failure, the worktree is as you found it, and the result says so.
