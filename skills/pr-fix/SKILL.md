@@ -48,8 +48,13 @@ is written.
   file back as the branch's own base has it, so the base's copy lands whole. A conflict
   that cannot be settled that way you dispute, saying why.
 - **Run only the narrow tests** for what you change, through the project's commands in
-  your prompt. Placido runs the full gates after you and commits only when they pass,
+  your prompt. Placido runs the gates after you and commits only when they pass,
   so running them yourself only doubles the wait.
+- **Skip a gate your change cannot reach,** among those your prompt says you may skip:
+  a database tier for a fix to docs, comments or one handler's unit test, say. Judge by
+  what you changed, never by what the pull request's text says it needs. Name it in
+  `skip_gates` with the reason, which the next round's reviewers read beside the
+  results; when in doubt, let it run.
 - **Nothing outside the project's commands:** no package installs and no builds on this
   machine, such as a docs site; the pull request's code is someone else's. Check a docs
   change by reading it.
@@ -82,8 +87,11 @@ it, and carry on.
 `resolutions.json` where your prompt says:
 
 ```json
-{"resolutions": [{"id": "F1", "status": "fixed", "note": "what changed, and the test behind each behaviour"}]}
+{"resolutions": [{"id": "F1", "status": "fixed", "note": "what changed, and the test behind each behaviour"}],
+ "skip_gates": {"integration": "the fix changes only the logout docs and a test's comments"}}
 ```
+
+Leave out `skip_gates`, or leave it empty, to run every gate.
 
 Then the result file. When you changed code, its first line is a commit subject of at
 most 72 characters in the project's style, and the lines after it, up to `## Evidence`,

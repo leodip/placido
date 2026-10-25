@@ -438,9 +438,13 @@ stops the push or merge picked with them), push them (never forced, and only whe
 the contributor allows maintainers to), post the comment (shown in full first, as it
 will go out), approve CI runs GitHub holds
 for first-time contributors, or squash-merge pinned to the commit the review covered. A
-push waits for GitHub to show it before the menu comes back. A fix is the `fix` role's, committed locally once the gates pass. Then a new
+push waits for GitHub to show it before the menu comes back. A fix is the `fix` role's, committed locally once the gates pass. The fixer may skip
+any of the `[pr] gates` but the slice gates when its change cannot reach what the gate
+checks, such as a database tier for a docs fix, with the reason; never after a merge of
+the base, whose changes it did not make. Then a new
 round reviews the branch with it in full, as the contributor's head was: every
-reviewer, the cross-checks, and the judge, checking each finding's fix with a test
+reviewer, the cross-checks, and the judge (on the gates the fix ran on that same
+commit, not run again, and each skipped one with its reason), checking each finding's fix with a test
 that fails without it, each dispute against its evidence, and the fixes like any new
 code, with a test behind every behaviour they add. What that round keeps is fixed and
 reviewed again, up to `fix_rounds` times before the menu asks you. Push and merge are

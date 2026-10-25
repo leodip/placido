@@ -783,13 +783,21 @@ def run_command(ctx: Context, name: str, command: str, log: Path, lane: Lane | N
 
 def gates(ctx: Context, rnd: Round) -> None:
     """The `[pr] gates`, once a round, every one of them whatever the others did: their
-    results are evidence for the reviewers, not a bar."""
+    results are evidence for the reviewers, not a bar. A round on a fix's commit carries
+    what the fix's check ran on that tree, and names what the fixer skipped and why."""
 
     run, names = ctx.run, ctx.settings.pr.gates
     if done(run.path, "pr.gates", rnd.number):
         return
+    fixed = gated_fix(run.path, rnd)
     results: dict[str, dict[str, Any]] = {}
     for name in names:
+        if name in fixed.get("gates", {}):
+            results[name] = {"exit": 0, "log": fixed["gates"][name], "fix": fixed["step"]}
+            continue
+        if name in fixed.get("skipped", {}):
+            results[name] = {"skipped": fixed["skipped"][name], "fix": fixed["step"], "last": last_ran(run.path, rnd, name)}
+            continue
         verify_host_paths(ctx, rnd, f"the {name} gate")
         status.show(run.path, status.text(status.WORKING, f"gate {name}"))
         command = config.gate_command(name, ctx.settings.commands)
@@ -802,9 +810,32 @@ def gates(ctx: Context, rnd: Round) -> None:
         seconds = round(time.monotonic() - began, 1)
         run.event("gate.end", gate=name, exit=code, seconds=seconds)
         changed = settle(ctx, rnd, f"the {name} gate")
-        results[name] = {"exit": code, "seconds": seconds, "changed": changed}
+        results[name] = {"exit": code, "seconds": seconds, "changed": changed, "log": str(log)}
     (rnd.folder / "gates.md").write_text(gates_text(rnd, results), encoding="utf-8")
-    run.event("pr.gates", round=rnd.number, results={n: r["exit"] for n, r in results.items()})
+    run.event("pr.gates", round=rnd.number, head=rnd.head,
+              results={n: r["exit"] for n, r in results.items() if "exit" in r},
+              skipped={n: r["skipped"] for n, r in results.items() if "skipped" in r})
+
+
+def gated_fix(run_dir: Path, rnd: Round) -> dict[str, Any]:
+    """The fix whose commit this round reviews: its check gated that very tree, so the
+    round carries its gates rather than run them again. {} when the round's head is
+    anything else, such as the contributor's or the user's own commit."""
+
+    if not rnd.here or rnd.previous is None:
+        return {}
+    return done(run_dir, "pr.fixed", rnd.previous, commit=rnd.head) or {}
+
+
+def last_ran(run_dir: Path, rnd: Round, name: str) -> dict[str, Any] | None:
+    """The latest earlier round that ran the gate, or carried it, and how it went."""
+
+    for event in reversed(list(runlog.read_events(run_dir))):
+        if event.get("event") == "pr.gates" and event["round"] < rnd.number \
+                and name in event.get("results", {}):
+            head = event.get("head") or round_by_number(run_dir, event["round"]).head
+            return {"round": event["round"], "head": head, "exit": event["results"][name]}
+    return None
 
 
 def last_gates(ctx: Context, rnd: Round, echo: TextIO) -> dict[str, int]:
@@ -846,10 +877,23 @@ def last_gates(ctx: Context, rnd: Round, echo: TextIO) -> dict[str, int]:
 def gates_text(rnd: Round, results: dict[str, dict[str, Any]]) -> str:
     if not results:
         return "# Gates\n\nThe project names no gates for pull requests.\n"
-    lines = ["# Gates", "", f"Placido ran these on {rnd.head[:12]}, each in the worktree, before the reviews.", ""]
+    carried = any("fix" in r for r in results.values())
+    lines = ["# Gates", "", f"Placido ran these on {rnd.head[:12]}, each in the worktree, before the reviews"
+             + (", or carries them from the fix that made this commit, whose check ran them on the same tree."
+                if carried else "."), ""]
     for name, result in results.items():
+        if "skipped" in result:
+            last = result["last"]
+            when = (f"it last ran in round {last['round']}, on {last['head'][:12]}, and"
+                    f" {'passed' if last['exit'] == 0 else 'FAILED'}" if last else "it has not run on this pull request")
+            lines.append(f"- **{name}:** not run: {result['fix']} skipped it, as its change cannot reach what"
+                         f" it checks: \"{result['skipped']}\". Weigh that reason; {when}.")
+            continue
+        if "fix" in result:
+            lines.append(f"- **{name}:** passed in {result['fix']}'s check, on this commit; log {result['log']}")
+            continue
         verdict = "passed" if result["exit"] == 0 else f"FAILED (exit {result['exit']})"
-        lines.append(f"- **{name}:** {verdict} in {result['seconds']}s; log {rnd.folder / 'gates' / f'{config.gate_log(name)}.log'}")
+        lines.append(f"- **{name}:** {verdict} in {result['seconds']}s; log {result['log']}")
         if result["changed"]:
             lines.append(
                 f"  It changed {', '.join(result['changed'])} in the worktree, which placido put back"

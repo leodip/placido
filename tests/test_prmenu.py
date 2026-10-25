@@ -849,6 +849,57 @@ class FixGatesTest(MenuTestCase):
             self.act("fix", rnd)
         self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD"), self.head)
 
+    def runs_of(self, gate: str) -> int:
+        return sum(1 for e in runlog.read_events(self.run.path) if e.get("event") == "gate.start" and e.get("gate") == gate)
+
+    def test_the_round_on_a_fix_carries_its_gates_rather_than_run_them_again(self):
+        reviewed = self.fixed()
+        self.assertEqual((self.runs_of("unit"), self.runs_of("lint")), (2, 2))  # round 1's and the fix's
+        fixed = runlog.last_event(self.run.path, "pr.fixed")
+        self.assertEqual(pr.done(self.run.path, "pr.gates", 2)["results"], {"unit": 0, "lint": 0})
+        text = (reviewed.folder / "gates.md").read_text()
+        self.assertIn(f"- **lint:** passed in {fixed['step']}'s check, on this commit; log"
+                      f" {self.run.path / 'steps' / fixed['step'] / 'gates' / 'lint.log'}", text)
+
+    def test_a_fix_may_skip_a_gate_beyond_the_slice_gates_with_its_reason(self):
+        self.runner.fix_skip = {"lint": "the fix changes a docstring"}
+        reviewed = self.fixed()
+        self.assertEqual(self.runner.problems, [])
+        self.assertEqual((self.runs_of("unit"), self.runs_of("lint")), (2, 1))
+        self.assertIn("lint, each one your change cannot reach", self.runner.calls[6]["task"])
+        gates = pr.done(self.run.path, "pr.gates", 2)
+        self.assertEqual((gates["results"], gates["skipped"]), ({"unit": 0}, {"lint": "the fix changes a docstring"}))
+        self.assertIn('skipped it, as its change cannot reach what it checks: "the fix changes a docstring".'
+                      f" Weigh that reason; it last ran in round 1, on {self.head[:12]}, and passed.",
+                      (reviewed.folder / "gates.md").read_text())
+        self.assertIn("Gates: unit pass · lint skipped by the fix", prmenu.summary(self.ctx, reviewed))
+
+    def test_a_slice_gate_is_never_skipped(self):
+        self.runner.fix_skip = {"unit": "nothing to test"}
+        with self.assertRaises(pr.PRStop):
+            self.act("fix", self.review())
+        self.assertIn("gate 'unit' cannot be skipped; the gates you may skip: lint.", self.runner.problems[0][1])
+        self.assertEqual(sh(self.worktree, "git", "rev-parse", "HEAD"), self.head)
+
+    def test_no_gate_is_skipped_after_a_merge_of_the_base(self):
+        rnd = self.review()
+        self.advance_main({"other.txt": "later\n"})
+        self.runner.fix_skip = {"lint": "the fix changes a docstring"}
+        with self.assertRaises(pr.PRStop):
+            self.act("fix", rnd)
+        self.assertIn("gate 'lint' cannot be skipped; the gates you may skip: none, this time.",
+                      self.runner.problems[0][1])
+
+    def test_a_contributor_s_push_on_the_fix_runs_every_gate(self):
+        self.runner.fix_skip = {"lint": "the fix changes a docstring"}
+        self.fixed()
+        fix = sh(self.worktree, "git", "rev-parse", "HEAD")
+        self.push_new_head({"greet.py": "print('theirs')\n"}, fix)
+        rnd = pragents.review(self.ctx)
+        self.assertEqual((rnd.number, rnd.here), (3, False))
+        self.assertEqual((self.runs_of("unit"), self.runs_of("lint")), (3, 2))
+        self.assertEqual(pr.done(self.run.path, "pr.gates", 3)["skipped"], {})
+
 
 class BaseMergeTest(MenuTestCase):
     """The base branch moved on after the pull request started from it."""

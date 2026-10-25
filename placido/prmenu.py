@@ -177,8 +177,9 @@ def summary(ctx: Context, rnd: Round) -> str:
     scan_text = "clear" if scanned.get("verdict") == "clear" else f"{scanned.get('concerns', '?')} concern(s), accepted by you"
     lines.append(f"Scan: {scan_text}" + (f" (round {first.number}'s)" if first.number != rnd.number else ""))
     gates = pr.done(run_dir, "pr.gates", rnd.number) or {}
-    if gates.get("results"):
-        shown = [f"{name} {'pass' if code == 0 else 'FAIL'}" for name, code in gates["results"].items()]
+    if gates.get("results") or gates.get("skipped"):
+        shown = [f"{name} {'pass' if code == 0 else 'FAIL'}" for name, code in gates.get("results", {}).items()]
+        shown += [f"{name} skipped by the fix" for name in gates.get("skipped", {})]
         changed = [e["after"] for e in pr.round_events(run_dir, "pr.tree_restored", rnd.number)
                    if e.get("after", "").endswith("gate")]
         lines.append("Gates: " + " · ".join(shown) + (f" (changed the tree: {', '.join(changed)})" if changed else ""))
@@ -906,11 +907,14 @@ def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: 
     )
     entry = {"id": f"pr-{ctx.pr.number}", "title": "review fixes", "gates": list(ctx.settings.pr.gates)}
     settings = replace(ctx.settings, mutations=0)
+    skippable = skippable_gates(ctx, rnd)
 
     def check(result: Path) -> list[str]:
         if implement.blocked(result) is not None:
             return []
-        problems = decisions.check(result.parent, run.path) or check_resolutions(result.parent / "resolutions.json", ids)
+        resolutions = result.parent / "resolutions.json"
+        problems = decisions.check(result.parent, run.path) or check_resolutions(resolutions, ids)
+        problems = problems or check_skips(resolutions, skippable)
         if problems:
             return problems
         host = pr.changed_files(wt, *ctx.settings.pr.host_paths) if ctx.settings.pr.host_paths else []
@@ -918,7 +922,7 @@ def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: 
             pr.approve_host_change(ctx, rnd, f"fix {attempt_no}")  # before the gates below run any of it
         if result.read_text(encoding="utf-8").strip().splitlines()[:1] == [NO_CHANGES]:
             return [f"the result says '{NO_CHANGES}', but the worktree has changes."] if pr.git(wt, "status", "--porcelain") else []
-        return implement.check(result, wt, head, entry, settings, ctx.env, run)
+        return implement.check(result, wt, head, gated(entry, skips(resolutions)), settings, ctx.env, run)
 
     name = f"r{rnd.number}-fix-{attempt_no}"
 
@@ -939,8 +943,13 @@ def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: 
     data = json.loads((step.path / "resolutions.json").read_text(encoding="utf-8"))
     counts = {k: sum(1 for r in data["resolutions"] if r.get("status") == k) for k in RESOLUTIONS}
     result = step.path / "result.md"
-    commit = None
+    commit, ran, skipped = None, {}, {}
     if result.read_text(encoding="utf-8").strip().splitlines()[:1] != [NO_CHANGES]:
+        # Every gate the check ran passed on the tree committed below, so the round that
+        # reviews the commit carries them instead of running them again.
+        skipped = skips(step.path / "resolutions.json")
+        ran = {g: str(step.path / "gates" / f"{config.gate_log(g)}.log")
+               for g in implement.gates_for(gated(entry, skipped), settings)}
         # The gates in the check ran the pull request's tests after the fixer's own check
         # of the host paths: whatever they wrote there must not ride into the commit.
         pr.verify_host_paths(ctx, rnd, "the fix's commit")
@@ -948,7 +957,8 @@ def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: 
         commit = _commit(wt, implement.message(result), run, rnd)
         if approved:
             run.event("pr.host_change_committed", round=rnd.number, commit=commit, files=approved)
-    run.event("pr.fixed", round=rnd.number, attempt=attempt_no, commit=commit, step=step.path.name, **counts)
+    run.event("pr.fixed", round=rnd.number, attempt=attempt_no, commit=commit, step=step.path.name,
+              gates=ran, skipped=skipped, **counts)
     pr.settle(ctx, rnd, f"fix {attempt_no}")
     print(f"\nfix {attempt_no}: {counts['fixed']} fixed, {counts['disputed']} disputed"
           + (f"; committed as {commit[:12]}, not pushed" if commit else "; no code changed"))
@@ -971,6 +981,44 @@ def check_resolutions(path: Path, ids: list[str]) -> list[str]:
         elif answer.get("status") not in RESOLUTIONS or not prcheck.texts(answer, "note"):
             problems.append(f"finding {finding_id} needs a status of {', '.join(RESOLUTIONS)} and a note.")
     return problems
+
+
+def skippable_gates(ctx: Context, rnd: Round) -> list[str]:
+    """The `[pr] gates` a fix may skip, each with a reason, when its change cannot reach
+    what the gate checks: all but the slice gates, which run on every fix. None after a
+    merge of the base, whose changes the fixer did not make and cannot vouch for."""
+
+    if pr.done(ctx.run.path, "pr.base_merged", rnd.number):
+        return []
+    return [g for g in ctx.settings.pr.gates if g not in ctx.settings.slice_gates]
+
+
+def check_skips(path: Path, skippable: list[str]) -> list[str]:
+    data, _ = prcheck.load(path)
+    asked = data.get("skip_gates", {}) if isinstance(data, dict) else {}
+    if not isinstance(asked, dict):
+        return ['resolutions.json\'s "skip_gates" must map a gate to the reason it can be skipped.']
+    problems = []
+    for gate, why in asked.items():
+        if gate not in skippable:
+            problems.append(
+                f"gate {gate!r} cannot be skipped; the gates you may skip: {', '.join(skippable) or 'none, this time'}."
+            )
+        elif not isinstance(why, str) or not why.strip():
+            problems.append(f"gate {gate!r} needs the reason it can be skipped.")
+    return problems
+
+
+def skips(path: Path) -> dict[str, str]:
+    """The gates a fixer skipped, and why; check_skips has passed on them."""
+
+    data, _ = prcheck.load(path)
+    asked = data.get("skip_gates", {}) if isinstance(data, dict) else {}
+    return dict(asked) if isinstance(asked, dict) else {}
+
+
+def gated(entry: dict[str, Any], skipped: dict[str, str]) -> dict[str, Any]:
+    return {**entry, "gates": [g for g in entry["gates"] if g not in skipped]}
 
 
 def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path) -> str:
@@ -1014,14 +1062,18 @@ def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path) -> str:
                " lands whole; dispute a conflict that cannot be settled that way."
                if files else f"Nothing in the branch conflicts with {ctx.pr.base}.")
         )
-    gates = ", ".join(ctx.settings.pr.gates) or "none"
+    gates = ", ".join(implement.gates_for({"gates": list(ctx.settings.pr.gates)}, ctx.settings)) or "none"
+    skippable = skippable_gates(ctx, rnd)
     host = ", ".join(ctx.settings.pr.host_paths) or "none"
     lines += [
         f"- **Paths that run on this machine:** {host}. Change them only when a finding needs it:"
         " the round after yours reviews the change in full, as it does the rest.",
         f"- **Gates:** {gates}. Placido runs them after you and commits only when they pass, so"
         " run only the narrow tests for what you change. Then a new round reviews the pull request"
-        " with your fixes in full, as it reviewed the contributor's head.",
+        " with your fixes in full, as it reviewed the contributor's head, on the gates' results.",
+        (f"- **Gates you may skip:** {', '.join(skippable)}, each one your change cannot reach, as the"
+         " pr-fix skill says, with the reason in resolutions.json's `skip_gates`."
+         if skippable else "- **Gates you may skip:** none; every gate runs."),
         decisions.prompt_line(ctx.run.path, pragents.OVER),
         f"- **Write:** {folder / 'resolutions.json'} and the result file.",
     ]

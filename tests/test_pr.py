@@ -109,6 +109,7 @@ class FakeRunner:
         self.final: dict | None = None  # the judge's final.json; None: one built from the findings
         self.during: dict[str, Any] = {}  # step name -> something the agent does to the worktree
         self.fix_change = True
+        self.fix_skip: dict[str, str] = {}  # the gates the fixer skips, and why
         self.resolution: str | None = "print('hi there, all')\n"  # what a conflict resolves to; None: left as is
         self.decided: dict | None = None  # the user's decisions.json; None: every one as recommended
         self.drafts: dict[str, str] = {}  # what the decide step writes over its copies of the drafts
@@ -246,7 +247,7 @@ class FakeRunner:
         listed = sorted((self.run.path / "rounds").glob("*/fix-findings-*.json"), key=lambda p: p.stat().st_mtime)
         ids = [f["id"] for f in json.loads(listed[-1].read_text())["findings"]] if listed else ["F1"]
         resolutions = [{"id": i, "status": "fixed", "note": "changed greet.py, test added"} for i in ids]
-        (folder / "resolutions.json").write_text(json.dumps({"resolutions": resolutions}))
+        (folder / "resolutions.json").write_text(json.dumps({"resolutions": resolutions, "skip_gates": self.fix_skip}))
         if self.fix_change:
             (self.worktree / "greet.py").write_text(f"print('hello r{self.number} {kind}')\n")
             (folder / "result.md").write_text("Greet properly\n\nThe review asked for it.\n\n## Evidence\n- unit passed\n")
