@@ -775,7 +775,7 @@ def run_command(ctx: Context, name: str, command: str, log: Path, lane: Lane | N
     began = time.monotonic()
     log.parent.mkdir(parents=True, exist_ok=True)
     doing = f"{name} running" if lane.primary else f"{name} of lane {lane.code} running"
-    code = proc.run_shell(command, lane.worktree, lane.env, log, lambda s: ctx.run.progress(doing, s))
+    code = proc.run_shell(command, lane.worktree, lane.env, log, lambda s, said: ctx.run.progress(doing, s, said))
     ctx.run.event(f"{name}.end", exit=code, seconds=round(time.monotonic() - began, 1),
                   **({} if lane.primary else {"lane": lane.code}))
     return code
@@ -806,7 +806,7 @@ def gates(ctx: Context, rnd: Round) -> None:
         log = rnd.folder / "gates" / f"{config.gate_log(name)}.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         code = proc.run_shell(command, ctx.worktree, ctx.env, log,
-                              lambda s, n=name: run.progress(f"gate {n} running", s))
+                              lambda s, said, n=name: run.progress(f"gate {n} running", s, said))
         seconds = round(time.monotonic() - began, 1)
         run.event("gate.end", gate=name, exit=code, seconds=seconds)
         changed = settle(ctx, rnd, f"the {name} gate")

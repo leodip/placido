@@ -468,7 +468,7 @@ def run_project_command(run: runlog.Run, name: str, command: str, cwd: Path, env
 
     run.event(f"{name}.start", command=command)
     began = time.monotonic()
-    code = proc.run_shell(command, cwd, env, run.path / f"{name}.log", lambda s: run.progress(f"{name} running", s))
+    code = proc.run_shell(command, cwd, env, run.path / f"{name}.log", lambda s, said: run.progress(f"{name} running", s, said))
     run.event(f"{name}.end", exit=code, seconds=round(time.monotonic() - began, 1))
     return code
 

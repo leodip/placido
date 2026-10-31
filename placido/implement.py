@@ -139,7 +139,7 @@ def run_gates(
         run.event("gate.start", gate=name, command=command)
         began = time.monotonic()
         log = folder / f"{config.gate_log(name)}.log"
-        code = proc.run_shell(command, worktree, env, log, lambda s, n=name: run.progress(f"gate {n} running", s))
+        code = proc.run_shell(command, worktree, env, log, lambda s, said, n=name: run.progress(f"gate {n} running", s, said))
         run.event("gate.end", gate=name, exit=code, seconds=round(time.monotonic() - began, 1))
         if code != 0:
             problems.append(f"gate {name} (`{command}`) failed with exit {code}; its output is in {log}.")
