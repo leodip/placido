@@ -34,11 +34,16 @@ class Failure:
 # Checked in this order: a message naming a limit and a 429 is a quota, not a blip.
 TEXT_SIGNALS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # The model cannot run for this login at all, as codex's gpt-daybreak-blue-latest
-    # once a ChatGPT account no longer could (2026-10-05): the next agent may.
+    # once a ChatGPT account no longer could (2026-10-05): the next agent may. Also a
+    # model that cannot run in a mode codex has on, as gpt-6.1-sol under Daybreak on
+    # #707 (2026-11-01): the TUI says "Daybreak support for model … could not be
+    # confirmed by the connected server", `codex exec` says "Daybreak is unavailable for
+    # model …; turn it off or choose a compatible model".
     ("unavailable", (
         "is not supported when using", "model is not supported", "model_not_found", "model not found",
         "does not exist or you do not have access", "unknown model", "invalid model",
         "not available on your plan", "you do not have access to the model",
+        "could not be confirmed by the connected server", "choose a compatible model",
     )),
     ("auth", (
         "/login", "log in to", "log into", "sign in again", "not authenticated", "not logged in",

@@ -216,6 +216,12 @@ class LoopTest(LoopTestCase):
         self.runner.fail_review = True
         self.assertEqual(self.loop().outcome, "failed")
 
+    def test_summary_says_when_no_round_finished(self):
+        # #707: the first reviewer failed, and review.md showed an empty Rounds heading.
+        self.runner.fail_review = True
+        text = review.summary(self.loop(), self.run.path)
+        self.assertIn("# Review: failed\n\n## Rounds\n\n- No round finished.\n", text)
+
     def test_summary(self):
         self.runner.reviews = [{"findings": [finding(1, "minor")]}]
         self.runner.fixes = [{"answers": {"R1-1": "deferred"}}]

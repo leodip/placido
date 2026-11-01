@@ -761,7 +761,7 @@ class NamesTest(unittest.TestCase):
         self.assertEqual(
             step.launch_args(AgentSpec("codex", "gpt-6.1-sol", "max", "fast")),
             ["-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=max", "-c", "service_tier=fast",
-             "-c", "features.memories=false", "-c", "check_for_update_on_startup=false",
+             "-c", "features.memories=false", "-c", "check_for_update_on_startup=false", "-c", "daybreak=false",
              "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust"],
         )
         self.assertEqual(
@@ -782,6 +782,14 @@ class NamesTest(unittest.TestCase):
         for confined in (None, Path("/s")):
             args = step.launch_args(AgentSpec("codex", "gpt-6.1-sol", "max"), confined)
             self.assertEqual(args[args.index("check_for_update_on_startup=false") - 1], "-c")
+
+    def test_codex_runs_without_the_users_daybreak(self):
+        # On #707 the user's own `daybreak = true` reached the reviewer, and the server
+        # refused gpt-6.1-sol under it.
+        for confined in (None, Path("/s")):
+            args = step.launch_args(AgentSpec("codex", "gpt-6.1-sol", "max"), confined)
+            self.assertEqual(args[args.index("daybreak=false") - 1], "-c")
+        self.assertNotIn("daybreak=false", step.launch_args(AgentSpec("claude", "opus", "high")))
 
 
 class ActiveRunTest(unittest.TestCase):

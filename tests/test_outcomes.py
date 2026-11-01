@@ -91,6 +91,14 @@ class CodexTest(TranscriptCase):
         }))
         self.assertEqual(found.kind, "unavailable")
 
+    def test_a_model_codex_cannot_run_in_its_current_mode_is_unavailable(self):
+        # #707, 2026-11-01: the user's Daybreak was on, and the review's gpt-6.1-sol cannot
+        # run under it. Codex's exec words it this way, its TUI as in the screen test.
+        found = self.failure("codex", codex_end({
+            "message": "Daybreak is unavailable for model gpt-6.1-sol; turn it off or choose a compatible model",
+        }))
+        self.assertEqual(found.kind, "unavailable")
+
     def test_other_policies_are_refusals(self):
         for info in ("bio_policy", "misalignment_policy_violation", "invalid_prompt"):
             found = self.failure("codex", codex_end({"message": "Invalid request.", "codex_error_info": info}))
@@ -309,6 +317,18 @@ class ScreenTest(unittest.TestCase):
         screen = "• Ran tests\n\n■ You’ve hit your usage limit. Try again at 3:41 PM.\n\n› \n"
         found = outcomes.screen_failure(screen, NOW)
         self.assertEqual((found.kind, found.resets_at), ("quota", at(15, 41)))
+
+    def test_codex_model_unavailable_in_its_mode(self):
+        # #707's reviewer screen, 2026-11-01, as placido saved it.
+        screen = (
+            "• Daybreak is on for new turns.\n\n\n"
+            "› Read /runs/x/steps/05-review-1/prompt.md and do what it asks.\n\n\n"
+            "■ Daybreak support for model gpt-6.1-sol could not be confirmed by the connected server. "
+            "Use /daybreak to turn it off, or choose a compatible model and server.\n" + "\n" * 40 +
+            "› Ask Codex to do anything\n\n  GPT-6.1-Sol max Fast · ~/wt · placido/707 · Co…\n"
+            "  ? for shortcuts                                    ⚠ 2 warnings · f2 to view\n"
+        )
+        self.assertEqual(outcomes.screen_failure(screen, NOW).kind, "unavailable")
 
     def test_codex_refusal_card(self):
         found = outcomes.screen_failure("ⓘ This content can’t be shown\nWe take extra care with some requests.\n")

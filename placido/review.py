@@ -531,6 +531,8 @@ def summary(account: Review, run_dir: Path) -> str:
     lines = [f"# Review: {account.outcome}", "", "## Rounds", ""]
     for entry in account.rounds:
         lines.append(f"- {_round_line(entry)}")
+    if not account.rounds:
+        lines.append("- No round finished.")
     findings = [f for entry in account.rounds for f in entry["findings"]]
     if findings:
         lines += ["", "## Findings", ""]

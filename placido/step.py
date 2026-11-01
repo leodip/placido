@@ -46,6 +46,25 @@ NO_UPDATE_PROMPT = {
     "pi": [],
 }
 
+# Decided 2026-11-01: codex runs the model placido names, in no mode the user turned on
+# for their own sessions. On #707 the user had switched Daybreak on in an interactive
+# codex (it writes `daybreak = true` to ~/.codex/config.toml), every codex placido
+# started read that file, and the server refused the review's gpt-6.1-sol under
+# Daybreak. Measured with codex 0.166.0: with that file, `-c daybreak=false` answered.
+NO_USER_MODES = {
+    "claude": [],
+    "codex": ["-c", "daybreak=false"],
+    "pi": [],
+}
+
+
+def quiet_args(agent: str) -> list[str]:
+    """Flags that keep an agent to placido's settings: no memory, no update prompt, and
+    none of the modes the user switched on for their own sessions."""
+
+    return [*NO_MEMORY[agent], *NO_UPDATE_PROMPT[agent], *NO_USER_MODES[agent]]
+
+
 INSTRUCTION = "Read {prompt} and do what it asks."
 
 FOOTER = """
@@ -165,7 +184,7 @@ class StepResult:
 
 
 def launch_args(spec: AgentSpec, confined_to: Path | None = None, reads: tuple[Path, ...] = ()) -> list[str]:
-    quiet = [*NO_MEMORY[spec.agent], *NO_UPDATE_PROMPT[spec.agent]]
+    quiet = quiet_args(spec.agent)
     if confined_to is not None:
         return [*spec.args(), *quiet, *confined_args(spec.agent, confined_to, reads)]
     return [*spec.args(), *quiet, *UNATTENDED[spec.agent]]
