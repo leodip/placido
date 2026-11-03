@@ -46,6 +46,10 @@ choice.** Assume rather than ask only when all four hold:
    property. Those are always questions, however obvious they look.
 4. It is cheap to reverse later.
 
+**Keeping what is there is never an assumption when a better end state is within
+reach.** When a cleaner structure or the established practice would change what works
+today, that is a question, and the better end state is your recommendation.
+
 **What the issue leaves open on purpose is never an assumption.** When the issue
 says a choice is not made yet, or tells a later step what to do ("the implementer
 must ask the user which wording to use"), record it as a decision addressed to that
@@ -67,10 +71,18 @@ and hides the context and your recommendation. Each question has this shape:
 and what happens today. The user has not read the code you just read.
 
 **Options:** each option on the same axes, in the same order, and a line for what
-does not differ between them.
+does not differ between them. Say what each option breaks, and for whom.
 
 **Recommendation:** your answer first, then the reasoning.
 ```
+
+**Recommend the best end state.** The user wants the cleanest result: the better
+structure, the established practice, the code they would rather maintain, over the
+smallest change, even when it takes more work. Weigh options by where the code ends
+up, not by how little moves. A breaking change does not count against an option on its
+own: name it, say who it breaks and what upgrading asks of them, and still recommend
+the option when it leads to the better end state. The user decides every breaking
+change; your recommendation says which one is worth it.
 
 1. **Root of the dependency tree first.** Ask what other questions depend on before
    the questions that depend on it.
@@ -84,12 +96,12 @@ does not differ between them.
    the verified facts, and ask the narrower question that remains.
 5. **Ask adjacent work as work.** Each adjacent problem and open issue is a question:
    fold it in, draft it as a follow-up, or drop it, with its size and your
-   recommendation. Recommend folding in when it is small and close, unless it would
-   change the nature or the risk of this change. What is folded in is part of the
-   agreement: decide it, slice it, and list it under `## Folded in`. A draft is a
-   `followup-<slug>.md` beside the agreement, complete enough to file unedited, in
-   this shape (placido builds the command that files it from the header lines, and
-   posts every draft on the pull request for the user to file or not):
+   recommendation. Recommend folding in when it is close, even when it adds some
+   work, unless it would change the nature or the risk of this change. What is folded
+   in is part of the agreement: decide it, slice it, and list it under `## Folded in`.
+   A draft is a `followup-<slug>.md` beside the agreement, complete enough to file
+   unedited, in this shape (placido builds the command that files it from the header
+   lines, and posts every draft on the pull request for the user to file or not):
 
    ```
    # <issue title>
