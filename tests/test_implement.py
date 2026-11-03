@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from placido import config, implement, mutate, proc, runlog, spec
+from placido import config, decisions, implement, mutate, proc, runlog, spec
 
 SLICES = [
     {"id": 1, "title": "Prefactor", "delivers": "a", "blocked_by": [], "gates": []},
@@ -209,6 +209,58 @@ class CheckTest(SliceTestCase):
     def test_mutations_off(self):
         self.settings = settings(self.CONFIG.replace("mutations = 1", "mutations = 0"))
         (self.repo / "feature.txt").write_text("done\n")
+        self.assertEqual(self.check(), [])
+
+
+class DecidedGatesTest(SliceTestCase):
+    """#718: a decision about the slice changes its gates in the same attempt."""
+
+    def decide(self, line: str) -> None:
+        decisions.path(self.run.path).write_text(
+            f"## D1 · {self.step.name} · 2026-11-03\n**Question:** q\n**Decision:** d\n**Why:** w\n"
+            f"**Gates:** {line}\n"
+        )
+
+    def test_the_decided_gates_replace_the_agreements(self):
+        (self.repo / "feature.txt").write_text("done\n")
+        self.kill()
+        self.settings = settings(self.CONFIG + '[commands.race]\nrun = "echo raced"\n')
+        self.decide("`race`")
+        self.assertEqual(self.check(), [])
+        ends = [e["gate"] for e in runlog.read_events(self.run.path) if e["event"] == "gate.end"]
+        self.assertEqual(ends, ["unit", "race"])  # data, the agreement's, no longer runs
+        decided = [e for e in runlog.read_events(self.run.path) if e["event"] == "slice.gates_decided"]
+        self.assertEqual([(e["slice"], e["decision"], e["gates"]) for e in decided], [(2, 1, ["race"])])
+        text = implement.prompt(self.run.path, self.repo, SLICES[1], self.settings)
+        self.assertIn("**Gates for this slice:** unit, race.", text)
+
+    def test_a_decided_gate_must_be_a_project_command(self):
+        (self.repo / "feature.txt").write_text("done\n")
+        self.kill()
+        self.decide("`race`")
+        (problem,) = self.check()
+        self.assertIn("decision D1 sets gate 'race', which is not a project command (commands: unit, data)", problem)
+        self.assertNotIn("gate.start", [e["event"] for e in runlog.read_events(self.run.path)])
+
+
+class SealGuardTest(SliceTestCase):
+    """#718: an implementer edited the sealed slices and rewrote the seal to match."""
+
+    def test_a_changed_sealed_file_is_put_back_and_rejected(self):
+        folder = spec.issue_dir(self.run.path)
+        (folder / "agreement.md").write_text("# Agreement\n")
+        (folder / "slices.json").write_text('{"slices": []}\n')
+        spec.seal(folder, self.run)
+        sealed = (folder / "seal.json").read_text()
+        (folder / "slices.json").write_text('{"slices": [{"gates": ["race"]}]}\n')
+        (folder / "seal.json").write_text("{}\n")
+        (self.repo / "feature.txt").write_text("done\n")
+        self.kill()
+        (problem,) = self.check()
+        self.assertIn("you changed the sealed slices.json, seal.json; placido put back", problem)
+        self.assertEqual((folder / "slices.json").read_text(), '{"slices": []}\n')
+        self.assertEqual((folder / "seal.json").read_text(), sealed)
+        self.assertTrue(spec.sealed(folder))
         self.assertEqual(self.check(), [])
 
 

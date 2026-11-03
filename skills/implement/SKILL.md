@@ -33,7 +33,9 @@ the code as it is now, and find every place it touches rather than guess.
 - **Never commit,** amend, push, or switch branches. Placido commits the slice after
   checking it, using the message in your result.
 - **Run every gate your prompt lists before you finish:** placido runs them again
-  after you, and commits only when they pass.
+  after you, and commits only when they pass. A gate that cannot run here, whatever
+  the code does (a tool or setting this environment lacks), is a question for the
+  user, not something to work around.
 - **Run commands in the foreground and wait for them,** however long they take, and
   do not end your turn while a background command or monitor runs: placido reads the
   end of your turn as the end of your work.
@@ -114,5 +116,15 @@ answers here, in this conversation, and may ask you things first. Once they have
 decided, append the decision to the decisions file your prompt names, as the next
 entry: `## D<n> · <your step folder's name> · <date>`, then `**Question:**`,
 `**Decision:**` (the user's answer, in their words where you can), and `**Why:**`.
-Then finish the slice under the decision and write your result again, as normal. A
-decision overrides the agreement where they differ; never edit the agreement.
+When the decision changes this slice's gates, add a line after `**Why:**` listing
+the slice's extra gates as they stand from now on (the project's own slice gates
+always run), each in backticks, or `none`:
+
+```markdown
+**Gates:** `unit --race`, `lint`
+```
+
+Placido runs those instead of the agreement's, from your next result on. Then finish
+the slice under the decision and write your result again, as normal. A decision
+overrides the agreement where they differ. **Never edit the agreement, the slices, or
+the seal:** placido puts them back and rejects the result.

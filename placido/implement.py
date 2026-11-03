@@ -63,16 +63,43 @@ def slice_results(run_dir: Path) -> list[Path]:
     return found
 
 
-def gates_for(entry: dict[str, Any], settings: config.Config) -> list[str]:
+def gates_for(entry: dict[str, Any], settings: config.Config, run_dir: Path | None = None) -> list[str]:
+    """The project's slice gates, then the slice's own: the agreement's, or those the
+    latest decision about the slice set, when run_dir is given."""
+
+    extra = entry.get("gates", [])
+    decided = decisions.gates(run_dir, entry["id"]) if run_dir is not None and "id" in entry else None
+    if decided is not None and not decided.problem:
+        extra = decided.gates
     names = list(settings.slice_gates)
-    names += [g for g in entry.get("gates", []) if g not in names]
+    names += [g for g in extra if g not in names]
     return names
+
+
+def decided_gates_problems(entry: dict[str, Any], settings: config.Config, run_dir: Path) -> list[str]:
+    """What is wrong with the gates a decision set for the slice, if one did."""
+
+    decided = decisions.gates(run_dir, entry["id"])
+    if decided is None:
+        return []
+    if decided.problem:
+        return [decided.problem]
+    problems = []
+    for gate in decided.gates:
+        bad = config.unknown_command(gate, settings.commands)
+        if bad is not None:
+            known = ", ".join(settings.commands) or "none"
+            problems.append(
+                f"decision D{decided.decision} sets gate {gate!r}, which is not a project command"
+                f" (commands: {known})."
+            )
+    return problems
 
 
 def prompt(run_dir: Path, worktree: Path, entry: dict[str, Any], settings: config.Config) -> str:
     folder = spec.issue_dir(run_dir)
     notes = worktree / NOTES
-    gates = gates_for(entry, settings)
+    gates = gates_for(entry, settings, run_dir)
     lines = [
         f"# Implement slice {entry['id']}: {entry['title']}",
         "",
@@ -154,7 +181,14 @@ def check(
 
     if blocked(result) is not None:
         return []
-    problems = decisions.check(result.parent, run.path)
+    restored = spec.restore(spec.issue_dir(run.path), run)
+    problems = [
+        f"you changed the sealed {', '.join(restored)}; placido put back the sealed version. Leave"
+        " the agreement as sealed: record what the user decided in the decisions, which win over"
+        " it, and a decision about this slice's gates with a **Gates:** line."
+    ] if restored else []
+    problems += decisions.check(result.parent, run.path)
+    problems += decided_gates_problems(entry, settings, run.path)
     subject = message(result).splitlines()[0].strip() if message(result) else ""
     if not subject:
         problems.append("the result has no commit subject on its first line.")
@@ -182,7 +216,10 @@ def check(
             )
     if problems:
         return problems
-    return run_gates(gates_for(entry, settings), settings, worktree, result.parent, env, run)
+    decided = decisions.gates(run.path, entry["id"])
+    if decided is not None:
+        run.event("slice.gates_decided", slice=entry["id"], decision=decided.decision, gates=decided.gates)
+    return run_gates(gates_for(entry, settings, run.path), settings, worktree, result.parent, env, run)
 
 
 def commit(worktree: Path, result: Path, entry: dict[str, Any], run: runlog.Run) -> str:

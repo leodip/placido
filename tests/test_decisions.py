@@ -35,6 +35,33 @@ class DecisionsTest(unittest.TestCase):
         self.record(3, self.folder.name)
         self.assertEqual(decisions.check(self.folder, self.run.path), [])
 
+    def gates(self, n: int, step: str, line: str) -> None:
+        with decisions.path(self.run.path).open("a") as out:
+            out.write(ENTRY.format(n=n, step=step).rstrip("\n") + f"\n**Gates:** {line}\n\n")
+
+    def test_no_decision_sets_gates(self):
+        self.record(1, "03-implement-slice-2")
+        self.assertIsNone(decisions.gates(self.run.path, 2))
+
+    def test_the_latest_decision_about_the_slice_sets_its_gates(self):
+        # #718: slice 4's sealed race gate could not run, and the user chose the race tier.
+        self.gates(1, "05-implement-slice-4", "`unit --race`")
+        self.gates(2, "06-implement-slice-12", "`lint`")  # slice 12, not slice 2 or 4
+        self.record(3, "07-implement-slice-4")  # a decision without gates changes nothing
+        self.assertEqual(decisions.gates(self.run.path, 4), decisions.Gates(1, ["unit --race"]))
+        self.gates(4, "08-implement-slice-4", "`exec 'go test ./x/...'`, `lint`.")
+        self.assertEqual(decisions.gates(self.run.path, 4), decisions.Gates(4, ["exec 'go test ./x/...'", "lint"]))
+        self.assertIsNone(decisions.gates(self.run.path, 2))
+
+    def test_none_leaves_only_the_project_gates(self):
+        self.gates(1, "05-implement-slice-4", "none.")
+        self.assertEqual(decisions.gates(self.run.path, 4), decisions.Gates(1, []))
+
+    def test_a_gate_without_backticks_is_a_problem(self):
+        self.gates(1, "05-implement-slice-4", "unit --race")
+        found = decisions.gates(self.run.path, 4)
+        self.assertIn("D1's **Gates:** line names no gate", found.problem)
+
     def test_prompt_line(self):
         self.assertIn("none yet", decisions.prompt_line(self.run.path))
         self.record(1, "03-implement-slice-2")

@@ -15,18 +15,33 @@ the decision, and why:
     **Question:** Which session store should logout clear?
     **Decision:** Both; the Redis one is authoritative.
     **Why:** The cookie store is a cache that can go stale.
+
+A decision about a slice may also change the gates the agreement gave it, with a line
+listing the slice's extra gates as they stand from then on, each in backticks, or
+`none`. Placido runs those instead of the sealed ones, in the same attempt and in any
+later one, so the agreement stays sealed:
+
+    **Gates:** `unit --race`, `lint`
+
+Decided 2026-11-03: on #718 slice 4's sealed gate could not run (`go test -race` in a
+devcontainer that pins cgo off). The user chose another gate, but nothing could carry
+the choice to placido, so the implementer edited the sealed slices and their seal by
+hand, and the run still ran the old gate from memory until it was restarted.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from placido import spec
 
 FILE = "decisions.md"
 HEADING = re.compile(r"^## D(\d+) · (\S+)", re.MULTILINE)
+GATES = re.compile(r"^\*\*Gates:\*\*(.*)$", re.MULTILINE)
 QUESTION = "question-{n}.md"  # an asked question, kept in the step folder
 
 
@@ -40,6 +55,39 @@ def entries(run_dir: Path) -> list[tuple[int, str]]:
     file = path(run_dir)
     text = file.read_text(encoding="utf-8") if file.is_file() else ""
     return [(int(number), step) for number, step in HEADING.findall(text)]
+
+
+@dataclass(frozen=True)
+class Gates:
+    """A slice's extra gates as a decision set them."""
+
+    decision: int
+    gates: list[str]
+    problem: str = ""  # why the line cannot be read, if it cannot
+
+
+def gates(run_dir: Path, slice_id: Any) -> Gates | None:
+    """The extra gates the latest decision about this slice set, or None if none did.
+    A decision is about the slice when the step that recorded it implements it."""
+
+    file = path(run_dir)
+    text = file.read_text(encoding="utf-8") if file.is_file() else ""
+    found = None
+    marks = list(HEADING.finditer(text))
+    for mark, following in zip(marks, [*marks[1:], None]):
+        if not mark.group(2).endswith(f"-implement-slice-{slice_id}"):
+            continue
+        line = GATES.search(text, mark.end(), following.start() if following else len(text))
+        if line is None:
+            continue
+        listed = re.findall(r"`([^`]+)`", line.group(1))
+        bare = line.group(1).strip().rstrip(".").lower()
+        problem = "" if listed or bare == "none" else (
+            f"decision D{mark.group(1)}'s **Gates:** line names no gate. Write each gate in"
+            " backticks, as `unit --race`, `lint`, or write none."
+        )
+        found = Gates(int(mark.group(1)), [g.strip() for g in listed], problem)
+    return found
 
 
 def asked(folder: Path) -> int:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,10 @@ from placido import config, runlog
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "spec" / "SKILL.md"
 NOTES = Path(".placido") / "notes" / "spec.md"
 SEALED_FILES = ("agreement.md", "slices.json")
+# Placido's own copy of the sealed files and the seal, so a step that edits them can be
+# put back. Decided 2026-11-03: on #718 an implementer, with the user's leave, edited
+# slices.json and rewrote its hash in seal.json, so the seal no longer showed it.
+SEALED_COPY = ".sealed"
 SECTIONS = ("## Problem", "## Solution", "## Decisions", "## Seams", "## Slices")
 # When the issue's goal is a number, the agreement measures it: each implementer reports
 # it before and after, the reviewer holds the change to the target, and the pull request
@@ -158,8 +163,32 @@ def seal(folder: Path, run: runlog.Run) -> dict[str, Any]:
         "files": {name: _digest(folder / name) for name in SEALED_FILES},
     }
     (folder / "seal.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    copy = folder / SEALED_COPY
+    copy.mkdir(exist_ok=True)
+    for name in (*SEALED_FILES, "seal.json"):
+        shutil.copyfile(folder / name, copy / name)
     run.event("spec.sealed", **record["files"])
     return record
+
+
+def restore(folder: Path, run: runlog.Run) -> list[str]:
+    """Put back each sealed file, or the seal, that differs from placido's copy; returns
+    their names. An agreement sealed before placido kept a copy is left as it is."""
+
+    copy = folder / SEALED_COPY
+    restored = []
+    for name in (*SEALED_FILES, "seal.json"):
+        kept = copy / name
+        if not kept.is_file():
+            continue
+        here = folder / name
+        if here.is_file() and here.read_bytes() == kept.read_bytes():
+            continue
+        shutil.copyfile(kept, here)
+        restored.append(name)
+    if restored:
+        run.event("seal.restored", files=restored)
+    return restored
 
 
 def sealed(folder: Path) -> bool:

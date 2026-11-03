@@ -180,6 +180,16 @@ class SealTest(SpecTestCase):
         (self.folder / "agreement.md").write_text(AGREEMENT + "\nA late edit.\n")
         self.assertFalse(spec.sealed(self.folder))
 
+    def test_restore_puts_back_what_a_step_changed(self):
+        self.write()
+        self.assertEqual(spec.restore(self.folder, self.run), [])  # nothing sealed, nothing kept
+        spec.seal(self.folder, self.run)
+        self.assertEqual(spec.restore(self.folder, self.run), [])
+        (self.folder / "agreement.md").write_text(AGREEMENT + "\nA late edit.\n")
+        self.assertEqual(spec.restore(self.folder, self.run), ["agreement.md"])
+        self.assertEqual((self.folder / "agreement.md").read_text(), AGREEMENT)
+        self.assertIn("seal.restored", [e["event"] for e in runlog.read_events(self.run.path)])
+
     def test_load_slices(self):
         self.write()
         self.assertEqual([s["title"] for s in spec.load_slices(self.folder)], ["Accept several names", "Reject empty names"])
