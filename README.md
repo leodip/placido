@@ -35,8 +35,11 @@ is posted, pushed, or merged until you pick it (see
 2. **Interview.** `placido spec` opens an agent that reads the issue and the code,
    then asks you one question at a time until no decision is left open. It also looks
    for adjacent work (problems next to the change, open issues on the same area) and
-   asks whether to fold it in. The result is an *agreement*, sealed, with the work
-   cut into *slices*. When the issue's goal is a number (faster, smaller, fewer), the
+   asks whether to fold it in. The result is an *agreement* with the work cut into
+   *slices*. Before it is sealed, an agent from another vendor reads it against the
+   code: claims about today's code that are not so, precedents copied wrongly, and
+   decisions that contradict each other come back to the interview while you are
+   still there, rather than stopping the run at night. When the issue's goal is a number (faster, smaller, fewer), the
    agreement makes it a *benchmark*: a command, today's baseline, and a target. Each
    slice reports the number before and after, the review holds the change to the
    target, and the pull request shows how it moved.
@@ -195,7 +198,7 @@ conventionally read, so a project set up for other agent tools works too:
 - `AGENTS.md` or `CLAUDE.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`,
   `GLOSSARY.md`, and ADRs in `docs/adr/`: read by every role.
 - `.placido/notes/<role>.md`, optional: what only placido's agents need, per role
-  (`spec`, `implement`, `review`, `fix`, `retro`), such as how to run the database
+  (`spec`, `vet`, `implement`, `review`, `fix`, `retro`), such as how to run the database
   tests in this project.
 
 ### Agents and fallbacks
@@ -205,6 +208,7 @@ Each role has an agent, model, and effort, and a fallback chain:
 | Role | Default |
 |---|---|
 | `spec` (the interview) | claude, Opus, xhigh effort |
+| `vet` (checks the agreement against the code before it is sealed) | codex, gpt-6.1-sol, xhigh, fast tier |
 | `implement` | claude, Opus, high |
 | `review` | codex, gpt-6.1-sol, max, fast tier |
 | `fix` | as `implement` |

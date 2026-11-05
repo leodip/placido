@@ -232,10 +232,16 @@ Then write `slices.json`, the same slices for placido to read:
 beyond the project's slice gates, each a command's name with the arguments its
 description asks for, if any, after it: `"data mysql"`.
 
+Before the result file, give the user a two-line summary (what will be built, in how
+many slices) and tell them what comes next: another agent checks the agreement
+against the code, in a tab of its own, which takes some minutes, and anything it
+finds comes back here for them before the agreement is sealed.
+
 Finally, write the result file your prompt names: one line saying the agreement and
 slices are written, with the number of decisions and slices. Placido then checks the
-files and seals the agreement. If it reports problems, fix the files and write the
-result file again.
+files, and once they pass, has the agreement checked against the code. If it reports
+problems, settle them as its message says, with the user where a decision moves, and
+write the result file again. Placido seals the agreement when nothing is left.
 
-**Done when** both files are written, the result file says so, and the user has a
-two-line summary: what will be built, in how many slices.
+**Done when** both files are written, the result file says so, the check's findings
+are settled, and the user has the summary.

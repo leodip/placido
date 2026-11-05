@@ -15,7 +15,7 @@ from typing import Any
 AGENTS = ("claude", "codex", "pi")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TIERS = ("fast", "default")
-ROLES = ("spec", "implement", "review", "fix", "retro", "scan", "judge", "decide")
+ROLES = ("spec", "vet", "implement", "review", "fix", "retro", "scan", "judge", "decide")
 
 DEFAULT_MODELS = {"claude": "opus", "codex": "gpt-6.1-sol", "pi": "deepseek/deepseek-v4.1-flash"}
 
@@ -25,6 +25,10 @@ DEFAULTS: dict[str, Any] = {
     "gates": {"slice": [], "final": [], "last": []},
     "roles": {
         "spec": {"agent": "claude", "model": "opus", "effort": "xhigh"},
+        # Reads the agreement against the code before it is sealed, from another vendor
+        # than the interview's, at xhigh rather than max since the user waits on it at the
+        # end of the interview (decided 2026-11-05, after #783).
+        "vet": {"agent": "codex", "model": "gpt-6.1-sol", "effort": "xhigh", "tier": "fast"},
         "implement": {"agent": "claude", "model": "opus", "effort": "high"},
         "review": {"agent": "codex", "model": "gpt-6.1-sol", "effort": "max", "tier": "fast"},
         # `placido pr`: the scan reads an outside contributor's pull request before any of

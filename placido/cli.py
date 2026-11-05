@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from placido import __version__, checks, config, doctor, driver, followups, github, implement, mutate, pr, pragents, prgh, prmenu, report, review, runlog, spec, start, status, step, summary
+from placido import __version__, checks, config, doctor, driver, followups, github, implement, mutate, pr, pragents, prgh, prmenu, report, review, runlog, spec, start, status, step, summary, vet
 from placido import close as closing
 from placido import retro as retrospect
 from placido.herdr import Herdr, HerdrError
@@ -157,12 +157,12 @@ def cmd_spec(args: argparse.Namespace) -> int:
         return 1
     run, runner = _runner(path, created, settings)
     _log_override(run, args, agent)
-    task = spec.prompt(path, Path(created["path"]), settings)
+    worktree = Path(created["path"])
+    task = spec.prompt(path, worktree, settings)
+    vetter = settings.roles["vet"].agent
+    check = vet.spec_check(folder, settings, lambda: vet.vet(runner, vetter, path, worktree))
     try:
-        result = runner(
-            "spec", agent, task, interactive=True,
-            check=lambda result: spec.check(folder, settings),
-        )
+        result = runner("spec", agent, task, interactive=True, check=check)
     except HerdrError as error:
         run.event("step.failed", error=str(error))
         print(f"placido: {error}", file=sys.stderr)
