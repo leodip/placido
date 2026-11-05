@@ -56,6 +56,12 @@ class MutateTest(MutateTestCase):
         self.assertEqual(result.outcome, mutate.TIMEOUT)
         self.assertEqual(self.code.read_text(), CODE)
 
+    def test_output_that_is_not_utf8_still_gets_an_outcome(self):
+        result = mutate.mutate(self.code, "n * 2", "n * 3", ["printf 'body: \\037\\213\\010'; exit 1"])
+        self.assertEqual(result.outcome, mutate.KILLED)
+        self.assertEqual(result.output, "body: \x1f\ufffd\x08")
+        self.assertEqual(self.code.read_text(), CODE)
+
     def test_text_must_match_exactly_once(self):
         with self.assertRaisesRegex(mutate.MutateError, "not found"):
             mutate.mutate(self.code, "n * 9", "x", self.test)
@@ -91,6 +97,20 @@ class CommandTest(MutateTestCase):
         self.assertEqual(entry["replace"], "n * 2")
         self.assertEqual(entry["with"], "n * 3")
         self.assertTrue((step_dir / "mutations" / entry["log"]).is_file())
+
+    def test_records_output_that_is_not_utf8(self):
+        step_dir = self.dir / "step"
+        code, out = self.placido(
+            "mutate", str(self.code), "--replace", "n * 2", "--with", "n * 3",
+            "--", "printf '\\037\\213\\010' >&2; exit 1",
+            step_dir=step_dir,
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("killed:", out)
+        (entry,) = mutate.read(step_dir)
+        self.assertEqual(entry["outcome"], "killed")
+        log = step_dir / "mutations" / entry["log"]
+        self.assertEqual(log.read_text(encoding="utf-8"), "\x1f\ufffd\x08")
 
     def test_survivor_exits_one(self):
         code, out = self.placido(

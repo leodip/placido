@@ -55,11 +55,10 @@ def mutate(path: Path, old: str, new: str, command: list[str], timeout: float = 
         shell = len(command) == 1
         try:
             done = subprocess.run(
-                command[0] if shell else command, shell=shell, capture_output=True, text=True,
-                timeout=timeout,
+                command[0] if shell else command, shell=shell, capture_output=True, timeout=timeout,
             )
             outcome = KILLED if done.returncode != 0 else SURVIVED
-            code, output = done.returncode, done.stdout + done.stderr
+            code, output = done.returncode, _text(done.stdout) + _text(done.stderr)
         except subprocess.TimeoutExpired as expired:
             outcome, code = TIMEOUT, None
             output = f"{_text(expired.stdout)}{_text(expired.stderr)}\n(timed out after {timeout:g}s)\n"
@@ -73,6 +72,8 @@ def mutate(path: Path, old: str, new: str, command: list[str], timeout: float = 
 
 
 def _text(value: str | bytes | None) -> str:
+    # Tests can print anything on failure, a gzip body or half a rune, and a byte that
+    # is not UTF-8 must not cost the mutation its outcome.
     if isinstance(value, bytes):
         return value.decode("utf-8", "replace")
     return value or ""
