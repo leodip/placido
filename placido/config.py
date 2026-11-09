@@ -24,7 +24,11 @@ DEFAULTS: dict[str, Any] = {
     "commands": {},
     "gates": {"slice": [], "final": [], "last": []},
     "roles": {
-        "spec": {"agent": "claude", "model": "opus", "effort": "xhigh"},
+        # The interview on Fable, the most capable Claude: every later step trusts the
+        # agreement, and the vet found 1-3 problems in each of the six Opus agreements it
+        # read. One session per issue, so the dearer model costs little. At high, where
+        # Fable's gains level off, rather than xhigh (decided 2026-11-09).
+        "spec": {"agent": "claude", "model": "fable", "effort": "high"},
         # Reads the agreement against the code before it is sealed, from another vendor
         # than the interview's, at xhigh rather than max since the user waits on it at the
         # end of the interview (decided 2026-11-05, after #783).

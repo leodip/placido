@@ -22,7 +22,7 @@ class DefaultsTest(unittest.TestCase):
 
     def test_roles(self):
         roles = self.config.roles
-        self.assertEqual(roles["spec"].agent, AgentSpec("claude", "opus", "xhigh"))
+        self.assertEqual(roles["spec"].agent, AgentSpec("claude", "fable", "high"))
         self.assertEqual(roles["implement"].agent, AgentSpec("claude", "opus", "high"))
         self.assertEqual(roles["review"].agent, AgentSpec("codex", "gpt-6.1-sol", "max", "fast"))
 
@@ -121,7 +121,7 @@ class OverrideTest(unittest.TestCase):
         )
         self.assertEqual((c.slice_gates, c.final_gates, c.last_gates), (("unit",), ("unit", "data"), ("data",)))
         self.assertEqual(c.roles["implement"].agent, AgentSpec("claude", "sonnet", "medium"))
-        self.assertEqual(c.roles["spec"].agent, AgentSpec("claude", "opus", "xhigh"))
+        self.assertEqual(c.roles["spec"].agent, AgentSpec("claude", "fable", "high"))
         self.assertEqual((c.plan_rounds, c.final_rounds, c.test_first), (1, 2, False))
         self.assertEqual((c.stage_attempts, c.quota_wait), (5, 5400))
 

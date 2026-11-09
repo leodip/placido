@@ -207,7 +207,7 @@ Each role has an agent, model, and effort, and a fallback chain:
 
 | Role | Default |
 |---|---|
-| `spec` (the interview) | claude, Opus, xhigh effort |
+| `spec` (the interview) | claude, Fable, high effort |
 | `vet` (checks the agreement against the code before it is sealed) | codex, gpt-6.1-sol, xhigh, fast tier |
 | `implement` | claude, Opus, high |
 | `review` | codex, gpt-6.1-sol, max, fast tier |
