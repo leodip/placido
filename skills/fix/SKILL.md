@@ -39,7 +39,9 @@ Rules:
   changes to what the agreement decided.
 - **Tests first where a finding is about behavior:** a test that fails before the
   fix and passes after.
-- **Never commit.** Placido runs the gates and commits.
+- **Never commit.** Placido runs the gates and commits. Run them yourself with
+  `placido gate <gate>` once your fixes are done: placido does not run again a gate
+  that passed on exactly the files it would commit.
 - **Run commands in the foreground and wait for them,** however long they take, and
   do not end your turn while a background command or monitor runs: placido reads the
   end of your turn as the end of your work.

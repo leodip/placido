@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from placido import __version__, checks, config, doctor, driver, followups, github, implement, mutate, pr, pragents, prgh, prmenu, report, review, runlog, spec, start, status, step, summary, vet
+from placido import __version__, checks, config, doctor, driver, followups, gate, github, implement, mutate, pr, pragents, prgh, prmenu, report, review, runlog, spec, start, status, step, summary, vet
 from placido import close as closing
 from placido import retro as retrospect
 from placido.herdr import Herdr, HerdrError
@@ -517,6 +517,10 @@ def cmd_mutate(args: argparse.Namespace) -> int:
     return mutate.main(args.file, args.replace, args.with_, args.test_command, args.timeout)
 
 
+def cmd_gate(args: argparse.Namespace) -> int:
+    return gate.main(args.words)
+
+
 def pr_number(text: str) -> int | None:
     """602, #602, or a pull request's URL."""
 
@@ -803,6 +807,13 @@ def build_parser() -> argparse.ArgumentParser:
     breaker.add_argument("--timeout", type=float, default=900, help="seconds (default 900)")
     breaker.set_defaults(func=cmd_mutate, test_command=[])
     breaker.epilog = "Give the test command after --, for example: -- python3 -m unittest -q"
+    runner = commands.add_parser(
+        "gate", help="run a gate in a placido step, recording a pass so placido does not repeat it"
+    )
+    runner.add_argument(
+        "words", nargs=argparse.REMAINDER, help="the gate as the prompt lists it, such as: data mysql"
+    )
+    runner.set_defaults(func=cmd_gate)
     show = commands.add_parser("config", help="show the resolved configuration and agent commands")
     show.add_argument("--project", help="a folder in the project (default: the current folder)")
     show.set_defaults(func=cmd_config)

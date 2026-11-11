@@ -162,6 +162,13 @@ A gate can also give a command the arguments its `about` asks for, after its nam
 word, and keeps its output in `data-mysql.log`. The spec agent can gate a slice the
 same way, so one command covers every engine or target without a copy for each.
 
+A gate that passed runs again only once the files change. Agents run their gates with
+`placido gate <gate>`, which records a pass against a fingerprint of the worktree (the
+tree git would commit, untracked files included), as placido records its own; before a
+gate, placido looks for a pass on the same files and reuses it. So a slice's gates run
+once when the implementer ran them on its finished work, and a final gate that the last
+slice's gates already passed on the same files does not run again.
+
 The last gates are for a check too slow or costly to run more than once. A failing
 gate goes to a fixer, as with the final gates, and placido runs the gates again on
 its fix before committing it, and not after; when the fix cannot pass, the pull
@@ -509,6 +516,7 @@ notes for these agents go in `.placido/notes/pr.md` (all of them), `scan.md`,
 | `placido runs` / `placido log [run]` | The runs, and one run's events |
 | `placido config` | The resolved configuration and agent commands |
 | `placido mutate` | Used by agents: break one piece of code, run the tests, restore it |
+| `placido gate <gate>` | Used by agents: run a gate, recording a pass so placido does not repeat it |
 | `placido step <role> <task>` | Runs one role's agent on any task, for experiments |
 
 Runs are kept under `~/placido/runs/<project>/<issue>/<run>/`; set

@@ -309,8 +309,9 @@ class Step:
         began = self.clock()
         self.run.event("step.start", step=folder.name, role=role)
 
-        # PLACIDO_STEP_DIR tells tools the agent runs, such as `placido mutate`, where to record.
-        env = {**self.env, "PLACIDO_STEP_DIR": str(folder)}
+        # PLACIDO_STEP_DIR and PLACIDO_RUN_DIR tell tools the agent runs, such as `placido
+        # mutate` and `placido gate`, where to record.
+        env = {**self.env, "PLACIDO_STEP_DIR": str(folder), "PLACIDO_RUN_DIR": str(self.run.path)}
         cwd = folder if confined is not None else self.cwd
         pane = self.herdr.create_tab(self.workspace_id, cwd, folder.name, env)
         agent = agent_name(role, pane)

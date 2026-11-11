@@ -32,8 +32,11 @@ the code as it is now, and find every place it touches rather than guess.
   result (below) instead.
 - **Never commit,** amend, push, or switch branches. Placido commits the slice after
   checking it, using the message in your result.
-- **Run every gate your prompt lists before you finish:** placido runs them again
-  after you, and commits only when they pass. A gate that cannot run here, whatever
+- **Run every gate your prompt lists before you finish,** each with `placido gate`
+  and its name as listed, such as `placido gate data mysql`, once your work is done:
+  placido commits only when they all pass, and does not run again a gate that passed
+  on exactly the files it would commit. Narrow runs while you work are yours to run
+  as you like; they do not count. A gate that cannot run here, whatever
   the code does (a tool or setting this environment lacks), is a question for the
   user, not something to work around.
 - **Run commands in the foreground and wait for them,** however long they take, and

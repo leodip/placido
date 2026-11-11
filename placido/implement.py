@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import subprocess
-import time
 from pathlib import Path
 from typing import Any
 
-from placido import config, decisions, mutate, proc, runlog, spec
+from placido import config, decisions, gate, mutate, runlog, spec
 
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "implement" / "SKILL.md"
 NOTES = Path(".placido") / "notes" / "implement.md"
@@ -110,7 +109,9 @@ def prompt(run_dir: Path, worktree: Path, entry: dict[str, Any], settings: confi
         f"- **Code:** the worktree you are in, {worktree}. Change it; do not commit.",
         f"- **Tests first:** {'yes' if settings.test_first else 'no, write them after the code'}.",
         f"- **Gates for this slice:** {', '.join(gates) or 'none'}. Each is a command below, with any"
-        " arguments after its name. Placido runs them after you, and commits only when they pass.",
+        " arguments after its name. Run each with `placido gate <gate>` once your work is done:"
+        " placido commits only when they all pass, and runs again only those whose files changed"
+        " since they passed.",
         f"- **Project notes for this role:** {notes if notes.is_file() else 'none'}",
         decisions.prompt_line(run_dir),
     ]
@@ -156,18 +157,30 @@ def run_gates(
     names: list[str], settings: config.Config, worktree: Path, step_dir: Path,
     env: dict[str, str], run: runlog.Run,
 ) -> list[str]:
-    """Run each gate in the worktree, its output in gates/<gate>.log; problems for failures."""
+    """Run each gate in the worktree, its output in gates/<gate>.log; problems for failures.
+    A gate that already passed on these exact files, run by an agent through `placido
+    gate` or by placido, is not run again (placido/gate.py)."""
 
     folder = step_dir / "gates"
     folder.mkdir(exist_ok=True)
     problems = []
     for name in names:
         command = config.gate_command(name, settings.commands)
-        run.event("gate.start", gate=name, command=command)
-        began = time.monotonic()
         log = folder / f"{config.gate_log(name)}.log"
-        code = proc.run_shell(command, worktree, env, log, lambda s, said, n=name: run.progress(f"gate {n} running", s, said))
-        run.event("gate.end", gate=name, exit=code, seconds=round(time.monotonic() - began, 1))
+        earlier = gate.passed(run.path, name, command, gate.fingerprint(worktree))
+        if earlier is not None:
+            if Path(earlier["log"]) != log:
+                log.write_text(f"Not run again: it passed on these exact files at {earlier['ts']},"
+                               f" run by {earlier['by']}; its output is in {earlier['log']}.\n", encoding="utf-8")
+            run.event("gate.reused", gate=name, command=command, by=earlier["by"], ran=earlier["ts"],
+                      seconds_saved=earlier["seconds"], log=earlier["log"])
+            continue
+        run.event("gate.start", gate=name, command=command)
+        code, seconds = gate.run(
+            name, command, worktree, env, log, run.path, "placido",
+            lambda s, said, n=name: run.progress(f"gate {n} running", s, said),
+        )
+        run.event("gate.end", gate=name, exit=code, seconds=round(seconds, 1))
         if code != 0:
             problems.append(f"gate {name} (`{command}`) failed with exit {code}; its output is in {log}.")
     return problems

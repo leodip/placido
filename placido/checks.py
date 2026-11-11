@@ -138,7 +138,8 @@ def prompt(ctx: "driver.Context", what: str, logs: list[Path], gates: list[str])
         f"- **Agreement:** {issue / 'agreement.md'}",
         decisions.prompt_line(ctx.run.path),
         f"- **Code:** the worktree you are in, {ctx.worktree}. Change it; do not commit.",
-        f"- **Checks placido runs after you:** {', '.join(gates) or 'none'}.",
+        f"- **Checks placido runs after you:** {', '.join(gates) or 'none'}. A gate you run with"
+        " `placido gate <gate>` and that passes is not run again on the same files.",
         f"- **Project notes for this role:** {notes if notes.is_file() else 'none'}",
     ]
     from placido import config

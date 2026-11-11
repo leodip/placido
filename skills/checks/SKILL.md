@@ -23,8 +23,10 @@ failure, the worktree is as you found it, and the result says so.
   loosened assertions, no lowered thresholds, no disabled lint rules, no changed CI
   configuration. If the check itself is wrong, ask (below).
 - **Reproduce locally** with the project's commands where you can, and run them
-  again after the fix. A CI-only failure, such as another database or operating
-  system, may not reproduce; reason from the output, and say so in the evidence.
+  again after the fix, a failing gate with `placido gate <gate>`: placido does not
+  run again a gate that passed on exactly the files it would commit. A CI-only
+  failure, such as another database or operating system, may not reproduce; reason
+  from the output, and say so in the evidence.
 - **Never commit.** Placido runs the checks again and commits.
 - **Run commands in the foreground and wait for them,** however long they take, and
   do not end your turn while a background command or monitor runs: placido reads the

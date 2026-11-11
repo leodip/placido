@@ -236,7 +236,9 @@ def fixer_prompt(
         "",
         *_paths(run_dir, worktree, "fix"),
         f"- **The findings to answer:** {open_path} (all of them), explained in {review_md}.",
-        f"- **Gates:** {gates}. Placido runs them after you, and commits only when they pass.",
+        f"- **Gates:** {gates}. Run each with `placido gate <gate>` once your fixes are done:"
+        " placido commits only when they all pass, and runs again only those whose files changed"
+        " since they passed.",
         f"- **Write:** {folder / 'resolutions.json'}.",
     ]
     menu = config.command_menu(settings)

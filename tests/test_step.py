@@ -315,7 +315,8 @@ class StepTest(StepTestCase):
         self.step()
         self.assertEqual(
             self.fake.tab_env,
-            {"PLACIDO_NAME": "proj-1", "PLACIDO_STEP_DIR": str(self.run.path / "steps" / "01-implement")},
+            {"PLACIDO_NAME": "proj-1", "PLACIDO_STEP_DIR": str(self.run.path / "steps" / "01-implement"),
+             "PLACIDO_RUN_DIR": str(self.run.path)},
         )
 
     def test_agent_start_event_names_model_and_effort(self):
