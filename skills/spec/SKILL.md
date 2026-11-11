@@ -143,10 +143,11 @@ change touches, verifiable on its own, and small enough to build in one fresh se
   from the commands in your prompt, when it needs more proof, such as data-layer
   tests for a slice that changes storage. A command whose description asks for an
   argument takes it in the gate, as `"data mysql"`, one gate for each value needed.
-  Prefer a command the project defines over a free-form one: its description says how
-  it runs here. **Run each extra gate once in a probe before you list it,** on the code
-  as it is today: one that cannot run here (a tool or setting this environment lacks)
-  can never pass, whatever the slice does.
+  Prefer a command the project defines over a free-form one, and list it without
+  running it: its description says how it runs here, and nothing has changed yet for
+  a run to prove. Only a command line you write yourself, such as one passed to a
+  command that runs anything, needs a probe first, to show this environment has the
+  tool or setting it needs: one it lacks can never pass, whatever the slice does.
 
 Slices stay coarse: a title, what it delivers, its blockers, its gates. Each
 implementer details its own slice against the code as it is then.
