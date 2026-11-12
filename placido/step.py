@@ -452,7 +452,10 @@ class Step:
                 return "invalid", None
             result.unlink()
             listed = "\n".join(f"- {problem}" for problem in problems)
-            self._work(agent, pane, folder, FIX.format(problems=listed, result=result), "work")
+            # The agent wrote its result, so it waits on nothing that still runs: on #813
+            # and #816 the interviewer's leftover test run and probe server held the vet's
+            # findings back for up to BACKGROUND_LIMIT (2026-11-12).
+            self._work(agent, pane, folder, FIX.format(problems=listed, result=result), "work", done=True)
 
     def _failure(self, agent: str, pane: str, folder: Path, kind: str) -> outcomes.Failure | None:
         """Why the agent's last turn failed, from its transcript, or from its screen
@@ -522,10 +525,11 @@ class Step:
             self._call(self.herdr.wait, agent, ("working", "blocked"))
             self._status(status.text(status.WORKING, status.label(folder.name)))
 
-    def _work(self, agent: str, pane: str, folder: Path, text: str, phase: str) -> None:
-        """Prompt the agent once it is truly ready, then wait until it settles."""
+    def _work(self, agent: str, pane: str, folder: Path, text: str, phase: str, done: bool = False) -> None:
+        """Prompt the agent once it is truly ready, then wait until it settles. done: the
+        agent's last turn ended with its result, so its background work is not waited on."""
 
-        self._ready(agent, pane, folder, phase)
+        self._ready(agent, pane, folder, phase, done=done)
         self._status(status.text(status.WORKING, status.label(folder.name)))
         self._call(self.herdr.prompt, agent, text)
         # Only states the prompt leads to: Herdr returns at once when the current state
@@ -540,10 +544,13 @@ class Step:
         self._session(agent, folder)
         self._ready(agent, pane, folder, "work", settle=False)
 
-    def _ready(self, agent: str, pane: str, folder: Path, phase: str, settle: bool = True) -> None:
+    def _ready(
+        self, agent: str, pane: str, folder: Path, phase: str, settle: bool = True, done: bool = False,
+    ) -> None:
         """Return once the agent is idle with no dialog showing, getting the user for any
         dialog. Herdr's status alone is not enough: it once reported idle under a dialog,
-        and the prompt's Enter answered it."""
+        and the prompt's Enter answered it. done: the agent finished with a result, so
+        background work still running is not waited on."""
 
         began = self.clock()
         background: float | None = None  # when the agent was first seen waiting on background work
@@ -564,7 +571,8 @@ class Step:
                     self._needs_user(agent, pane, folder, phase)
                 continue
             # Waited the limit out, or the result says it is done whatever still runs: no wait.
-            waiting = not (background is not None and background < 0) and not (folder / "result.md").is_file()
+            waiting = (not done and not (background is not None and background < 0)
+                       and not (folder / "result.md").is_file())
             if waiting and background_running(self._screen(pane, source="visible")):
                 if background is None:
                     background = self.clock()

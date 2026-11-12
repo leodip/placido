@@ -412,6 +412,17 @@ class BackgroundTest(StepTestCase):
         self.assertIn("agent.nudge", self.events())
         self.assertGreaterEqual(clock[0], step.BACKGROUND_LIMIT)
 
+    def test_a_rejected_result_goes_back_at_once_whatever_still_runs(self):
+        """#816: the interviewer's probe server ran on after its agreement was written, and
+        placido held the vet's findings back until the background limit."""
+
+        self.fake.behaviours = ["write-background", "write"]
+        answers = [["V1 the agreement says otherwise"], []]
+        result = self.step(check=lambda result: answers.pop(0))
+        self.assertEqual(result.outcome, "success")
+        self.assertIn("- V1 the agreement says otherwise", self.fake.prompts()[1])
+        self.assertNotIn("agent.background", self.events())
+
     def test_quitting_stops_the_background_work_and_the_tab_closes(self):
         self.fake.behaviours = ["write-background"]
         result = self.step()
