@@ -7,11 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from placido.proc import Result, run_command
+from placido.proc import TIMED_OUT, Result, run_command
 
 
 # Runs one herdr command with a timeout in seconds; None waits as long as Herdr does.
 HerdrRunner = Callable[[list[str], "float | None"], Result]
+
+
+# The code of a HerdrError for a herdr command that did not answer in time, unlike
+# Herdr's own "timeout" for an agent that did not reach a state in time.
+UNANSWERED = "unanswered"
 
 
 class HerdrError(RuntimeError):
@@ -52,7 +57,8 @@ class Herdr:
             return {}  # some commands, such as report-metadata, print nothing on success
         data = _last_json(result.out)
         if data is None:
-            raise HerdrError(f"herdr {args[0]} {args[1]}: {result.out.strip() or f'exit {result.code}'}")
+            code = UNANSWERED if result.code == TIMED_OUT else ""
+            raise HerdrError(f"herdr {args[0]} {args[1]}: {result.out.strip() or f'exit {result.code}'}", code)
         if "error" in data or result.code != 0:
             error = data.get("error") or {}
             message = error.get("message") or result.out.strip()

@@ -7,9 +7,10 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from placido import cli, runlog, status, step
+from placido import cli, herdr, runlog, status, step
 from placido.config import AgentSpec
-from placido.herdr import AgentInfo, HerdrError
+from placido.herdr import AgentInfo, Herdr, HerdrError
+from placido.proc import TIMED_OUT, Result
 
 CLAUDE = AgentSpec("claude", "opus", "high")
 
@@ -685,6 +686,68 @@ class GoneTabTest(StepTestCase):
         self.assertIn("tab.gone", self.events())
         self.assertNotIn("tab.kept", self.events())
         self.assertFalse(any(c[0] == "notify" for c in self.fake.calls))
+
+
+UNANSWERED = HerdrError("herdr agent wait: herdr agent wait x: timed out after 60s", herdr.UNANSWERED)
+
+
+class StalledHerdrTest(StepTestCase):
+    """#816: a test ate the machine's memory, one herdr wait did not answer within its
+    minute, and placido quit with a slice nearly done."""
+
+    def test_a_question_herdr_does_not_answer_is_asked_again(self):
+        self.fake.behaviours = ["write"]
+        real, stalls = self.fake.wait, [3]
+        def wait(name, until, timeout=None):
+            if stalls[0] and "idle" in until:
+                stalls[0] -= 1
+                raise UNANSWERED
+            return real(name, until, timeout)
+        self.fake.wait = wait
+        result = self.step()
+        self.assertEqual(result.outcome, "success")
+        self.assertEqual(self.events().count("herdr.stalled"), 1)
+        self.assertIn("herdr.answered", self.events())
+        self.assertEqual(self.fake.calls.count(("sleep", step.STALL_PAUSE)), 3)
+
+    def test_it_gives_up_after_the_limit(self):
+        clock = [0.0]
+        def sleep(seconds):
+            clock[0] += seconds
+            self.fake.sleep(seconds)
+        def wait(name, until, timeout=None):
+            if "idle" in until:
+                raise UNANSWERED
+            return "working"
+        self.fake.behaviours = ["write"]
+        self.fake.wait = wait
+        runner = step.Step(self.run, self.fake, "w8", self.tmp / "wt", home=self.home,
+                           clock=lambda: clock[0], sleep=sleep, wall=lambda: self.now)
+        with self.assertRaises(HerdrError):
+            runner("implement", CLAUDE, "Build it.")
+        self.assertGreaterEqual(clock[0], step.STALL_LIMIT)
+        self.assertNotIn("herdr.answered", self.events())
+
+    def test_a_prompt_is_not_sent_again(self):
+        sent = []
+        def prompt(name, text):
+            sent.append(text)
+            raise HerdrError("herdr agent prompt: timed out after 60s", herdr.UNANSWERED)
+        self.fake.prompt = prompt
+        with self.assertRaises(HerdrError):
+            self.step()
+        self.assertEqual(len(sent), 1)
+
+    def test_herdr_not_answering_is_told_from_an_agent_not_reaching_a_state(self):
+        late = Herdr(lambda argv, timeout=None: Result(TIMED_OUT, "herdr agent wait x: timed out after 60s"))
+        with self.assertRaises(HerdrError) as caught:
+            late.wait("x", ("idle",), timeout=30)
+        self.assertEqual(caught.exception.code, herdr.UNANSWERED)
+        refused = '{"error": {"code": "timeout", "message": "timed out waiting"}}'
+        waited = Herdr(lambda argv, timeout=None: Result(1, refused))
+        with self.assertRaises(HerdrError) as caught:
+            waited.wait("x", ("idle",), timeout=30)
+        self.assertEqual(caught.exception.code, "timeout")
 
 
 class InteractiveTest(StepTestCase):

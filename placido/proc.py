@@ -29,6 +29,8 @@ class Result:
 
 Runner = Callable[[list[str]], Result]
 
+TIMED_OUT = 124  # run_command's exit code for a command that did not finish in time, as timeout(1)'s
+
 
 def run_command(argv: list[str], timeout: float | None = 30) -> Result:
     """Run a command and return its exit code and combined output; never raises."""
@@ -38,7 +40,7 @@ def run_command(argv: list[str], timeout: float | None = 30) -> Result:
     except FileNotFoundError:
         return Result(127, f"{argv[0]}: not found")
     except subprocess.TimeoutExpired:
-        return Result(124, f"{' '.join(argv)}: timed out after {timeout:g}s")
+        return Result(TIMED_OUT, f"{' '.join(argv)}: timed out after {timeout:g}s")
     except OSError as error:
         return Result(126, f"{argv[0]}: {error}")
     return Result(done.returncode, (done.stdout + done.stderr).strip())

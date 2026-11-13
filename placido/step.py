@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from placido import alerts, codexd, decisions, outcomes, runlog, status
 from placido.config import AgentSpec
-from placido.herdr import Herdr, HerdrError
+from placido.herdr import UNANSWERED, Herdr, HerdrError
 
 # Decided 2026-10-02: agents run with every approval bypassed, as GBD did, so a run
 # never stalls on a permission prompt. Codex also runs its hooks without the review
@@ -134,6 +134,13 @@ def background_running(screen: str) -> bool:
 
 # Herdr error codes meaning the agent is no longer running in its pane.
 GONE = ("agent_not_found", "agent_not_running", "agent_exited")
+# Herdr calls that only ask about the agent, so asking again is safe, and how long placido
+# keeps asking when Herdr does not answer. On #816 a test that ate the machine's memory
+# kept one wait from answering for over a minute, and placido quit, leaving a finished
+# slice uncommitted overnight; the machine was its own again 15 minutes later (2026-11-12).
+REPEATABLE = ("wait", "agent")
+STALL_LIMIT = 1800
+STALL_PAUSE = 10
 
 # How each agent quits by itself, so its session log is complete before its tab closes.
 EXIT_COMMANDS = {"claude": "/exit", "codex": "/quit", "pi": "/quit"}
@@ -638,14 +645,29 @@ class Step:
         return self._call(self.herdr.agent, agent).status
 
     def _call(self, method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Call Herdr about the agent, turning "the agent is gone" into AgentGone."""
+        """Call Herdr about the agent, turning "the agent is gone" into AgentGone. A
+        question Herdr does not answer is asked again, for up to STALL_LIMIT."""
 
-        try:
-            return method(*args, **kwargs)
-        except HerdrError as error:
-            if error.code in GONE:
-                raise AgentGone(str(error)) from None
-            raise
+        stalled: float | None = None
+        name = getattr(method, "__name__", "")
+        while True:
+            try:
+                answer = method(*args, **kwargs)
+            except HerdrError as error:
+                if error.code in GONE:
+                    raise AgentGone(str(error)) from None
+                if error.code != UNANSWERED or name not in REPEATABLE:
+                    raise
+                if stalled is None:
+                    stalled = self.clock()
+                    self.run.event("herdr.stalled", call=name, error=str(error))
+                if self.clock() - stalled >= STALL_LIMIT:
+                    raise
+                self.sleep(STALL_PAUSE)
+                continue
+            if stalled is not None:
+                self.run.event("herdr.answered", call=name, seconds=round(self.clock() - stalled, 1))
+            return answer
 
     def _dialog(self, pane: str) -> bool:
         screen = self._screen(pane, source="visible")
