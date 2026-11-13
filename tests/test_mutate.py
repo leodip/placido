@@ -1,7 +1,10 @@
 import io
 import json
 import os
+import signal
+import subprocess
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -11,6 +14,20 @@ from placido import cli, mutate
 
 CODE = "def double(n):\n    return n * 2\n"
 TEST = "from code import double\nassert double(3) == 6\n"
+
+
+def _running(pid: int) -> bool:
+    """Whether the process runs; a zombie waiting to be reaped does not."""
+
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+
+
+def _kill_quietly(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
 
 
 class MutateTestCase(unittest.TestCase):
@@ -46,7 +63,7 @@ class MutateTest(MutateTestCase):
         self.assertEqual(self.code.read_text(), CODE)
 
     def test_restored_on_an_exception(self):
-        with mock.patch("subprocess.run", side_effect=RuntimeError("boom")):
+        with mock.patch("subprocess.Popen", side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):
                 mutate.mutate(self.code, "n * 2", "n * 3", self.test)
         self.assertEqual(self.code.read_text(), CODE)
@@ -55,6 +72,24 @@ class MutateTest(MutateTestCase):
         result = mutate.mutate(self.code, "n * 2", "n * 3", ["sleep 5"], timeout=0.2)
         self.assertEqual(result.outcome, mutate.TIMEOUT)
         self.assertEqual(self.code.read_text(), CODE)
+
+    def test_a_timeout_stops_what_the_tests_started(self):
+        """A test binary looping in the mutant ran on after its mutation timed out."""
+
+        pidfile = self.dir / "child.pid"
+        result = mutate.mutate(
+            self.code, "n * 2", "n * 3", [f"echo started; sleep 30 & echo $! > {pidfile}; wait"], timeout=0.5,
+        )
+        child = int(pidfile.read_text())
+        self.addCleanup(lambda: _kill_quietly(child))
+        self.assertEqual(result.outcome, mutate.TIMEOUT)
+        self.assertIn("started", result.output)
+        self.assertLess(result.seconds, 5)
+        for _ in range(50):
+            if not _running(child):
+                break
+            time.sleep(0.05)
+        self.assertFalse(_running(child))
 
     def test_output_that_is_not_utf8_still_gets_an_outcome(self):
         result = mutate.mutate(self.code, "n * 2", "n * 3", ["printf 'body: \\037\\213\\010'; exit 1"])

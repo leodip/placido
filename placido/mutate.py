@@ -52,16 +52,8 @@ def mutate(path: Path, old: str, new: str, command: list[str], timeout: float = 
     began = time.monotonic()
     try:
         path.write_bytes(text.replace(old, new).encode("utf-8"))
-        shell = len(command) == 1
-        try:
-            done = subprocess.run(
-                command[0] if shell else command, shell=shell, capture_output=True, timeout=timeout,
-            )
-            outcome = KILLED if done.returncode != 0 else SURVIVED
-            code, output = done.returncode, _text(done.stdout) + _text(done.stderr)
-        except subprocess.TimeoutExpired as expired:
-            outcome, code = TIMEOUT, None
-            output = f"{_text(expired.stdout)}{_text(expired.stderr)}\n(timed out after {timeout:g}s)\n"
+        code, output = _run(command, timeout)
+        outcome = TIMEOUT if code is None else KILLED if code != 0 else SURVIVED
     finally:
         restore()
         for sig, handler in previous.items():
@@ -69,6 +61,54 @@ def mutate(path: Path, old: str, new: str, command: list[str], timeout: float = 
     if path.read_bytes() != original:
         raise MutateError(f"{path} could not be restored; check it by hand")
     return Mutation(outcome, code, round(time.monotonic() - began, 1), output)
+
+
+def _run(command: list[str], timeout: float) -> tuple[int | None, str]:
+    """Run the tests: their exit code, None when they time out, and their output. Tests
+    that time out are stopped with everything they started: killing only the shell left
+    its children, such as a test binary looping in the mutant, running after the mutation
+    was restored and reported, and with no timeout of their own they never stopped."""
+
+    shell = len(command) == 1
+    with subprocess.Popen(
+        command[0] if shell else command, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    ) as process:
+        try:
+            out, err = process.communicate(timeout=timeout)
+            return process.returncode, _text(out) + _text(err)
+        except subprocess.TimeoutExpired:
+            _kill_tree(process.pid)
+            try:
+                out, err = process.communicate(timeout=10)
+            except subprocess.TimeoutExpired as late:  # a process that left the tree holds the output
+                out, err = late.stdout, late.stderr
+            return None, f"{_text(out)}{_text(err)}\n(timed out after {timeout:g}s)\n"
+
+
+def _kill_tree(pid: int) -> None:
+    """Kill pid and every process below it."""
+
+    try:
+        listing = subprocess.run(
+            ["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        listing = ""
+    children: dict[int, list[int]] = {}
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0].isdigit() and fields[1].isdigit():
+            children.setdefault(int(fields[1]), []).append(int(fields[0]))
+    tree, todo = [], [pid]
+    while todo:
+        member = todo.pop()
+        tree.append(member)
+        todo.extend(children.get(member, []))
+    for member in tree:
+        try:
+            os.kill(member, signal.SIGKILL)
+        except OSError:
+            pass  # gone already
 
 
 def _text(value: str | bytes | None) -> str:
