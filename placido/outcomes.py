@@ -77,14 +77,28 @@ TEXT_SIGNALS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 TRANSIENT_STATUS = re.compile(r"\b(?:429|50[0234]|52[0-9])\b")
 
+# A page from the network's edge, not an answer from the API. On #816 Cloudflare's
+# "Attention Required!" block came back as a 403 that claude reported as
+# authentication_failed, "Please run /login"; placido stopped slice 4 and set its work
+# aside for a login that was fine, and the next attempt ran on the same one
+# (2026-11-13). Such a page passes like any blip.
+EDGE_PAGES = ("cloudflare",)
+
+
+def _unless_edge(kind: str, message: str) -> str:
+    """An auth failure that is an edge page is transient."""
+
+    lower = message.lower()
+    return "transient" if kind == "auth" and any(mark in lower for mark in EDGE_PAGES) else kind
+
 
 def classify(message: str) -> str:
     lower = message.lower()
     for kind, marks in TEXT_SIGNALS:
         if any(mark in lower for mark in marks):
-            return kind
+            return _unless_edge(kind, lower)
     if re.search(r"\b40[13]\b", lower):
-        return "auth"
+        return _unless_edge("auth", lower)
     if re.search(r"\b402\b", lower):
         return "quota"
     if TRANSIENT_STATUS.search(lower):
@@ -197,7 +211,7 @@ def _codex(events: list[dict[str, Any]], now: datetime) -> Failure | None:
     info = error.get("codex_error_info")
     if isinstance(info, dict) and info:
         info = next(iter(info))  # a variant with fields, such as {"http_connection_failed": {...}}
-    kind = CODEX_KINDS.get(str(info)) or classify(message)
+    kind = _unless_edge(CODEX_KINDS.get(str(info)) or classify(message), message)
     resets_at = None
     if kind == "quota":
         resets_at = _codex_reset(limits) or parse_reset(message, now)
@@ -234,6 +248,7 @@ def _claude(events: list[dict[str, Any]], now: datetime) -> Failure | None:
     elif error == "authentication_failed":
         lower = message.lower()
         kind = "transient" if "another claude code process" in lower or "temporary" in lower else "auth"
+        kind = _unless_edge(kind, message)
     elif error == "billing_error":
         kind = "quota"
     elif error == "server_error":

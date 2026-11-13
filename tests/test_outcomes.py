@@ -150,6 +150,13 @@ class CodexTest(TranscriptCase):
         }))
         self.assertEqual(found.kind, "auth")
 
+    def test_unauthorized_by_a_cloudflare_page(self):
+        found = self.failure("codex", codex_end({
+            "message": "unexpected status 403 Forbidden: <title>Attention Required! | Cloudflare</title>",
+            "codex_error_info": "unauthorized",
+        }))
+        self.assertEqual(found.kind, "transient")
+
 
 # ---- claude: an "API Error" assistant entry ------------------------------------------
 
@@ -208,6 +215,13 @@ class ClaudeTest(TranscriptCase):
     def test_login_expired(self):
         found = self.failure("claude", claude_error("Login expired · Please run /login", "authentication_failed"))
         self.assertEqual(found.kind, "auth")
+
+    def test_a_cloudflare_page_is_no_logout(self):
+        # #816's slice 4, 2026-11-13: the login was fine, and the next attempt ran on it.
+        found = self.failure("claude", claude_error(
+            "Please run /login · API Error: 403 Attention Required! | Cloudflare", "authentication_failed",
+        ))
+        self.assertEqual(found.kind, "transient")
 
     def test_a_temporary_authentication_error(self):
         found = self.failure("claude", claude_error(
@@ -310,6 +324,11 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(outcomes.classify("HTTP 502"), "transient")
         self.assertEqual(outcomes.classify("HTTP 401"), "auth")
         self.assertEqual(outcomes.classify("something odd"), "error")
+
+    def test_an_edge_page_is_no_login_problem(self):
+        self.assertEqual(outcomes.classify("Please run /login · API Error: 403 Attention Required! | Cloudflare"), "transient")
+        self.assertEqual(outcomes.classify("HTTP 403 Just a moment... | Cloudflare"), "transient")
+        self.assertEqual(outcomes.classify("Please run /login"), "auth")
 
 
 class ScreenTest(unittest.TestCase):
