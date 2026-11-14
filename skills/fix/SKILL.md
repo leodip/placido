@@ -65,6 +65,26 @@ your prompt names (`## D<n> · <your step folder's name> · <date>`, then
 finding as fixed, disputed, or deferred under the decision, or as escalated if the
 user wants it left for the pull request.
 
+## Review comments on the pull request
+
+When your prompt says the findings are review comments, other reviewers left them on
+the pull request, and the reviewer judged them valid. The rules above hold, with
+these differences:
+
+- **Your note is the reply.** Placido posts each note on the comment it answers, as
+  the maintainer, after "Fixed in <commit>." or "Not changed.": write it for the
+  comment's author, plainly, in two to four sentences: what changed and the test that
+  covers it, or why not. Mention no account (`@name`): a mention summons it.
+- **Fix it now** unless it is too big for this pull request (more than about an
+  afternoon's work, tests and docs included), needs a decision only the maintainer can
+  make (say which, with the options), needs a migration or a new public contract (an
+  API field, a setting, a default a deployer would notice), or is separate work. Then
+  defer it, saying which of these it is: it becomes a follow-up the maintainer
+  settles. The maintainer prefers things done in this pull request.
+- **Do not ask the user.** The run is past asking: write no `Blocked:` result. A
+  blocking finding you can neither fix nor dispute is escalated, and the maintainer
+  is told.
+
 ## Write
 
 `resolutions.json` where your prompt says:

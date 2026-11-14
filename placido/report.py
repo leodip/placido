@@ -249,6 +249,12 @@ def _stage(step: str) -> str:
         return "Fixing the last gates"
     if name == "followups":
         return "Follow-ups"
+    if found := re.fullmatch(r"comments-(\d+)-review-(\d+)", name):
+        return f"Review comments, pass {found.group(1)}: review round {found.group(2)}"
+    if found := re.fullmatch(r"comments-(\d+)-fix-(\d+)", name):
+        return f"Review comments, pass {found.group(1)}: fixes, round {found.group(2)}"
+    if found := re.fullmatch(r"followups-comments-(\d+)", name):
+        return f"Follow-ups from review comments, pass {found.group(1)}"
     return name
 
 

@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from placido import __version__, checks, config, doctor, driver, followups, gate, github, implement, mutate, pr, pragents, prgh, prmenu, report, review, runlog, spec, start, status, step, summary, vet
+from placido import __version__, checks, comments, config, doctor, driver, followups, gate, github, implement, mutate, pr, pragents, prgh, prmenu, report, review, runlog, spec, start, status, step, summary, vet
 from placido import close as closing
 from placido import retro as retrospect
 from placido.herdr import Herdr, HerdrError
@@ -358,9 +358,10 @@ def _review(ctx: driver.Context, reviewer: config.AgentSpec) -> int:
 
 def _deliver(ctx: driver.Context, outcome: str) -> int:
     """Hand the reviewed change over: run the last gates, push it and open the pull
-    request, wait for CI, then end the run. Its work is done once CI is green, or there
-    is no CI or GitHub; what is left (trying the branch, merging, escalations, last
-    gates that still fail) is the user's."""
+    request, wait for CI, answer the review comments the project names reviewers for,
+    then end the run. Its work is done once CI is green, or there is no CI or GitHub;
+    what is left (trying the branch, merging, escalations, comments left for the user,
+    last gates that still fail) is the user's."""
 
     last = checks.last_gates(ctx, ctx.settings.roles["fix"].agent)
     followups.draft(ctx, ctx.settings.roles["fix"].agent)
@@ -374,6 +375,14 @@ def _deliver(ctx: driver.Context, outcome: str) -> int:
         print(f"placido: {error}\nFix it, then run placido run again to retry.", file=sys.stderr)
         return 1
     pr = (runlog.last_event(ctx.run.path, "pr.opened") or {}).get("url", "")
+    if ci == comments.FAILED:
+        driver.show(ctx, status.STOPPED, "answering the review comments failed")
+        driver.notify(ctx, "answering the review comments failed",
+                      f"{pr}; run placido run again to resume; see {ctx.run.path / 'steps'}")
+        _summarize(ctx)
+        print(f"\nplacido: answering the review comments on {pr} failed; run placido run again to resume.",
+              file=sys.stderr)
+        return 1
     if ci in ("red", "pending"):
         driver.show(ctx, status.STOPPED if ci == "red" else status.WAITING, f"CI {ci} on the pull request")
         driver.notify(ctx, f"CI is {ci}", f"{pr}; run placido run again to retry")

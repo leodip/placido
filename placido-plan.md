@@ -2383,3 +2383,40 @@ ran:
   drafts, and the decisions file. The judge must now write each question with its
   recommendation, and the reviewers, the judge, the fixer, and the check are all told
   the decisions win over the review.
+
+### 2026-11-14
+
+- With the user: two things kept needing them at the pull request, a review bot's
+  comments (CodeRabbit, on Goiabada) and the follow-ups. Placido now answers the
+  comments of the reviewers a project names in `[review_comments] accounts`, once CI
+  concludes (placido/comments.py). The review loop runs on them as a stage of its own:
+  the reviewer (Codex) judges each comment in round 1, a finding or not valid with a
+  reply for its author; the fixer fixes, disputes, or defers each finding; the reviewer,
+  resumed, verifies for up to `final_rounds` more rounds. A deferral earns a round, as
+  a dispute does, since it leaves out work the reviewer found valid. Placido commits,
+  pushes, replies on each thread, and waits for CI, on which the bot may comment again:
+  up to `passes` times (2 by default).
+- The user leans to fixing now: a comment is deferred only when it is big (more than
+  an afternoon's work), needs their decision, a migration or a new public contract, or
+  is separate work. What is left out is drafted as a follow-up in the follow-ups
+  comment, the user's choice over filing issues directly, so placido still files none
+  and `/leo-placido-followups` settles everything left out in one place. The run never
+  stops to ask at this point: the fixer writes no `Blocked:`, and a comment only the
+  user can settle is left unanswered, named in the pull request, and notified.
+- Placido stays generic: it knows GitHub's review threads and reviews, and compares
+  logins with a bot's `[bot]` dropped, since GraphQL drops it and REST keeps it. What a
+  bot's comments look like (its severity tags, nitpicks in a review's text, which of
+  its replies are conversation, never to mention it) goes in the project's
+  `.placido/notes/review-comments.md`.
+- Round 1 is Codex's rather than the fixer's, which the first sketch had: a review's
+  text can hold several comments, and only a reviewer reading it can split them and
+  rate each; the fixer's disputes and deferrals still go back to Codex.
+- The follow-ups comment is rewritten with the new drafts while it reads as placido
+  last wrote it; an edited one is left alone and the new drafts go into another
+  comment, numbered on. Each draft from a comment names it ("Raised in:"), so the
+  skill that settles the follow-ups can answer the thread too.
+- The review loop's events, step names, prompts and its rule for earning a round
+  became hooks of `review.Loop`, so the run's own review is unchanged. CI's wait and
+  fixes became `github.await_ci`, numbered across the run so a later wait's logs keep
+  a folder of their own.
+

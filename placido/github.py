@@ -31,6 +31,21 @@ POLL_SECONDS = 30
 PROGRESS_SECONDS = 60  # how often the live view says what CI is still running
 LOG_LINES = 400  # the tail of each failed job's log handed to the fixer
 JOB = re.compile(r"/actions/runs/(\d+)/job/(\d+)")
+COMMENT_ID = re.compile(r"#issuecomment-(\d+)$")
+# The review threads of a pull request, each with its comments in order: the first
+# started the thread, on a line of the change, and the rest reply to it.
+THREADS = """query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          isResolved isOutdated path line originalLine
+          comments(first: 100) { nodes { databaseId author { login } body url } }
+        }
+      }
+    }
+  }
+}"""
 
 
 class GitHubError(RuntimeError):
@@ -90,6 +105,80 @@ class GitHub:
             raise GitHubError(f"gh pr checks: {result.out.strip()[-300:]}") from None
         return data if isinstance(data, list) else []
 
+    def viewer(self) -> str:
+        """The login gh acts as: the account placido comments and replies as."""
+
+        return self._call("gh", "api", "user", "--jq", ".login").strip()
+
+    def review_threads(self, number: int) -> list[dict[str, Any]]:
+        """The pull request's review threads: whether each is resolved or outdated, where
+        it is, and its comments, each with its id, author, body, and URL."""
+
+        owner, name = self.repo.split("/", 1)
+        out = self._call(
+            "gh", "api", "graphql", "-f", f"owner={owner}", "-f", f"name={name}", "-F", f"number={number}",
+            "-f", f"query={THREADS}",
+        )
+        try:
+            data = json.loads(out)
+            nodes = data["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+        except (ValueError, KeyError, TypeError):
+            raise GitHubError(f"gh api graphql: no review threads in {out.strip()[-300:]}") from None
+        threads = []
+        for node in nodes or []:
+            comments = [
+                {"id": c.get("databaseId"), "author": (c.get("author") or {}).get("login") or "",
+                 "body": c.get("body") or "", "url": c.get("url") or ""}
+                for c in ((node.get("comments") or {}).get("nodes") or [])
+            ]
+            threads.append({
+                "resolved": bool(node.get("isResolved")), "outdated": bool(node.get("isOutdated")),
+                "path": node.get("path") or "", "line": node.get("line") or node.get("originalLine"),
+                "comments": comments,
+            })
+        return threads
+
+    def reviews(self, number: int) -> list[dict[str, Any]]:
+        """The pull request's reviews, each with its id, author, text, URL, and commit."""
+
+        out = self._call(
+            "gh", "api", f"repos/{self.repo}/pulls/{number}/reviews", "--paginate", "--jq",
+            ".[] | {id, author: .user.login, body, url: .html_url, commit: .commit_id}",
+        )
+        try:
+            return [json.loads(line) for line in out.splitlines() if line.strip()]
+        except ValueError:
+            raise GitHubError(f"gh api reviews: {out.strip()[-300:]}") from None
+
+    def reply(self, number: int, comment_id: int, body: Path) -> str:
+        """Reply on the review thread a comment is in; the reply's URL."""
+
+        out = self._call(
+            "gh", "api", "-X", "POST", f"repos/{self.repo}/pulls/{number}/comments/{comment_id}/replies",
+            "-F", f"body=@{body}", "--jq", ".html_url",
+        )
+        return out.strip()
+
+    def comment_body(self, url: str) -> str | None:
+        """The text of the pull request comment at url, as it is now; None once it is gone."""
+
+        found = COMMENT_ID.search(url)
+        if not found:
+            return None
+        result = self._run(
+            ["gh", "api", f"repos/{self.repo}/issues/comments/{found.group(1)}", "--jq", ".body"], timeout=120,
+        )
+        return result.out if result.code == 0 else None
+
+    def edit_comment(self, url: str, body: Path) -> None:
+        found = COMMENT_ID.search(url)
+        if not found:
+            raise GitHubError(f"not a comment's URL: {url}")
+        self._call(
+            "gh", "api", "-X", "PATCH", f"repos/{self.repo}/issues/comments/{found.group(1)}",
+            "-F", f"body=@{body}", "--jq", ".html_url",
+        )
+
     def failed_log(self, link: str) -> str:
         found = JOB.search(link or "")
         if not found:
@@ -117,9 +206,11 @@ def deliver(
     ctx: "driver.Context", fixer: Any, github: GitHub | None = None,  # noqa: F821
     sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
 ) -> str:
-    """Push, open or update the pull request, file follow-ups, wait for CI and fix it.
+    """Push, open or update the pull request, file follow-ups, wait for CI and fix it,
+    then answer the review comments the project's reviewers left (placido/comments.py).
     Returns "local" without a GitHub remote, else the CI outcome: "green", "red",
-    "none" (no checks), or "pending" (still running when ci_wait ran out)."""
+    "none" (no checks), or "pending" (still running when ci_wait ran out); or
+    "comments-failed" when answering the review comments failed."""
 
     run = ctx.run
     record = runlog.read_record(run.path)
@@ -144,6 +235,28 @@ def deliver(
     _post_follow_ups(github, run, record, number)
     github.edit_pr(number, _body(run.path))
 
+    def ci() -> str:
+        return await_ci(ctx, github, fixer, number, branch, sleep, clock)
+
+    outcome = ci()
+    if outcome in ("green", "none"):
+        from placido import comments
+
+        outcome = comments.answer(ctx, github, number, branch, ci, outcome)
+    github.edit_pr(number, _body(run.path))
+    return outcome
+
+
+def await_ci(
+    ctx: "driver.Context", github: GitHub, fixer: Any, number: int, branch: str,  # noqa: F821
+    sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+) -> str:
+    """Wait for CI on the head pushed last, and fix a red run up to MAX_FIXES times,
+    pushing each fix; the outcome, as deliver's. Each wait is numbered in the run, so
+    the logs of a later one, after review comments were answered, keep a folder of
+    their own."""
+
+    run = ctx.run
     outcome = "none"
     for attempt in range(checks.MAX_FIXES + 1):
         status.show(run.path, status.text(status.WAITING, f"CI on #{number}"))
@@ -155,13 +268,13 @@ def deliver(
         run.event("ci.result", outcome=outcome, attempt=attempt + 1, failed=[c.get("name") for c in failed])
         if outcome != "red" or attempt == checks.MAX_FIXES:
             break
-        logs = _save_logs(github, run.path / "ci" / str(attempt + 1), failed)
+        seen = sum(1 for e in runlog.read_events(run.path) if e.get("event") == "ci.result" and e.get("outcome") == "red")
+        logs = _save_logs(github, run.path / "ci" / str(seen), failed)
         gates = list(ctx.settings.final_gates or ctx.settings.slice_gates)
-        if not checks.fix(ctx, fixer, "the CI checks", logs, gates, f"ci-{attempt + 1}"):
+        if not checks.fix(ctx, fixer, "the CI checks", logs, gates, f"ci-{seen}"):
             break
         github.push(branch)
         run.event("github.pushed", branch=branch, commit=implement.git(ctx.worktree, "rev-parse", "HEAD"))
-    github.edit_pr(number, _body(run.path))
     return outcome
 
 
@@ -277,6 +390,74 @@ def _post_follow_ups(github: GitHub, run: runlog.Run, record: dict[str, Any], pr
         body.write_text(f"{note}\n\nFrom {pr}.\n", encoding="utf-8")
         url = github.comment("issue", number, body)
         run.event("issue.noted", issue=number, url=url)
+
+
+FOLLOW_UPS = ("followups.posted", "followups.updated", "followups.continued")
+
+
+def follow_ups_shown(run_dir: Path) -> list[dict[str, Any]]:
+    """Each follow-ups comment on the pull request, in order, with how many drafts it
+    holds from which number on: the first, as placido last wrote it, then any more."""
+
+    shown: list[dict[str, Any]] = []
+    for event in runlog.read_events(run_dir):
+        kind = event.get("event")
+        if kind == "followups.posted" and not shown:
+            shown.append({"url": event.get("url"), "start": 0, "count": int(event.get("count") or 0)})
+        elif kind == "followups.updated" and shown:
+            shown[0]["count"] = int(event.get("count") or 0)
+        elif kind == "followups.continued":
+            shown.append({"url": event.get("url"), "start": int(event.get("start") or 0),
+                          "count": int(event.get("count") or 0)})
+    return shown
+
+
+def update_follow_ups(github: GitHub, run: runlog.Run, pr_number: int) -> dict[str, tuple[int, str]]:
+    """Show every follow-up the run has drafted, after answering the review comments
+    drafted more: placido rewrites its follow-ups comment while it reads as placido last
+    wrote it, and otherwise posts the new drafts in another comment, numbered on, so an
+    edit someone made (an outcome marked on an item) is never lost. Returns, by each
+    follow-up's key, its number and the URL of the comment that shows it."""
+
+    pr = (runlog.last_event(run.path, "pr.opened") or {}).get("url", "the pull request")
+    drafts = followups.all_drafts(run.path)
+    shown = follow_ups_shown(run.path)
+    total = sum(entry["count"] for entry in shown)
+    if not shown:
+        text, drafts = followups.comment(run.path, pr)
+        if text:
+            body = run.path / "followups-comment.md"
+            body.write_text(text, encoding="utf-8")
+            run.event("followups.posted", url=github.comment("pr", pr_number, body), on=f"pr {pr_number}",
+                      count=len(drafts))
+    elif len(drafts) > total:
+        first = shown[0]
+        written = run.path / "followups-comment.md"
+        now = github.comment_body(str(first["url"]))
+        same = (len(shown) == 1 and now is not None and written.is_file()
+                and _plain(now) == _plain(written.read_text(encoding="utf-8")))
+        if same:
+            text, drafts = followups.comment(run.path, pr)
+            written.write_text(text, encoding="utf-8")
+            github.edit_comment(str(first["url"]), written)
+            run.event("followups.updated", url=first["url"], count=len(drafts))
+        else:
+            text, drafts = followups.comment(run.path, pr, start=total, first=str(first["url"]))
+            body = run.path / f"followups-comment-{total + 1}.md"
+            body.write_text(text, encoding="utf-8")
+            url = github.comment("pr", pr_number, body)
+            run.event("followups.continued", url=url, start=total, count=len(drafts) - total)
+    numbers: dict[str, tuple[int, str]] = {}
+    shown = follow_ups_shown(run.path)
+    for n, found in enumerate(drafts, 1):
+        holder = next((e for e in shown if e["start"] < n <= e["start"] + e["count"]), None)
+        if found.key and holder is not None:
+            numbers[found.key] = (n, str(holder["url"]))
+    return numbers
+
+
+def _plain(text: str) -> str:
+    return text.replace("\r\n", "\n").strip()
 
 
 def _body(run_dir: Path) -> Path:

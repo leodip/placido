@@ -56,6 +56,7 @@ def build(run_dir: Path, folded: list[int]) -> str:
                   f" [the release notes comment]({noted.get('url')}).", ""]
     lines += _decisions(agreement, run_dir, events)
     lines += _review(run_dir)
+    lines += review_comments(events)
     lines += _follow_ups(events)
     lines += ["---", f"Built by placido · run `{run_dir.parent.name}/{run_dir.name}`"]
     return "\n".join(lines).strip() + "\n"
@@ -158,17 +159,66 @@ def _review(run_dir: Path) -> list[str]:
     return out + [""]
 
 
+COMMENT_WORDS = (
+    ("fixed", "fixed"),
+    ("not-changed", "not changed (each reply says why)"),
+    ("follow-up", "left out as follow-ups"),
+    ("left", "left for you"),
+)
+
+
+def review_comments(events: list[dict[str, Any]], level: str = "##") -> list[str]:
+    """How placido answered the comments the project's reviewers left on the pull
+    request (placido/comments.py): the counts, and what is left for the user."""
+
+    settled = [e for e in events if e.get("event") == "comments.settled"]
+    unanswered = next((e for e in reversed(events) if e.get("event") == "comments.unanswered"), None)
+    if not settled and not unanswered:
+        return []
+    answers = [a for e in settled for a in e.get("answers", []) if isinstance(a, dict)]
+    lines = [f"{level} Review comments", ""]
+    if answers:
+        authors = sorted({str(a.get("author")) for a in answers})
+        passes = len({e.get("pass") for e in settled})
+        parts = [f"{n} {words}" for kind, words in COMMENT_WORDS
+                 if (n := sum(1 for a in answers if a.get("outcome") == kind))]
+        lines.append(f"Placido answered {len(answers)} comment{'s' if len(answers) != 1 else ''} from"
+                     f" {', '.join(authors)}" + (f", in {passes} passes" if passes > 1 else "")
+                     + ": " + ", ".join(parts) + ".")
+        left = [a for a in answers if a.get("outcome") == "left"]
+        if left:
+            lines += ["", f"{level}# Left for you", ""]
+            lines += [f"- [{a.get('title')}]({a.get('url')}): {a.get('text')}" for a in left]
+    if unanswered:
+        if answers:
+            lines.append("")
+        count = int(unanswered.get("count") or 0)
+        lines.append(f"{count} comment{'s' if count != 1 else ''} came after placido's last pass, unanswered: "
+                     + ", ".join(str(url) for url in unanswered.get("urls", [])) + ".")
+    return lines + [""]
+
+
 def _follow_ups(events: list[dict[str, Any]]) -> list[str]:
-    posted = next((e for e in reversed(events) if e.get("event") == "followups.posted"), None)
+    posted = next((e for e in events if e.get("event") == "followups.posted"), None)
     noted = [e for e in events if e.get("event") == "issue.noted"]
     if not posted and not noted:
         return []
     lines = ["## Follow-ups", ""]
     if posted:
-        count = posted.get("count")
+        count = int(posted.get("count") or 0)
+        more = []
+        for event in events:
+            if event.get("event") == "followups.updated":
+                count = int(event.get("count") or 0)
+            elif event.get("event") == "followups.continued":
+                count += int(event.get("count") or 0)
+                more.append(event.get("url"))
         what = f"{count} piece{'s' if count != 1 else ''} of work" if count else "The work"
+        where = f"[the follow-ups comment]({posted.get('url')})" + "".join(
+            f" and [its continuation]({url})" if len(more) == 1 else f", [continued]({url})" for url in more
+        )
         lines.append(f"{what} left out of this change, each drafted as an issue with the command"
-                     f" that files it: [the follow-ups comment]({posted.get('url')}).")
+                     f" that files it: {where}.")
     if noted:
         if posted:
             lines.append("")

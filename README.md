@@ -6,8 +6,8 @@ pull request.
 You point placido at an issue. It interviews you until every decision is made, then
 coding agents build the change unattended, slice by slice and tests first, in their
 own Herdr tabs. Another agent reviews the whole change, a third fixes what it finds,
-and placido opens a pull request and sees CI through. You are only asked when a
-decision is genuinely yours.
+and placido opens a pull request, sees CI through, and answers what review bots say
+about it. You are only asked when a decision is genuinely yours.
 
 ```
 placido start 439      worktree, branch, Herdr workspace, the project's setup
@@ -66,7 +66,19 @@ is posted, pushed, or merged until you pick it (see
    agent with evidence and a duplicate search), go into one comment
    on the pull request, each with the `gh issue create` command that files it;
    placido files none. Other open issues the change affects get a short note.
-7. **Close.** After you merge, `placido close` runs your project's teardown,
+7. **Review comments.** When the project names reviewers for placido to answer, such
+   as a review bot, placido reads what they left once CI concludes: each thread one of
+   them started that nobody has answered, and the text of their reviews, which may hold
+   comments GitHub could not attach to a line. The reviewer judges each comment, which
+   becomes a finding or is not valid; the fixer fixes, disputes, or defers each finding,
+   fixing in this pull request whatever is not big and needs no decision of yours; and
+   the reviewer verifies, as in the review. Placido commits, pushes, and replies on each
+   thread: fixed in a commit, not changed and why, or left out and drafted as a
+   follow-up in the follow-ups comment. A comment only you can settle is left
+   unanswered, and you are told. CI runs again on the push, and the reviewers may
+   comment on it: placido answers up to `passes` times (see
+   [Review comments](#review-comments)).
+8. **Close.** After you merge, `placido close` runs your project's teardown,
    removes the worktree and its workspace, brings your base branch up to date, and
    deletes the issue's branch once its pull request is merged. An unmerged branch
    stays.
@@ -206,7 +218,8 @@ conventionally read, so a project set up for other agent tools works too:
   `GLOSSARY.md`, and ADRs in `docs/adr/`: read by every role.
 - `.placido/notes/<role>.md`, optional: what only placido's agents need, per role
   (`spec`, `vet`, `implement`, `review`, `fix`, `retro`), such as how to run the database
-  tests in this project.
+  tests in this project; and `review-comments.md`, read by both agents that answer the
+  review comments.
 
 ### Agents and fallbacks
 
@@ -267,6 +280,24 @@ host_paths = [".placido", ".claude", ".codex", ".mcp.json"]  # run here: changes
 parallel   = true      # reviewers at once, each in a worktree and stack of its own
 fix_rounds = 3         # fixes, each reviewed in full in a round of its own, before the menu asks again
 ```
+
+### Review comments
+
+```toml
+[review_comments]
+accounts = ["review-bot[bot]"]   # whose comments on the run's pull request placido answers; none by default
+passes   = 2                     # how many times, each once CI concludes on what the last answer pushed
+```
+
+Placido knows GitHub's review threads and reviews, not any one reviewer, so the
+setting names accounts and nothing else. What your reviewers' comments look like, such
+as how a bot marks severity or which of its replies are only conversation, goes in
+`.placido/notes/review-comments.md`. Placido reads once every check on the pull request
+has concluded: a review bot that reports a check, as most do, is done by then.
+Comments on the pull request's conversation, such as a bot's summary, are not answered;
+nor are replies inside a thread. The review runs `final_rounds` more rounds after the
+one that judges the comments, and the last gates do not run again on its fixes, which
+CI checks.
 
 ### Your own settings
 

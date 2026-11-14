@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from placido import checks, decisions, runlog, spec
+from placido import checks, decisions, prbody, runlog, spec
 
 CI_WORDS = {
     "green": "green",
@@ -37,6 +37,7 @@ def write(run_dir: Path, stopped: str | None = None) -> str:
     lines += _slices(run_dir, events)
     lines += _decisions(run_dir, events)
     lines += _review(run_dir)
+    lines += prbody.review_comments(events)
     lines += _posted_follow_ups(events)
     lines += _follow_ups(run_dir, events)
     lines += _trouble(events)
@@ -180,6 +181,8 @@ def _posted_follow_ups(events: list[dict[str, Any]]) -> list[str]:
     lines = ["## Follow-ups posted", ""]
     if posted:
         lines.append(f"- {posted.get('count', '')} drafted for filing by hand: {posted.get('url')}".replace("-  ", "- "))
+        lines += [f"- {e.get('count', '')} more, after the comment was edited: {e.get('url')}"
+                  for e in events if e.get("event") == "followups.continued"]
     lines += [f"- Noted on #{e.get('issue')}: {e.get('url')}" for e in noted]
     return lines + [""]
 

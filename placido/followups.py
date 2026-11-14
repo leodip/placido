@@ -1,11 +1,13 @@
 """Follow-ups: the work a run leaves out of its change, drafted as GitHub issues the
 user files by hand. Placido files none (decided 2026-10-02).
 
-Two sources: the drafts the interview wrote beside the agreement
-(`followup-*.md`), and the review's follow-ups the user did not fold in, which one
+Three sources: the drafts the interview wrote beside the agreement
+(`followup-*.md`); the review's follow-ups the user did not fold in, which one
 agent step drafts after the fold-in question (`skills/followups/SKILL.md`), into the
-run's `followups/` folder. Every draft has one format, so placido can build the
-command that files it:
+run's `followups/` folder; and the review comments placido left out of the pull
+request when it answered them (placido/comments.py), drafted the same way after each
+pass, each naming the comment it was raised in. Every draft has one format, so
+placido can build the command that files it:
 
     # <issue title>
 
@@ -16,7 +18,9 @@ command that files it:
     <the issue's body: the problem, the evidence, and when it is done>
 
 At delivery all of them go, in full, into one comment on the pull request, each with
-its `gh issue create` command.
+its `gh issue create` command. Answering the review comments adds to that comment
+later, while it still reads as placido wrote it; otherwise the new drafts go into
+another comment, numbered on from the first.
 """
 
 from __future__ import annotations
@@ -44,6 +48,8 @@ class Draft:
     why: str = ""
     searched: str = ""
     source: Path | None = None  # the draft's file, when there is one
+    key: str = ""  # the follow-up's id, for one the review or a review comment left
+    raised: str = ""  # the URL of the review comment it was raised in, if one was
 
 
 def parse(text: str, source: Path | None = None) -> Draft:
@@ -72,6 +78,17 @@ def review_items(run_dir: Path) -> list[dict[str, Any]]:
     return list((runlog.last_event(run_dir, "review.followups") or {}).get("items", []))
 
 
+def comment_items(run_dir: Path) -> list[dict[str, Any]]:
+    """What answering the review comments left out, every pass in order; each item's
+    id names its pass, as in C1-R1-2, so it never meets a review follow-up's."""
+
+    items: list[dict[str, Any]] = []
+    for event in runlog.read_events(run_dir):
+        if event.get("event") == "comments.followups":
+            items += [item for item in event.get("items", []) if isinstance(item, dict)]
+    return items
+
+
 def folder(run_dir: Path) -> Path:
     return run_dir / "followups"
 
@@ -81,18 +98,21 @@ def all_drafts(run_dir: Path) -> list[Draft]:
     its drafted file or, when drafting failed, from what the review said."""
 
     found = [parse(p.read_text(encoding="utf-8"), p) for p in sorted(spec.issue_dir(run_dir).glob("followup-*.md"))]
-    for item in review_items(run_dir):
+    for item in [*review_items(run_dir), *comment_items(run_dir)]:
         path = folder(run_dir) / f"{item.get('id')}.md"
         if path.is_file():
             text = path.read_text(encoding="utf-8")
-            if not text.strip().startswith(DUPLICATE):
-                found.append(parse(text, path))
+            if text.strip().startswith(DUPLICATE):
+                continue
+            draft_ = parse(text, path)
         else:
-            found.append(Draft(
+            draft_ = Draft(
                 title=str(item.get("title") or item.get("id")),
                 body=str(item.get("description") or item.get("title") or ""),
                 why=str(item.get("why") or ""),
-            ))
+            )
+        draft_.key, draft_.raised = str(item.get("id") or ""), str(item.get("url") or "")
+        found.append(draft_)
     return found
 
 
@@ -112,6 +132,35 @@ def draft(ctx: "driver.Context", agent: Any) -> None:  # noqa: F821
         return  # nothing to draft, and no GitHub issues to leave notes on
     out = folder(ctx.run.path)
     (out / "notes").mkdir(parents=True, exist_ok=True)
+    outcome = _draft_step(ctx, agent, items, prompt(ctx, items, out), "followups")
+    if outcome != "success":
+        ctx.run.event("followups.draft_failed", outcome=outcome)
+        return
+    ctx.run.event("followups.drafted", files=[f"{item.get('id')}.md" for item in items],
+                  notes=sorted(notes(ctx.run.path)))
+
+
+def draft_comments(ctx: "driver.Context", agent: Any, pass_: int, items: list[dict[str, Any]]) -> None:  # noqa: F821
+    """Draft what one pass of answering the review comments left out, once per pass;
+    as draft() does, a failed step leaves the items as the pass wrote them."""
+
+    done = [e for e in runlog.read_events(ctx.run.path)
+            if e.get("event") in ("followups.drafted", "followups.draft_failed") and e.get("comments") == pass_]
+    if not items or done:
+        return
+    out = folder(ctx.run.path)
+    out.mkdir(parents=True, exist_ok=True)
+    outcome = _draft_step(ctx, agent, items, comments_prompt(ctx, items, out, pass_), f"followups-comments-{pass_}")
+    if outcome != "success":
+        ctx.run.event("followups.draft_failed", outcome=outcome, comments=pass_)
+        return
+    ctx.run.event("followups.drafted", files=[f"{item.get('id')}.md" for item in items], comments=pass_)
+
+
+def _draft_step(ctx: "driver.Context", agent: Any, items: list[dict[str, Any]], task: str, name: str) -> str:  # noqa: F821
+    """One drafting step, which must leave the worktree as it found it; its outcome."""
+
+    out = folder(ctx.run.path)
     before = (implement.git(ctx.worktree, "rev-parse", "HEAD"), implement.git(ctx.worktree, "status", "--porcelain"))
 
     def check(result: Path) -> list[str]:
@@ -121,12 +170,7 @@ def draft(ctx: "driver.Context", agent: Any) -> None:  # noqa: F821
             problems.append("the worktree changed; drafting follow-ups must not touch the code. Undo your changes.")
         return problems
 
-    step = ctx.runner("fix", agent, prompt(ctx, items, out), name="followups", check=check)
-    if step.outcome != "success":
-        ctx.run.event("followups.draft_failed", outcome=step.outcome)
-        return
-    ctx.run.event("followups.drafted", files=[f"{item.get('id')}.md" for item in items],
-                  notes=sorted(notes(ctx.run.path)))
+    return ctx.runner("fix", agent, task, name=name, check=check).outcome
 
 
 def check_drafts(out: Path, ids: list[str]) -> list[str]:
@@ -185,6 +229,41 @@ def prompt(ctx: "driver.Context", items: list[dict[str, Any]], out: Path) -> str
     return "\n".join(lines) + "\n"
 
 
+def comments_prompt(ctx: "driver.Context", items: list[dict[str, Any]], out: Path, pass_: int) -> str:  # noqa: F821
+    """The drafting prompt for what a pass of answering the review comments left out."""
+
+    issue = spec.issue_dir(ctx.run.path)
+    account = ctx.run.path / "comments" / str(pass_)
+    lines = [
+        "# Draft the review comments left out of the pull request as GitHub issues",
+        "",
+        f"Follow the placido follow-ups skill in {SKILL}. These follow-ups come from the comments"
+        " other reviewers left on the pull request: placido answered them, and left these out of it.",
+        "",
+        f"- **Agreement:** {issue / 'agreement.md'}",
+        decisions.prompt_line(ctx.run.path),
+        f"- **The comments, and how they were answered:** {account / 'comments.md'}, and the review"
+        f" rounds of this pass under {ctx.run.path / 'steps'} (their names start with comments-{pass_}-).",
+        f"- **Code:** the worktree you are in, {ctx.worktree}. Read it; do not change it.",
+        f"- **Write:** one draft per follow-up, as {out}/<id>.md.",
+        f"- **Already drafted:** the files in {out} and beside the agreement in {issue}; a follow-up one"
+        " of them covers is a duplicate.",
+        "- **Notes for other issues:** none in this step; the run wrote them when it opened the pull request.",
+        "",
+        "## The follow-ups",
+        "",
+    ]
+    for item in items:
+        lines.append(f"- **{item.get('id')}** {item.get('title')}")
+        if item.get("description"):
+            lines.append(f"  - What: {item.get('description')}")
+        if item.get("why"):
+            lines.append(f"  - Left out because: {item.get('why')}")
+        if item.get("url"):
+            lines.append(f"  - Raised in: {item.get('url')}")
+    return "\n".join(lines) + "\n"
+
+
 def notes(run_dir: Path) -> dict[int, str]:
     """The notes the drafting step wrote for other issues the change affects, by number."""
 
@@ -198,22 +277,27 @@ def notes(run_dir: Path) -> dict[int, str]:
 # ---- the comment ------------------------------------------------------------------------
 
 
-def comment(run_dir: Path, pr: str) -> tuple[str, list[Draft]]:
+def comment(run_dir: Path, pr: str, start: int = 0, first: str = "") -> tuple[str, list[Draft]]:
     """The pull request comment with every follow-up and the command filing each, and
-    the drafts it holds. Each body is also written to a file the command names."""
+    the drafts it holds, all of them. Each body is also written to a file the command
+    names. With start, the comment holds only the drafts from that one on, numbered on
+    from the comment at first, which holds the earlier ones."""
 
     drafts = all_drafts(run_dir)
-    if not drafts:
-        return "", []
+    shown = drafts[start:]
+    if not shown:
+        return "", drafts
     bodies = folder(run_dir) / "bodies"
     bodies.mkdir(parents=True, exist_ok=True)
-    parts = [
-        "## Follow-ups",
-        "",
-        f"{len(drafts)} piece{'s' if len(drafts) != 1 else ''} of work left out of {pr}, each drafted as an"
-        " issue. Nothing is filed: open a draft, and run its command to file it.",
-    ]
-    for n, found in enumerate(drafts, 1):
+    count = f"{len(shown)} piece{'s' if len(shown) != 1 else ''} of work"
+    if start:
+        opening = (f"{count} more left out of {pr}, after the {start} in [the follow-ups comment]({first}),"
+                   " each drafted as an issue. Nothing is filed: open a draft, and run its command to file it.")
+    else:
+        opening = (f"{count} left out of {pr}, each drafted as an issue. Nothing is filed: open a draft,"
+                   " and run its command to file it.")
+    parts = ["## Follow-ups", "", opening]
+    for n, found in enumerate(shown, start + 1):
         body_file = bodies / f"{n}.md"
         body_file.write_text(found.body + "\n", encoding="utf-8")
         command = "gh issue create --title " + shlex.quote(found.title) + "".join(
@@ -222,6 +306,8 @@ def comment(run_dir: Path, pr: str) -> tuple[str, list[Draft]]:
         parts += ["", f"### {n}. {found.title}", ""]
         if found.why:
             parts += [f"Left out because: {found.why}", ""]
+        if found.raised:
+            parts += [f"Raised in: {found.raised}", ""]
         parts += ["<details><summary>The draft, and the command to file it</summary>", ""]
         meta = []
         if found.labels:

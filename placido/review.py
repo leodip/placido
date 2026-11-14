@@ -249,7 +249,17 @@ def fixer_prompt(
 
 
 class Loop:
-    """Runs the rounds; every decision is logged with its reason."""
+    """Runs the rounds; every decision is logged with its reason.
+
+    The run's review of its change is this class as it is. Another stage that reviews in
+    rounds, such as answering the comments other reviewers leave on the pull request
+    (placido/comments.py), changes what the hooks below say: its events' prefix and
+    step names, round 1's prompt and the checks on it, the fixer's prompt, and which
+    answers earn another round."""
+
+    PREFIX = "review"  # of the loop's events, and of its step names when STEPS is empty
+    STEPS = ""  # put before each step's name, as in `<STEPS>review-2`
+    ASK = True  # whether the fixer may stop to ask the user
 
     def __init__(
         self, run: runlog.Run, runner: Step, herdr: Herdr, settings: config.Config,
@@ -258,13 +268,19 @@ class Loop:
         self.run, self.runner, self.herdr, self.settings = run, runner, herdr, settings
         self.reviewer, self.fixer, self.worktree, self.env = reviewer, fixer, worktree, env
 
+    def _event(self, kind: str, **fields: Any) -> None:
+        self.run.event(f"{self.PREFIX}.{kind}", **fields)
+
+    def _budget(self) -> int:
+        return self.settings.final_rounds
+
     def __call__(self) -> Review:
         account = Review()
-        budget = self.settings.final_rounds
-        self.run.event("review.start", budget=budget)
+        budget = self._budget()
+        self._event("start", budget=budget)
         # Each review starts on the configured agents; a move to a fallback holds
         # until the review ends, since the same change would likely be refused again.
-        starts = lambda event: event.get("event") == "review.start"  # noqa: E731
+        starts = lambda event: event.get("event") == f"{self.PREFIX}.start"  # noqa: E731
         self.reviewers = fallback.Chain(
             self.run, "review", fallback.entries(self.settings, "review", self.reviewer), self._notify, starts,
         )
@@ -280,7 +296,7 @@ class Loop:
         fix_commits, resolutions = "", None
         outside: list[dict[str, Any]] = []  # follow-ups round 1 found out of scope
         for round_ in range(1, budget + 1):
-            self.run.event("review.round", round=round_, budget=budget)
+            self._event("round", round=round_, budget=budget)
             step = self._review_round(round_, budget, agent, pane, fix_commits, resolutions, pending, done)
             overflowed = False
             while step.outcome != "success" and self._carry_on("review", self.reviewers, step, overflowed):
@@ -292,7 +308,7 @@ class Loop:
                 step = self._review_round(round_, budget, "", "", fix_commits, resolutions, pending, done)
             if step.outcome != "success":
                 account.outcome = "failed"
-                self.run.event("review.failed", round=round_, outcome=step.outcome)
+                self._event("failed", round=round_, outcome=step.outcome)
                 pending = []
                 break
             agent, pane, last_folder = step.agent or agent, step.pane or pane, step.path
@@ -308,12 +324,12 @@ class Loop:
                 if verdict["verdict"] in STILL_OPEN:
                     account.followups = [f for f in account.followups if f["id"] != verdict["id"]]
             counts = {s: sum(1 for f in new if f["severity"] == s) for s in SEVERITIES}
-            self.run.event("review.findings", round=round_, reopened=reopened, **counts)
-            account.rounds.append({"round": round_, "findings": new, "verdicts": verdicts})
+            self._event("findings", round=round_, reopened=reopened, **counts)
+            account.rounds.append({"round": round_, "findings": new, "verdicts": verdicts, "folder": str(step.path)})
             open_findings = [known[i] for i in reopened + [f["id"] for f in new] if i in known]
             pending = []
             if not open_findings:
-                self.run.event("review.decision", round=round_, decision="pass", reason="nothing open")
+                self._event("decision", round=round_, decision="pass", reason="nothing open")
                 break
 
             fixed = self._fix_round(round_, open_findings, step.path)
@@ -322,6 +338,7 @@ class Loop:
                 break
             before, after, resolutions, answers = fixed
             account.rounds[-1]["answers"] = {i: a.get("status") for i, a in answers.items()}
+            account.rounds[-1]["notes"] = {i: str(a.get("note") or "") for i, a in answers.items()}
             account.rounds[-1]["commit"] = after if after != before else None
             fix_commits = f"{before[:12]}..{after[:12]}" if after != before else ""
             self._sort_answers(open_findings, answers, account)
@@ -330,19 +347,19 @@ class Loop:
                 if answers.get(f["id"], {}).get("status") in ("fixed", "disputed", "deferred")
             ]
             serious = [f for f in open_findings if f["severity"] != "minor"]
-            disputed = [f for f in serious if answers.get(f["id"], {}).get("status") == "disputed"]
+            to_judge = [f for f in serious if answers.get(f["id"], {}).get("status") in self._judged()]
             changed = after != before
             if not serious:
                 reason = "only minor findings"
-            elif not changed and not disputed:
+            elif not changed and not to_judge:
                 reason = "the fix changed nothing"
             elif round_ == budget:
                 reason = "round budget used"
             else:
-                self.run.event("review.decision", round=round_, decision="next round",
-                               reason="serious findings with a fix or a dispute to judge")
+                self._event("decision", round=round_, decision="next round",
+                            reason=f"serious findings with a fix or {self._judged_words()} to judge")
                 continue
-            self.run.event("review.decision", round=round_, decision="stop", reason=reason)
+            self._event("decision", round=round_, decision="stop", reason=reason)
             if reason != "round budget used":
                 account.unverified += [i for i in pending if answers[i]["status"] == "fixed"]
                 pending = []
@@ -378,7 +395,7 @@ class Loop:
         if step.outcome in fallback.SWITCH:
             return chain.switch(step.outcome, message, step=step.path.name)
         if step.outcome == "context" and not overflowed:
-            self.run.event("review.fresh_session", role=role, step=step.path.name, reason="context")
+            self._event("fresh_session", role=role, step=step.path.name, reason="context")
             return True
         if step.outcome == "auth":
             self._notify(f"{chain.current.agent} is logged out",
@@ -391,20 +408,50 @@ class Loop:
             return
         alerts.notify(self.run, self.herdr, title, body)
 
+    # ---- the hooks another stage changes ----------------------------------------------
+
+    def _judged(self) -> tuple[str, ...]:
+        """The fixer's answers to serious findings that earn a round to judge them, when
+        the fix changed nothing: a dispute. A deferral is not judged: it is out of the
+        change's scope, which the agreement settled."""
+
+        return ("disputed",)
+
+    def _judged_words(self) -> str:
+        return "a dispute"
+
+    def _check_findings(self, result: Path, round_: int, earlier: list[str]) -> list[str]:
+        return check_findings(result.parent / "findings.json", round_, earlier if round_ > 1 else [])
+
+    def _reviewer_task(
+        self, folder: Path, round_: int, budget: int, fix_commits: str, resolutions: Path | None,
+        earlier: list[str], handover: list[Path] | None,
+    ) -> str:
+        return reviewer_prompt(
+            self.run.path, self.worktree, folder, round_, budget, self.settings,
+            fix_commits, resolutions, earlier, handover=handover,
+        )
+
+    def _fixer_task(self, folder: Path, open_path: Path, review_md: Path) -> str:
+        return fixer_prompt(self.run.path, self.worktree, folder, open_path, review_md, self.settings)
+
+    def _step(self, kind: str, round_: int) -> str:
+        return f"{self.STEPS}{kind}-{round_}"
+
+    # ---- the steps ----------------------------------------------------------------------
+
     def _review_round(
         self, round_: int, budget: int, agent: str, pane: str, fix_commits: str,
         resolutions: Path | None, earlier: list[str], done: list[Path],
     ):
-        name = f"review-{round_}"
-        record_dir = self.run.path
+        name = self._step("review", round_)
 
         def check(result: Path) -> list[str]:
-            return check_findings(result.parent / "findings.json", round_, earlier if round_ > 1 else [])
+            return self._check_findings(result, round_, earlier)
 
         def task(folder: Path) -> str:
-            return reviewer_prompt(
-                record_dir, self.worktree, folder, round_, budget, self.settings,
-                fix_commits, resolutions, earlier, handover=done if not agent else None,
+            return self._reviewer_task(
+                folder, round_, budget, fix_commits, resolutions, earlier, done if not agent else None,
             )
 
         folder = self._next_folder(name)
@@ -420,7 +467,7 @@ class Loop:
     def _fix_round(
         self, round_: int, open_findings: list[dict[str, Any]], review_folder: Path,
     ) -> tuple[str, str, Path, dict[str, dict[str, Any]]] | None:
-        name = f"fix-{round_}"
+        name = self._step("fix", round_)
         folder = self._next_folder(name)  # created by the step itself, so its number holds
         open_path = review_folder / "open-findings.json"
         open_path.write_text(json.dumps({"findings": open_findings}, indent=2) + "\n", encoding="utf-8")
@@ -436,39 +483,36 @@ class Loop:
                 if implement.git(self.worktree, "status", "--porcelain"):
                     return [f"the result says '{NO_CHANGES}', but the worktree has changes."]
                 return []
-            entry = {"id": f"review-{round_}", "title": "review fixes", "gates": []}
+            entry = {"id": self._step("review", round_), "title": "review fixes", "gates": []}
             return implement.check(result, self.worktree, before, entry, _no_mutations(self.settings), self.env, self.run)
 
-        prompt = fixer_prompt(
-            self.run.path, self.worktree, folder, open_path, review_folder / "review.md", self.settings,
-        )
-        step = self.runner("fix", self.fixer, prompt, name=name, check=check, ask=implement.blocked)
+        ask = implement.blocked if self.ASK else None
+        prompt = self._fixer_task(folder, open_path, review_folder / "review.md")
+        step = self.runner("fix", self.fixer, prompt, name=name, check=check, ask=ask)
         overflowed = False
         while step.outcome != "success" and self._carry_on("fix", self.fixers, step, overflowed):
             # The next fixer starts clean: the partial fixes are set aside, as for a slice.
             overflowed = overflowed or step.outcome == "context"
             if implement.git(self.worktree, "status", "--porcelain"):
-                message = f"placido: review round {round_} fix failed ({step.outcome}, {self.run.path.name})"
+                message = f"placido: {self.PREFIX} round {round_} fix failed ({step.outcome}, {self.run.path.name})"
                 implement.git(self.worktree, "stash", "push", "--include-untracked", "-m", message)
                 self.run.event("worktree.stashed", message=message)
             self.fixer = self.fixers.current
             folder = self._next_folder(name)
             resolutions = folder / "resolutions.json"
-            prompt = fixer_prompt(
-                self.run.path, self.worktree, folder, open_path, review_folder / "review.md", self.settings,
-            )
-            step = self.runner("fix", self.fixer, prompt, name=name, check=check, ask=implement.blocked)
+            prompt = self._fixer_task(folder, open_path, review_folder / "review.md")
+            step = self.runner("fix", self.fixer, prompt, name=name, check=check, ask=ask)
         if step.outcome != "success":
-            self.run.event("review.failed", round=round_, step=name, outcome=step.outcome)
+            self._event("failed", round=round_, step=name, outcome=step.outcome)
             return None
         result = step.path / "result.md"
         if result.read_text(encoding="utf-8").strip().splitlines()[:1] != [NO_CHANGES]:
-            _commit(self.worktree, result, self.run, round_)
+            self._commit(result, round_)
         after = implement.git(self.worktree, "rev-parse", "HEAD")
         data = json.loads(resolutions.read_text(encoding="utf-8"))
         answers = {a["id"]: a for a in data["resolutions"] if isinstance(a, dict)}
-        self.run.event(
-            "review.fixed", round=round_,
+        self._event(
+            "fixed", round=round_,
             **{s: sum(1 for a in answers.values() if a.get("status") == s) for s in STATUSES},
         )
         return before, after, resolutions, answers
@@ -482,6 +526,9 @@ class Loop:
                 account.escalated.append({**finding, "why": answer.get("note", "")})
             elif answer.get("status") == "deferred":
                 account.followups.append({**finding, "why": answer.get("note", "")})
+
+    def _commit(self, result: Path, round_: int) -> str:
+        return _commit(self.worktree, result, self.run, round_)
 
     def _next_folder(self, name: str) -> Path:
         from placido.step import next_step_number
@@ -497,10 +544,14 @@ def _no_mutations(settings: config.Config) -> config.Config:
     return replace(settings, mutations=0)
 
 
-def _commit(worktree: Path, result: Path, run: runlog.Run, round_: int) -> str:
+def _commit(
+    worktree: Path, result: Path, run: runlog.Run, round_: int, trailer: str = "", prefix: str = "review",
+) -> str:
+    """Commit the fixer's work with the run's trailers; trailer replaces the round's."""
+
     text = (
         f"{implement.message(result)}\n\nPlacido-Run: {run.path.parent.name}/{run.path.name}\n"
-        f"Placido-Review-Round: {round_}\n"
+        f"{trailer or f'Placido-Review-Round: {round_}'}\n"
     )
     implement.git(worktree, "add", "-A")
     done = subprocess.run(
@@ -509,7 +560,7 @@ def _commit(worktree: Path, result: Path, run: runlog.Run, round_: int) -> str:
     if done.returncode != 0:
         raise implement.ImplementError(f"git commit: {(done.stderr or done.stdout).strip()}")
     sha = implement.git(worktree, "rev-parse", "HEAD")
-    run.event("review.committed", round=round_, commit=sha)
+    run.event(f"{prefix}.committed", round=round_, commit=sha)
     return sha
 
 

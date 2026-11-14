@@ -172,6 +172,28 @@ class DeliverTest(DeliverCase):
         self.assertEqual(len(self.fixer.prompts), 2)
         self.assertIn("> **CI is red after placido's fixes (build).**", self.gh.bodies["pr edit last"])
 
+    def test_review_comments_are_answered_once_ci_is_green_and_decide_the_outcome(self):
+        from unittest import mock
+
+        from placido import comments
+
+        seen = []
+
+        def answer(ctx, hub, number, branch, ci, outcome):
+            seen.append((number, branch, outcome))
+            return "red"
+
+        self.gh.checks = [[check("build", "pass")]]
+        with mock.patch.object(comments, "answer", answer):
+            self.assertEqual(self.deliver(), "red")
+        self.assertEqual(seen, [(450, "placido/439-rate-limit", "green")])
+
+        self.gh.checks = [[check("build", "fail")]] * 3
+        seen.clear()
+        with mock.patch.object(comments, "answer", answer):
+            self.assertEqual(self.deliver(), "red")
+        self.assertEqual(seen, [])  # red CI goes back to placido run, unanswered
+
     def test_no_ci_at_all(self):
         self.assertEqual(self.deliver(), "none")
         self.assertGreaterEqual(self.now, github.ATTACH_SECONDS)

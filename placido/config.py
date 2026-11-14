@@ -52,6 +52,10 @@ DEFAULTS: dict[str, Any] = {
     "implement": {"test_first": True, "mutations": 2},
     "review": {"plan_rounds": 0, "final_rounds": 3},
     "limits": {"stage_attempts": 3, "quota_wait": "2h", "ci_wait": "1h"},
+    # The comments other reviewers, such as a review bot, leave on the run's pull request:
+    # the accounts whose comments placido answers once CI concludes (none: it answers
+    # none), and how many times, each on what the last answer pushed (decided 2026-11-14).
+    "review_comments": {"accounts": [], "passes": 2},
     # `placido pr`: two reviewers from different vendors, one after the other; the gates
     # placido runs once for both (none named: the slice and the final gates); and the
     # paths setup and the gates run on this machine, which a pull request changes only as
@@ -171,6 +175,14 @@ class PRSettings:
 
 
 @dataclass(frozen=True)
+class ReviewComments:
+    """Which reviewers' comments on the run's pull request placido answers, and how often."""
+
+    accounts: tuple[str, ...] = ()  # GitHub logins, a bot's with or without its [bot]
+    passes: int = 2  # answers, each once CI concludes on the latest push
+
+
+@dataclass(frozen=True)
 class Config:
     source: Path | None
     base: str
@@ -189,6 +201,7 @@ class Config:
     quota_wait: int  # seconds
     pr: PRSettings
     ci_wait: int = 3600  # seconds to wait for the pull request's CI to conclude
+    review_comments: ReviewComments = ReviewComments()
 
 
 def _duration_setting(limits: dict[str, Any], key: str) -> int:
@@ -391,6 +404,17 @@ def _pr(
     return PRSettings(tuple(reviewers), tuple(names), tuple(host_paths), parallel, fix_rounds)
 
 
+def _review_comments(data: dict[str, Any]) -> ReviewComments:
+    table = _table(data, "review_comments", tuple(DEFAULTS["review_comments"]))
+    accounts = table.get("accounts", [])
+    if not isinstance(accounts, list) or not all(isinstance(a, str) and a.strip() for a in accounts):
+        raise ConfigError("review_comments.accounts: must be a list of GitHub logins")
+    passes = _typed(table, "passes", DEFAULTS["review_comments"]["passes"], "review_comments")
+    if passes < 1:
+        raise ConfigError(f"review_comments.passes: must be at least 1, not {passes}")
+    return ReviewComments(tuple(a.strip() for a in accounts), passes)
+
+
 def _resolve(data: dict[str, Any], source: Path | None) -> Config:
     _only(data, tuple(DEFAULTS), "config")
     project = _table(data, "project", tuple(DEFAULTS["project"]))
@@ -434,6 +458,7 @@ def _resolve(data: dict[str, Any], source: Path | None) -> Config:
         quota_wait=quota_seconds,
         ci_wait=ci_seconds,
         pr=_pr(data, commands, gates, fallback),
+        review_comments=_review_comments(data),
         commands=commands,
         slice_gates=gates["slice"],
         final_gates=gates["final"],
@@ -508,6 +533,8 @@ def describe(config: Config, start: Path) -> str:
         "limits.stage_attempts": config.stage_attempts,
         "limits.quota_wait": format_duration(config.quota_wait),
         "limits.ci_wait": format_duration(config.ci_wait),
+        "review_comments.accounts": ", ".join(config.review_comments.accounts) or "-",
+        "review_comments.passes": config.review_comments.passes,
     }
     width = max(len(key) for key in settings)
     lines += ["", "[settings]"]

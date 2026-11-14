@@ -354,6 +354,30 @@ class PRSettingsTest(unittest.TestCase):
         self.assertIn("host paths .placido, .claude, .codex, .mcp.json", text)
 
 
+class ReviewCommentsTest(unittest.TestCase):
+    def test_off_by_default(self):
+        c = config.load(None)
+        self.assertEqual(c.review_comments, config.ReviewComments((), 2))
+
+    def test_names_the_accounts_to_answer(self):
+        c = load_text('[review_comments]\naccounts = ["review-bot[bot]", " a-person "]\npasses = 3\n')
+        self.assertEqual(c.review_comments, config.ReviewComments(("review-bot[bot]", "a-person"), 3))
+        text = config.describe(c, Path("."))
+        self.assertIn("review_comments.accounts  review-bot[bot], a-person", text)
+        self.assertIn("review_comments.passes    3", text)
+
+    def test_refusals(self):
+        cases = {
+            "[review_comments]\naccounts = \"bot\"\n": "review_comments.accounts: must be a list of GitHub logins",
+            "[review_comments]\naccounts = [\"\"]\n": "review_comments.accounts: must be a list of GitHub logins",
+            "[review_comments]\npasses = 0\n": "review_comments.passes: must be at least 1",
+            "[review_comments]\nrounds = 2\n": "review_comments.rounds: unknown key",
+        }
+        for text, message in cases.items():
+            with self.assertRaisesRegex(ConfigError, message, msg=text):
+                load_text(text)
+
+
 class ConfigCommandTest(unittest.TestCase):
     def placido(self, *argv: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
@@ -377,7 +401,7 @@ class ConfigCommandTest(unittest.TestCase):
             "review     codex -m gpt-6.1-sol -c model_reasoning_effort=max -c service_tier=fast", out
         )
         self.assertIn("  then     pi --provider openrouter", out)
-        self.assertIn("limits.quota_wait      2h", out)
+        self.assertIn("limits.quota_wait         2h", out)
 
     def test_defaults_when_there_is_no_file(self):
         with tempfile.TemporaryDirectory() as tmp:
