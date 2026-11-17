@@ -17,7 +17,7 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TIERS = ("fast", "default")
 ROLES = ("spec", "vet", "implement", "review", "fix", "retro", "scan", "judge", "decide")
 
-DEFAULT_MODELS = {"claude": "opus", "codex": "gpt-6.1-sol", "pi": "deepseek/deepseek-v4.1-flash"}
+DEFAULT_MODELS = {"claude": "opus", "codex": "gpt-6.2-sol", "pi": "deepseek/deepseek-v4.1-flash"}
 
 DEFAULTS: dict[str, Any] = {
     "project": {"base": "main", "setup": "", "teardown": ""},
@@ -32,9 +32,9 @@ DEFAULTS: dict[str, Any] = {
         # Reads the agreement against the code before it is sealed, from another vendor
         # than the interview's, at xhigh rather than max since the user waits on it at the
         # end of the interview (decided 2026-11-05, after #783).
-        "vet": {"agent": "codex", "model": "gpt-6.1-sol", "effort": "xhigh", "tier": "fast"},
+        "vet": {"agent": "codex", "model": "gpt-6.2-sol", "effort": "xhigh", "tier": "fast"},
         "implement": {"agent": "claude", "model": "opus", "effort": "high"},
-        "review": {"agent": "codex", "model": "gpt-6.1-sol", "effort": "max", "tier": "fast"},
+        "review": {"agent": "codex", "model": "gpt-6.2-sol", "effort": "max", "tier": "fast"},
         # `placido pr`: the scan reads an outside contributor's pull request before any of
         # its code runs, confined; the judge settles the reviews into the final one, at high
         # rather than xhigh since #588's judge spent nine minutes re-checking what both
@@ -63,7 +63,7 @@ DEFAULTS: dict[str, Any] = {
     "pr": {
         "reviewers": [
             {"agent": "claude", "model": "opus", "effort": "xhigh"},
-            {"agent": "codex", "model": "gpt-6.1-sol", "effort": "max", "tier": "fast"},
+            {"agent": "codex", "model": "gpt-6.2-sol", "effort": "max", "tier": "fast"},
         ],
         "gates": [],
         # Placido's own project scripts, and the agents' project settings, whose hooks and

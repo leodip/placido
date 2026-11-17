@@ -274,7 +274,7 @@ class StepTest(StepTestCase):
             ensure.assert_not_called()
             runner = step.Step(self.run, self.fake, "w8", self.tmp / "wt", home=self.home, sleep=self.fake.sleep,
                                wall=lambda: self.now)
-            runner("implement", AgentSpec("codex", "gpt-6.1-sol", "high"), "Summarize the issue.")
+            runner("implement", AgentSpec("codex", "gpt-6.2-sol", "high"), "Summarize the issue.")
             ensure.assert_called_once_with(self.run)
 
     def test_success_records_everything(self):
@@ -834,8 +834,8 @@ class NamesTest(unittest.TestCase):
 
     def test_launch_args(self):
         self.assertEqual(
-            step.launch_args(AgentSpec("codex", "gpt-6.1-sol", "max", "fast")),
-            ["-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=max", "-c", "service_tier=fast",
+            step.launch_args(AgentSpec("codex", "gpt-6.2-sol", "max", "fast")),
+            ["-m", "gpt-6.2-sol", "-c", "model_reasoning_effort=max", "-c", "service_tier=fast",
              "-c", "features.memories=false", "-c", "check_for_update_on_startup=false", "-c", "daybreak=false",
              "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust"],
         )
@@ -851,11 +851,11 @@ class NamesTest(unittest.TestCase):
         self.assertEqual(json.loads(settings.read_text(encoding="utf-8")), {"autoMemoryEnabled": False})
         self.assertIn("--settings", step.launch_args(AgentSpec("claude", "opus", "high"), Path("/s"), ()))
         for confined in (None, Path("/s")):
-            self.assertIn("features.memories=false", step.launch_args(AgentSpec("codex", "gpt-6.1-sol", "max"), confined))
+            self.assertIn("features.memories=false", step.launch_args(AgentSpec("codex", "gpt-6.2-sol", "max"), confined))
 
     def test_codex_starts_without_offering_an_update(self):
         for confined in (None, Path("/s")):
-            args = step.launch_args(AgentSpec("codex", "gpt-6.1-sol", "max"), confined)
+            args = step.launch_args(AgentSpec("codex", "gpt-6.2-sol", "max"), confined)
             self.assertEqual(args[args.index("check_for_update_on_startup=false") - 1], "-c")
 
     def test_codex_runs_without_the_users_daybreak(self):

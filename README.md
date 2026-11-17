@@ -228,9 +228,9 @@ Each role has an agent, model, and effort, and a fallback chain:
 | Role | Default |
 |---|---|
 | `spec` (the interview) | claude, Fable, high effort |
-| `vet` (checks the agreement against the code before it is sealed) | codex, gpt-6.1-sol, xhigh, fast tier |
+| `vet` (checks the agreement against the code before it is sealed) | codex, gpt-6.2-sol, xhigh, fast tier |
 | `implement` | claude, Opus, high |
-| `review` | codex, gpt-6.1-sol, max, fast tier |
+| `review` | codex, gpt-6.2-sol, max, fast tier |
 | `fix` | as `implement` |
 | `retro` | as `spec` |
 | `scan` (`placido pr`, confined) | claude, Opus, high |
@@ -243,7 +243,7 @@ Change any of them per project:
 ```toml
 [roles.implement]
 agent  = "codex"
-model  = "gpt-6.1-sol"
+model  = "gpt-6.2-sol"
 effort = "high"            # low, medium, high, xhigh, or max
 
 [[fallback]]               # tried in order when an agent refuses or runs out of quota
@@ -273,7 +273,7 @@ ci_wait        = "1h"  # wait this long for CI on the pull request
 [pr]                   # placido pr: reviewing other people's pull requests
 reviewers = [          # each reviews on its own, in this order; each may name a fallback list
   { agent = "claude", model = "opus", effort = "xhigh" },
-  { agent = "codex", model = "gpt-6.1-sol", effort = "max", tier = "fast" },
+  { agent = "codex", model = "gpt-6.2-sol", effort = "max", tier = "fast" },
 ]
 gates = []             # commands run once before the reviews; none named: the slice and final gates
 host_paths = [".placido", ".claude", ".codex", ".mcp.json"]  # run here: changes run on the scan's word

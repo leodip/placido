@@ -24,7 +24,7 @@ class DefaultsTest(unittest.TestCase):
         roles = self.config.roles
         self.assertEqual(roles["spec"].agent, AgentSpec("claude", "fable", "high"))
         self.assertEqual(roles["implement"].agent, AgentSpec("claude", "opus", "high"))
-        self.assertEqual(roles["review"].agent, AgentSpec("codex", "gpt-6.1-sol", "max", "fast"))
+        self.assertEqual(roles["review"].agent, AgentSpec("codex", "gpt-6.2-sol", "max", "fast"))
 
     def test_fallback_chain_is_claude_then_deepseek(self):
         self.assertEqual(
@@ -56,10 +56,10 @@ class AgentArgsTest(unittest.TestCase):
 
     def test_codex_always_names_its_tier(self):
         self.assertEqual(
-            AgentSpec("codex", "gpt-6.1-sol", "max", "fast").args(),
-            ["-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=max", "-c", "service_tier=fast"],
+            AgentSpec("codex", "gpt-6.2-sol", "max", "fast").args(),
+            ["-m", "gpt-6.2-sol", "-c", "model_reasoning_effort=max", "-c", "service_tier=fast"],
         )
-        self.assertIn("service_tier=default", AgentSpec("codex", "gpt-6.1-sol", "max").args())
+        self.assertIn("service_tier=default", AgentSpec("codex", "gpt-6.2-sol", "max").args())
 
     def test_pi_always_names_openrouter(self):
         self.assertEqual(
@@ -129,7 +129,7 @@ class OverrideTest(unittest.TestCase):
         c = load_text('[roles.implement]\nmodel = "sonnet"\neffort = "medium"\n')
         self.assertEqual(c.roles["fix"].agent, AgentSpec("claude", "sonnet", "medium"))
         c = load_text('[roles.fix]\nagent = "codex"\n')
-        self.assertEqual(c.roles["fix"].agent, AgentSpec("codex", "gpt-6.1-sol", "high"))
+        self.assertEqual(c.roles["fix"].agent, AgentSpec("codex", "gpt-6.2-sol", "high"))
         self.assertEqual(c.roles["implement"].agent, AgentSpec("claude", "opus", "high"))
 
     def test_changing_the_agent_alone_picks_its_default_model(self):
@@ -298,7 +298,7 @@ class PRSettingsTest(unittest.TestCase):
         c = config.load(None)
         self.assertEqual(
             [r.agent for r in c.pr.reviewers],
-            [AgentSpec("claude", "opus", "xhigh"), AgentSpec("codex", "gpt-6.1-sol", "max", "fast")],
+            [AgentSpec("claude", "opus", "xhigh"), AgentSpec("codex", "gpt-6.2-sol", "max", "fast")],
         )
         self.assertEqual(c.pr.reviewers[1].fallback, c.roles["review"].fallback)
         self.assertEqual(c.pr.host_paths, (".placido", ".claude", ".codex", ".mcp.json"))
@@ -324,7 +324,7 @@ class PRSettingsTest(unittest.TestCase):
             '[roles.judge]\nagent = "codex"\n'
         )
         self.assertEqual([r.agent for r in c.pr.reviewers],
-                         [AgentSpec("codex", "gpt-6.1-sol", "high"), AgentSpec("pi", "deepseek/deepseek-v4.1-flash", "high")])
+                         [AgentSpec("codex", "gpt-6.2-sol", "high"), AgentSpec("pi", "deepseek/deepseek-v4.1-flash", "high")])
         self.assertEqual(c.pr.reviewers[0].fallback, ())
         self.assertEqual((c.pr.gates, c.pr.host_paths, c.pr.fix_rounds), (("unit",), ("scripts", ".placido"), 5))
         self.assertEqual(c.roles["judge"].agent.agent, "codex")
@@ -350,7 +350,7 @@ class PRSettingsTest(unittest.TestCase):
     def test_described(self):
         text = config.describe(config.load(None), Path("."))
         self.assertIn("[pr]\nreviewer A claude --model opus --effort xhigh", text)
-        self.assertIn("reviewer B codex -m gpt-6.1-sol", text)
+        self.assertIn("reviewer B codex -m gpt-6.2-sol", text)
         self.assertIn("host paths .placido, .claude, .codex, .mcp.json", text)
 
 
@@ -398,7 +398,7 @@ class ConfigCommandTest(unittest.TestCase):
         self.assertIn("unit  make unit", out)
         self.assertIn("slice  unit", out)
         self.assertIn(
-            "review     codex -m gpt-6.1-sol -c model_reasoning_effort=max -c service_tier=fast", out
+            "review     codex -m gpt-6.2-sol -c model_reasoning_effort=max -c service_tier=fast", out
         )
         self.assertIn("  then     pi --provider openrouter", out)
         self.assertIn("limits.quota_wait         2h", out)

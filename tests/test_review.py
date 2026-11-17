@@ -116,7 +116,7 @@ class LoopTestCase(unittest.TestCase):
         self.settings = config.load(cfg)
         self.run = runlog.Run.create(self.tmp / "runs", "repo", "03-x", {"base_commit": "abc"})
         self.runner = FakeRunner(self.run, self.repo)
-        agent = config.AgentSpec("codex", "gpt-6.1-sol", "max", "fast")
+        agent = config.AgentSpec("codex", "gpt-6.2-sol", "max", "fast")
         fixer = config.AgentSpec("claude", "opus", "high")
         self.loop = review.Loop(self.run, self.runner, None, self.settings, agent, fixer, self.repo, {})
 
@@ -335,14 +335,14 @@ class CheckTest(unittest.TestCase):
 
 
 class FallbackTest(LoopTestCase):
-    """The review chain by default: codex gpt-6.1-sol, then claude opus at max, then pi."""
+    """The review chain by default: codex gpt-6.2-sol, then claude opus at max, then pi."""
 
     def test_a_refused_first_round_is_done_by_the_next_agent(self):
         self.runner.failures = ["refusal"]
         self.runner.reviews = [{"findings": []}]
         account = self.loop()
         self.assertEqual(account.outcome, "passed")
-        self.assertEqual(self.runner.models, [("review", "gpt-6.1-sol"), ("review", "opus")])
+        self.assertEqual(self.runner.models, [("review", "gpt-6.2-sol"), ("review", "opus")])
         self.assertIn("review-w1-p2", self.runner.closed)  # the refused reviewer's tab is closed
         moved = [e for e in runlog.read_events(self.run.path) if e["event"] == "agent.fallback"]
         self.assertEqual([(e["role"], e["reason"]) for e in moved], [("review", "refusal")])
@@ -389,7 +389,7 @@ class FallbackTest(LoopTestCase):
     def test_a_context_overflow_gets_one_fresh_session(self):
         self.runner.failures = ["context", "context"]
         self.assertEqual(self.loop().outcome, "failed")
-        self.assertEqual(self.runner.models, [("review", "gpt-6.1-sol")] * 2)
+        self.assertEqual(self.runner.models, [("review", "gpt-6.2-sol")] * 2)
 
     def test_a_refused_fixer_is_replaced_and_starts_clean(self):
         self.runner.failures = [None, "refusal"]  # review 1, then the fixer
@@ -409,7 +409,7 @@ class FallbackTest(LoopTestCase):
         self.runner.failures = ["unavailable"]
         self.runner.reviews = [{"findings": []}]
         self.assertEqual(self.loop().outcome, "passed")
-        self.assertEqual(self.runner.models, [("review", "gpt-6.1-sol"), ("review", "opus")])
+        self.assertEqual(self.runner.models, [("review", "gpt-6.2-sol"), ("review", "opus")])
 
     def test_a_logged_out_reviewer_fails_the_review(self):
         self.runner.failures = ["auth"]
@@ -420,9 +420,9 @@ class FallbackTest(LoopTestCase):
         self.runner.failures = ["refusal"]
         self.runner.reviews = [{"findings": []}, {"findings": []}]
         self.loop()
-        self.loop.reviewer = config.AgentSpec("codex", "gpt-6.1-sol", "max", "fast")
+        self.loop.reviewer = config.AgentSpec("codex", "gpt-6.2-sol", "max", "fast")
         self.loop()
-        self.assertEqual(self.runner.models[-1], ("review", "gpt-6.1-sol"))
+        self.assertEqual(self.runner.models[-1], ("review", "gpt-6.2-sol"))
 
 
 FOLLOWUP = {"id": "F1", "title": "Mention --bye in the usage line", "description": "usage omits it",

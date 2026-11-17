@@ -59,6 +59,6 @@ class RetroRoleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = Path(tmp) / "config.toml"
             cfg.write_text('[roles.spec]\nagent = "codex"\neffort = "high"\n')
-            self.assertEqual(config.load(cfg).roles["retro"].agent, config.AgentSpec("codex", "gpt-6.1-sol", "high"))
+            self.assertEqual(config.load(cfg).roles["retro"].agent, config.AgentSpec("codex", "gpt-6.2-sol", "high"))
             cfg.write_text('[roles.retro]\nagent = "claude"\nmodel = "sonnet"\neffort = "medium"\n')
             self.assertEqual(config.load(cfg).roles["retro"].agent, config.AgentSpec("claude", "sonnet", "medium"))

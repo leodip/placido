@@ -306,7 +306,7 @@ class OverrideTest(unittest.TestCase):
 
     def test_agent_alone_takes_its_default_model(self):
         self.assertEqual(
-            config.override(self.base, "codex", None, None), config.AgentSpec("codex", "gpt-6.1-sol", "high")
+            config.override(self.base, "codex", None, None), config.AgentSpec("codex", "gpt-6.2-sol", "high")
         )
 
     def test_model_and_effort(self):

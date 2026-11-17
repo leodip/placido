@@ -33,7 +33,7 @@ class ReportTest(unittest.TestCase):
             ("2026-10-02T15:00:00-03:00", "review.round", {"round": 1}),
             ("2026-10-02T15:00:00-03:00", "step.start", {"step": "03-review-1", "role": "review"}),
             ("2026-10-02T15:00:00-03:00", "agent.start", {"step": "03-review-1", "agent": "codex",
-                                                          "model": "gpt-6.1-sol", "effort": "max", "name": "rev"}),
+                                                          "model": "gpt-6.2-sol", "effort": "max", "name": "rev"}),
             ("2026-10-02T15:02:00-03:00", "step.end", {"step": "03-review-1", "outcome": "success", "seconds": 120}),
             ("2026-10-02T15:02:00-03:00", "review.findings", {"round": 1, "blocking": 1, "significant": 0, "minor": 2}),
             ("2026-10-02T15:03:00-03:00", "review.round", {"round": 2}),
@@ -65,7 +65,7 @@ class ReportTest(unittest.TestCase):
         self.assertEqual((first.agent, first.outcome, first.seconds), ("claude opus high", "success", 300))
         self.assertEqual(first.notes, ["asked you", "result sent back"])
         self.assertEqual(first.usage.total, 1005)
-        self.assertEqual(built.steps[2].agent, "codex gpt-6.1-sol max")  # the resumed reviewer
+        self.assertEqual(built.steps[2].agent, "codex gpt-6.2-sol max")  # the resumed reviewer
         self.assertEqual(built.steps[2].notes, ["resumed", "refusal"])
         self.assertEqual((built.slices, built.committed, built.attempts), (2, 1, 1))
         self.assertEqual((built.rounds, built.review), (2, "passed"))

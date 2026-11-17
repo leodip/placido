@@ -60,7 +60,7 @@ class VetTestCase(unittest.TestCase):
         self.folder = spec.issue_dir(self.run.path)
         self.worktree = self.root / "worktree"
         self.worktree.mkdir()
-        self.agent = config.AgentSpec("codex", "gpt-6.1-sol", "xhigh", "fast")
+        self.agent = config.AgentSpec("codex", "gpt-6.2-sol", "xhigh", "fast")
 
     def vet(self, runner: FakeRunner) -> list[str]:
         with redirect_stdout(io.StringIO()) as out:
@@ -254,7 +254,7 @@ class SpecCommandTest(unittest.TestCase):
 class RoleTest(unittest.TestCase):
     def test_another_vendor_than_the_interview_by_default(self):
         roles = settings().roles
-        self.assertEqual(roles["vet"].agent, config.AgentSpec("codex", "gpt-6.1-sol", "xhigh", "fast"))
+        self.assertEqual(roles["vet"].agent, config.AgentSpec("codex", "gpt-6.2-sol", "xhigh", "fast"))
         self.assertNotEqual(roles["vet"].agent.agent, roles["spec"].agent.agent)
 
     def test_a_project_can_change_it(self):

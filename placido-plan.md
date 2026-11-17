@@ -292,7 +292,7 @@ effort = "high"
 
 [roles.review]
 agent  = "codex"
-model  = "gpt-6.1-sol"
+model  = "gpt-6.2-sol"
 effort = "max"
 tier   = "fast"            # codex only: "fast" (2x speed, more usage) or "default"
 
@@ -346,7 +346,7 @@ Resolution rules, as built in step 2:
   `PLACIDO_WORKTREE`, and `PLACIDO_RUN_DIR`. A project's own scripts use them
   to find the run's resources, such as its Docker stack.
 - Setting a role's `agent` without a `model` picks that agent's default model
-  (`opus`, `gpt-6.1-sol`, or `deepseek/deepseek-v4.1-flash`).
+  (`opus`, `gpt-6.2-sol`, or `deepseek/deepseek-v4.1-flash`).
 - `tier` defaults to `default`, which codex sends as a real tier, except for
   the reviewer, which defaults to `fast`.
 - A `[[fallback]]` entry needs an `agent`; its effort defaults to `high`.
@@ -438,7 +438,9 @@ configured models and efforts:
   `Logged in using ChatGPT`, so it runs on the subscription. The user's global
   `~/.codex/config.toml` sets `service_tier = "fast"`, which spends the
   subscription faster; placido makes the tier a role setting (`tier`) and
-  passes it explicitly.
+  passes it explicitly. Since 2026-11-17 the codex default is `gpt-6.2-sol`
+  (500k context, the same efforts), checked with hello-world calls at low and at
+  max on the fast tier.
 - pi: `--provider openrouter --model deepseek/deepseek-v4.1-flash
   --thinking xhigh` answers, with no API key variables set in the shell.
 
@@ -2420,3 +2422,10 @@ ran:
   fixes became `github.await_ci`, numbered across the run so a later wait's logs keep
   a folder of their own.
 
+### 2026-11-17
+
+- OpenAI released gpt-6.2-sol, and codex's default model became `gpt-6.2-sol` in
+  every role and reviewer that used `gpt-6.1-sol`: `vet`, `review`, and `placido
+  pr`'s second reviewer. Codex 0.167.2 ran it at low and at max on the fast tier;
+  its efforts are still `low` to `ultra`, with a 500k context. The comments and tests
+  that record what gpt-6.1-sol did (#402's refusal, #707's Daybreak) keep its name.

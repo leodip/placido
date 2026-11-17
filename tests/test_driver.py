@@ -275,7 +275,7 @@ class FallbackTest(DriverTestCase):
         self.assertIn("placido · 03-x: implement: every agent refused it", self.runner.herdr.notes)
 
     def test_a_quota_skips_entries_on_the_same_subscription(self):
-        self.ctx.agent = config.AgentSpec("codex", "gpt-6.1-sol", "high")  # then claude, then pi
+        self.ctx.agent = config.AgentSpec("codex", "gpt-6.2-sol", "high")  # then claude, then pi
         self.runner.script = ["quota", "build", "build", "build"]
         self.assertEqual(driver.drive(self.ctx, SLICES), "done")
         self.assertEqual(self.runner.agents, ["codex", "claude", "claude", "claude"])
@@ -288,7 +288,7 @@ class FallbackTest(DriverTestCase):
         self.assertEqual(self.runner.agents, ["claude", "pi", "pi"])
 
     def test_a_model_that_cannot_run_moves_on_without_using_an_attempt(self):
-        self.ctx.agent = config.AgentSpec("codex", "gpt-6.1-sol", "high")
+        self.ctx.agent = config.AgentSpec("codex", "gpt-6.2-sol", "high")
         self.runner.script = ["unavailable", "fail", "build", "build", "build"]  # stage_attempts is 2
         self.assertEqual(driver.drive(self.ctx, SLICES), "done")
         self.assertEqual(self.runner.agents[:2], ["codex", "claude"])

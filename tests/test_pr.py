@@ -362,7 +362,7 @@ class ReviewTest(PRTestCase):
         pragents.review(self.ctx)
         reviewers = [c["spec"] for c in self.runner.calls if c["name"].startswith("r1-review")]
         self.assertEqual(
-            reviewers, [config.AgentSpec("claude", "opus", "xhigh"), config.AgentSpec("codex", "gpt-6.1-sol", "max", "fast")],
+            reviewers, [config.AgentSpec("claude", "opus", "xhigh"), config.AgentSpec("codex", "gpt-6.2-sol", "max", "fast")],
         )
         resumed = [c for c in self.runner.calls if c["how"] == "resume"]
         self.assertEqual([c["name"] for c in resumed], ["r1-crosscheck-a", "r1-crosscheck-b"])
