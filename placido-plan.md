@@ -2429,3 +2429,20 @@ ran:
   pr`'s second reviewer. Codex 0.167.2 ran it at low and at max on the fast tier;
   its efforts are still `low` to `ultra`, with a 500k context. The comments and tests
   that record what gpt-6.1-sol did (#402's refusal, #707's Daybreak) keep its name.
+
+### 2026-11-19
+
+- With the user: Goiabada's #868 got a Codex security review (`chatgpt-codex-connector`)
+  three minutes before CI concluded, and placido answered CodeRabbit's comments only,
+  as Goiabada named only CodeRabbit. Codex reports no check, so placido cannot tell when
+  it is done: its security review took 7.5 minutes on #868, against CI's 10, and runs
+  only when a pull request opens (or is asked by a comment), never on placido's pushes.
+  The user's idea: answer CodeRabbit first, then look for Codex's comments.
+- `[review_comments] wait` (0s by default): with nothing left to answer, placido waits
+  until the pull request is that old and reads once more, so a late reviewer's comments
+  get a pass of their own, or are named to the user once the passes are spent. A pass
+  that pushed nothing no longer ends the stage either: placido reads again at once, as
+  no CI is due, which answers what came in during the pass. A duration, rather than a
+  project command that says when each reviewer is done: Codex marks that only in its
+  own summary comment, whose format is its own, and a wait is simple and, in an
+  unattended run, cheap.

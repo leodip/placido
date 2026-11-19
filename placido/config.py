@@ -54,8 +54,11 @@ DEFAULTS: dict[str, Any] = {
     "limits": {"stage_attempts": 3, "quota_wait": "2h", "ci_wait": "1h"},
     # The comments other reviewers, such as a review bot, leave on the run's pull request:
     # the accounts whose comments placido answers once CI concludes (none: it answers
-    # none), and how many times, each on what the last answer pushed (decided 2026-11-14).
-    "review_comments": {"accounts": [], "passes": 2},
+    # none), and how many times, each on what the last answer pushed (decided 2026-11-14);
+    # and how long after the pull request opens a reviewer with no check to wait on may
+    # still comment, which placido waits out before it ends (none by default; decided
+    # 2026-11-19, as Codex's security review came after CI on Goiabada's #868).
+    "review_comments": {"accounts": [], "passes": 2, "wait": "0s"},
     # `placido pr`: two reviewers from different vendors, one after the other; the gates
     # placido runs once for both (none named: the slice and the final gates); and the
     # paths setup and the gates run on this machine, which a pull request changes only as
@@ -180,6 +183,7 @@ class ReviewComments:
 
     accounts: tuple[str, ...] = ()  # GitHub logins, a bot's with or without its [bot]
     passes: int = 2  # answers, each once CI concludes on the latest push
+    wait: int = 0  # seconds after the pull request opens that placido reads again before it ends
 
 
 @dataclass(frozen=True)
@@ -412,7 +416,12 @@ def _review_comments(data: dict[str, Any]) -> ReviewComments:
     passes = _typed(table, "passes", DEFAULTS["review_comments"]["passes"], "review_comments")
     if passes < 1:
         raise ConfigError(f"review_comments.passes: must be at least 1, not {passes}")
-    return ReviewComments(tuple(a.strip() for a in accounts), passes)
+    wait = _typed(table, "wait", DEFAULTS["review_comments"]["wait"], "review_comments")
+    try:
+        seconds = parse_duration(wait)
+    except ValueError:
+        raise ConfigError(f"review_comments.wait: {wait!r} is not a duration like 30m or 1h") from None
+    return ReviewComments(tuple(a.strip() for a in accounts), passes, seconds)
 
 
 def _resolve(data: dict[str, Any], source: Path | None) -> Config:
@@ -535,6 +544,7 @@ def describe(config: Config, start: Path) -> str:
         "limits.ci_wait": format_duration(config.ci_wait),
         "review_comments.accounts": ", ".join(config.review_comments.accounts) or "-",
         "review_comments.passes": config.review_comments.passes,
+        "review_comments.wait": format_duration(config.review_comments.wait),
     }
     width = max(len(key) for key in settings)
     lines += ["", "[settings]"]

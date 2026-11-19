@@ -360,17 +360,21 @@ class ReviewCommentsTest(unittest.TestCase):
         self.assertEqual(c.review_comments, config.ReviewComments((), 2))
 
     def test_names_the_accounts_to_answer(self):
-        c = load_text('[review_comments]\naccounts = ["review-bot[bot]", " a-person "]\npasses = 3\n')
-        self.assertEqual(c.review_comments, config.ReviewComments(("review-bot[bot]", "a-person"), 3))
+        c = load_text('[review_comments]\naccounts = ["review-bot[bot]", " a-person "]\npasses = 3\nwait = "30m"\n')
+        self.assertEqual(c.review_comments, config.ReviewComments(("review-bot[bot]", "a-person"), 3, 1800))
         text = config.describe(c, Path("."))
         self.assertIn("review_comments.accounts  review-bot[bot], a-person", text)
         self.assertIn("review_comments.passes    3", text)
+        self.assertIn("review_comments.wait      30m", text)
+        self.assertIn("review_comments.wait      0s", config.describe(config.load(None), Path(".")))
 
     def test_refusals(self):
         cases = {
             "[review_comments]\naccounts = \"bot\"\n": "review_comments.accounts: must be a list of GitHub logins",
             "[review_comments]\naccounts = [\"\"]\n": "review_comments.accounts: must be a list of GitHub logins",
             "[review_comments]\npasses = 0\n": "review_comments.passes: must be at least 1",
+            "[review_comments]\nwait = \"soon\"\n": "review_comments.wait: 'soon' is not a duration",
+            "[review_comments]\nwait = 30\n": "review_comments.wait: must be str",
             "[review_comments]\nrounds = 2\n": "review_comments.rounds: unknown key",
         }
         for text, message in cases.items():

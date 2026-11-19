@@ -179,14 +179,20 @@ class DeliverTest(DeliverCase):
 
         seen = []
 
-        def answer(ctx, hub, number, branch, ci, outcome):
+        def answer(ctx, hub, number, branch, ci, outcome, sleep):
             seen.append((number, branch, outcome))
+            waits.append(sleep)
             return "red"
+
+        waits = []
 
         self.gh.checks = [[check("build", "pass")]]
         with mock.patch.object(comments, "answer", answer):
             self.assertEqual(self.deliver(), "red")
         self.assertEqual(seen, [(450, "placido/439-rate-limit", "green")])
+        before = self.now
+        waits[0](60)  # it waits as CI's wait does
+        self.assertEqual(self.now, before + 60)
 
         self.gh.checks = [[check("build", "fail")]] * 3
         seen.clear()

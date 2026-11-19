@@ -242,7 +242,7 @@ def deliver(
     if outcome in ("green", "none"):
         from placido import comments
 
-        outcome = comments.answer(ctx, github, number, branch, ci, outcome)
+        outcome = comments.answer(ctx, github, number, branch, ci, outcome, sleep)
     github.edit_pr(number, _body(run.path))
     return outcome
 

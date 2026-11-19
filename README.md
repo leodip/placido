@@ -76,7 +76,9 @@ is posted, pushed, or merged until you pick it (see
    thread: fixed in a commit, not changed and why, or left out and drafted as a
    follow-up in the follow-ups comment. A comment only you can settle is left
    unanswered, and you are told. CI runs again on the push, and the reviewers may
-   comment on it: placido answers up to `passes` times (see
+   comment on it: placido answers up to `passes` times. A reviewer that reports no
+   check may still be at work when CI concludes; with `wait` set, placido reads once
+   more before it ends, once the pull request is that old (see
    [Review comments](#review-comments)).
 8. **Close.** After you merge, `placido close` runs your project's teardown,
    removes the worktree and its workspace, brings your base branch up to date, and
@@ -287,13 +289,19 @@ fix_rounds = 3         # fixes, each reviewed in full in a round of its own, bef
 [review_comments]
 accounts = ["review-bot[bot]"]   # whose comments on the run's pull request placido answers; none by default
 passes   = 2                     # how many times, each once CI concludes on what the last answer pushed
+wait     = "30m"                 # how long after the pull request opens a reviewer may still comment; 0s by default
 ```
 
 Placido knows GitHub's review threads and reviews, not any one reviewer, so the
 setting names accounts and nothing else. What your reviewers' comments look like, such
 as how a bot marks severity or which of its replies are only conversation, goes in
 `.placido/notes/review-comments.md`. Placido reads once every check on the pull request
-has concluded: a review bot that reports a check, as most do, is done by then.
+has concluded: a review bot that reports a check, as most do, is done by then. One
+that reports none, such as Codex's security review, may still be at work. Placido
+answers what is there, and reads again after each pass, at once when the pass pushed
+nothing and after CI when it pushed. With nothing left to answer, it waits until the
+pull request is `wait` old and reads once more: what came in by then gets a pass of its
+own, or, once `passes` are spent, is named to you.
 Comments on the pull request's conversation, such as a bot's summary, are not answered;
 nor are replies inside a thread. The review runs `final_rounds` more rounds after the
 one that judges the comments, and the last gates do not run again on its fixes, which

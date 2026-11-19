@@ -9,6 +9,9 @@ or is not valid; the fixer fixes, disputes, or defers each finding; and the revi
 resumed, verifies the answers, in rounds. Placido commits, pushes, replies on each
 thread (fixed in a commit, not changed and why, or left out as a follow-up), and
 waits for CI again, on which the reviewers may comment again: up to `passes` times.
+A reviewer with no check may still be at work when CI concludes (Codex's security
+review on Goiabada's #868, 2026-11-19): before it ends, placido reads again once the
+pull request is `wait` old, and answers what came in a pass of its own.
 
 Placido knows GitHub's review threads and reviews, not any reviewer: what one review
 bot's comments look like goes in the project's notes for this stage,
@@ -25,7 +28,9 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import asdict, dataclass, fields
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -430,10 +435,14 @@ def _pass_events(run_dir: Path) -> tuple[int, dict[str, Any] | None, dict[str, A
     return done, started, settled
 
 
-def answer(ctx: Any, hub: github.GitHub, number: int, branch: str, ci: Callable[[], str], outcome: str) -> str:
+def answer(
+    ctx: Any, hub: github.GitHub, number: int, branch: str, ci: Callable[[], str], outcome: str,
+    sleep: Callable[[float], None] = time.sleep, now: Callable[[], datetime] = runlog.local_now,
+) -> str:
     """Answer what the project's reviewers left on the pull request, pass by pass, and
     return CI's outcome on what was pushed last: outcome, CI's on the head delivered,
-    when nothing was pushed; FAILED when a pass could not finish."""
+    when nothing was pushed; FAILED when a pass could not finish. With nothing left to
+    answer, it waits until the pull request is `wait` old and reads once more."""
 
     settings = ctx.settings.review_comments
     run = ctx.run
@@ -445,6 +454,8 @@ def answer(ctx: Any, hub: github.GitHub, number: int, branch: str, ci: Callable[
         if started is None:
             comments = read(hub, number, settings.accounts, run.path)
             if not comments:
+                if _wait_for_late(ctx, sleep, now):
+                    continue
                 break
             if done >= settings.passes:
                 urls = [c.url for c in comments]
@@ -454,6 +465,8 @@ def answer(ctx: Any, hub: github.GitHub, number: int, branch: str, ci: Callable[
                     alerts.notify(run, ctx.herdr, "review comments left after the last pass",
                                   f"{_count(len(comments), 'comment')} on {pr} came after placido's"
                                   f" {_count(done, 'pass')}; they are yours", mail=False)
+                if _wait_for_late(ctx, sleep, now):
+                    continue  # to name what came in by then too
                 break
             pass_ = done + 1
             folder = run.path / "comments" / str(pass_)
@@ -500,7 +513,7 @@ def answer(ctx: Any, hub: github.GitHub, number: int, branch: str, ci: Callable[
                           f"{_count(len(left), 'comment')} on {pr} left for you; see {run.path / 'review-comments.md'}",
                           mail=False)
         if not settled.get("changed"):
-            break  # nothing pushed, so no reviewer has anything new to comment on
+            continue  # nothing pushed, so no CI to wait for: read what came in meanwhile
         outcome = ci()
         if outcome not in ("green", "none"):
             break
@@ -508,6 +521,24 @@ def answer(ctx: Any, hub: github.GitHub, number: int, branch: str, ci: Callable[
 
 
 OUTCOMES = ("fixed", "not-changed", "follow-up", "left")
+
+
+def _wait_for_late(ctx: Any, sleep: Callable[[float], None], now: Callable[[], datetime]) -> bool:
+    """Wait until the pull request is `wait` old, for a reviewer that comments after CI
+    concludes and has no check to wait on; whether it waited, so placido reads again."""
+
+    wait = ctx.settings.review_comments.wait
+    opened = runlog.last_event(ctx.run.path, "pr.opened") or {}
+    if not wait or not opened.get("ts"):
+        return False
+    until = datetime.fromisoformat(str(opened["ts"])) + timedelta(seconds=wait)
+    left = (until - now()).total_seconds()
+    if left <= 0:
+        return False
+    status.show(ctx.run.path, status.text(status.WAITING, f"late review comments, until {until:%H:%M}"))
+    ctx.run.event("comments.wait", until=until.isoformat(timespec="seconds"))
+    sleep(left)
+    return True
 
 
 def _put_aside(ctx: Any, pass_: int) -> None:

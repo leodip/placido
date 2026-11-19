@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from placido import comments, config, driver, github, prbody, runlog
@@ -378,6 +379,83 @@ class LimitsTest(CommentsCase):
         self.assertEqual(self.answer(), comments.FAILED)
         self.assertEqual(len(self.events("comments.pass_failed")), 1)
         self.assertEqual(self.hub.replies, [])
+
+
+class LateTest(CommentsCase):
+    """A reviewer with no check, such as Codex's security review, may comment after CI
+    concludes: placido reads again once the pull request is `wait` old."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.settings = replace(self.settings, review_comments=config.ReviewComments((BOT,), 2, 30 * 60))
+        self.opened = datetime.fromisoformat(self.events("pr.opened")[0]["ts"])
+        self.clock = self.opened + timedelta(minutes=10)
+        self.slept: list[float] = []
+        self.on_sleep = lambda: None
+
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.clock += timedelta(seconds=seconds)
+        self.on_sleep()
+
+    def answer(self) -> str:
+        return comments.answer(self.ctx(), self.hub, 450, "placido/450-x", self.ci, "green",
+                               self.sleep, lambda: self.clock)
+
+    def fixed(self, comment: int) -> None:
+        """The comment `comment`, judged and fixed in one round."""
+
+        self.runner.reviews += [
+            {"findings": [finding(1, "significant")], "comments": [{"source": "T1", "title": "a", "finding": "R1-1"}]},
+            {"findings": [], "verdicts": [{"id": "R1-1", "verdict": "resolved"}]},
+        ]
+        self.runner.fixes.append({"answers": {"R1-1": "fixed"}, "change": "code"})
+
+    def test_a_comment_that_comes_after_ci_is_answered_once_the_wait_is_over(self):
+        self.on_sleep = lambda: self.hub.threads.append(thread(301))
+        self.fixed(301)
+        self.assertEqual(self.answer(), "green")
+        self.assertEqual(self.slept, [20 * 60])  # until the pull request was 30 minutes old
+        until = (self.opened + timedelta(minutes=30)).isoformat(timespec="seconds")
+        self.assertEqual([e["until"] for e in self.events("comments.wait")], [until])
+        self.assertEqual([e["pass"] for e in self.events("comments.passed")], [1])
+        self.assertTrue(dict(self.hub.replies)[301].startswith("Fixed in "))
+        self.assertEqual(self.ci_calls, 1)  # on the fix; the read after it waits no more
+
+    def test_an_older_pull_request_is_read_once_more_without_a_wait(self):
+        self.clock = self.opened + timedelta(hours=1)
+        self.assertEqual(self.answer(), "green")
+        self.assertEqual((self.slept, self.events("comments.wait")), ([], []))
+
+    def test_what_came_during_a_pass_that_pushed_nothing_is_read_at_once(self):
+        self.clock = self.opened + timedelta(hours=1)
+        self.hub.threads = [thread(101)]
+        self.runner.reviews = [
+            {"findings": [], "comments": [{"source": "T1", "title": "a", "reply": "It holds: see greet.py:1."}]},
+        ]
+        self.fixed(201)
+        reply = self.hub.reply
+
+        def reply_then_comment(number, comment_id, body):
+            if comment_id == 101:
+                self.hub.threads.append(thread(201))  # the late reviewer, during pass 1
+            return reply(number, comment_id, body)
+
+        self.hub.reply = reply_then_comment
+        self.assertEqual(self.answer(), "green")
+        self.assertEqual([e["threads"] for e in self.events("comments.read")], [[101], [201]])
+        self.assertEqual(self.ci_calls, 1)  # pass 1 pushed nothing, so no CI before pass 2
+        self.assertEqual(self.slept, [])
+
+    def test_after_the_last_pass_what_came_by_the_wait_is_named_too(self):
+        self.settings = replace(self.settings, review_comments=config.ReviewComments((BOT,), 1, 30 * 60))
+        self.hub.threads = [thread(101)]
+        self.fixed(101)
+        self.after_ci = lambda: self.hub.threads.append(thread(201))
+        self.on_sleep = lambda: self.hub.threads.append(thread(301))
+        self.assertEqual(self.answer(), "green")
+        urls = [e["urls"] for e in self.events("comments.unanswered")]
+        self.assertEqual(urls, [[f"{PR}#discussion_r201"], [f"{PR}#discussion_r201", f"{PR}#discussion_r301"]])
 
 
 class FollowUpsCommentTest(CommentsCase):
