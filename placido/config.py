@@ -35,6 +35,9 @@ DEFAULTS: dict[str, Any] = {
         "vet": {"agent": "codex", "model": "gpt-6.2-sol", "effort": "xhigh", "tier": "fast"},
         "implement": {"agent": "claude", "model": "opus", "effort": "high"},
         "review": {"agent": "codex", "model": "gpt-6.2-sol", "effort": "max", "tier": "fast"},
+        # A retro reads whole runs, several with --last, so it spends far more than an
+        # interview: on Opus rather than following `spec` onto Fable (2026-11-20).
+        "retro": {"agent": "claude", "model": "opus", "effort": "high"},
         # `placido pr`: the scan reads an outside contributor's pull request before any of
         # its code runs, confined; the judge settles the reviews into the final one, at high
         # rather than xhigh since #588's judge spent nine minutes re-checking what both
@@ -450,9 +453,6 @@ def _resolve(data: dict[str, Any], source: Path | None) -> Config:
         if name == "fix":  # fixing review findings uses the implementer's settings by default
             implementer = roles["implement"]
             base, chain = vars(implementer.agent), implementer.fallback
-        if name == "retro":  # a retro is judgment about the project, like the spec interview
-            specifier = roles["spec"]
-            base, chain = vars(specifier.agent), specifier.fallback
         if name == "decide":  # taking the user through the judge's open questions
             judge = roles["judge"]
             base, chain = vars(judge.agent), judge.fallback

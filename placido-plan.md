@@ -2474,3 +2474,7 @@ ran:
   the prompt, so the agent checks whether its suggestions held rather than repeat
   them. That retro is kept in `<runs>/<project>/retros/<time>/`, with no run.json:
   it is no issue's run, and `runs`, `status`, `report` and run selection never see it.
+- The user, on the retro's cost: it followed `spec`, so it ran on Fable since the
+  interview moved there (2026-11-09), where the reason given, one session per issue,
+  does not hold for a retro that reads whole runs, several with `--last`. `retro` now
+  has its own default, Opus at high, as `implement` and the `placido pr` roles do.

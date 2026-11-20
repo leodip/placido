@@ -235,7 +235,7 @@ Each role has an agent, model, and effort, and a fallback chain:
 | `implement` | claude, Opus, high |
 | `review` | codex, gpt-6.2-sol, max, fast tier |
 | `fix` | as `implement` |
-| `retro` | as `spec` |
+| `retro` | claude, Opus, high (it reads whole runs, so not Fable like `spec`) |
 | `scan` (`placido pr`, confined) | claude, Opus, high |
 | `judge` (`placido pr`) | claude, Opus, high |
 | `decide` (`placido pr`, takes you through the review's open questions) | as `judge` |

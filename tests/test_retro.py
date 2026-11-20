@@ -86,10 +86,13 @@ class RetroTest(unittest.TestCase):
 
 
 class RetroRoleTest(unittest.TestCase):
-    def test_follows_the_spec_role_unless_set(self):
+    def test_opus_by_default_whatever_the_interview_runs_on(self):
+        # A retro reads whole runs, so it does not follow the interview onto Fable.
         with tempfile.TemporaryDirectory() as tmp:
             cfg = Path(tmp) / "config.toml"
+            self.assertEqual(config.load(None).roles["spec"].agent.model, "fable")
+            self.assertEqual(config.load(None).roles["retro"].agent, config.AgentSpec("claude", "opus", "high"))
             cfg.write_text('[roles.spec]\nagent = "codex"\neffort = "high"\n')
-            self.assertEqual(config.load(cfg).roles["retro"].agent, config.AgentSpec("codex", "gpt-6.2-sol", "high"))
+            self.assertEqual(config.load(cfg).roles["retro"].agent, config.AgentSpec("claude", "opus", "high"))
             cfg.write_text('[roles.retro]\nagent = "claude"\nmodel = "sonnet"\neffort = "medium"\n')
             self.assertEqual(config.load(cfg).roles["retro"].agent, config.AgentSpec("claude", "sonnet", "medium"))
