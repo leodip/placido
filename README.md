@@ -72,13 +72,14 @@ is posted, pushed, or merged until you pick it (see
    comments GitHub could not attach to a line. The reviewer judges each comment, which
    becomes a finding or is not valid; the fixer fixes, disputes, or defers each finding,
    fixing in this pull request whatever is not big and needs no decision of yours; and
-   the reviewer verifies, as in the review. Placido commits, pushes, and replies on each
-   thread: fixed in a commit, not changed and why, or left out and drafted as a
-   follow-up in the follow-ups comment. A comment only you can settle is left
-   unanswered, and you are told. CI runs again on the push, and the reviewers may
-   comment on it: placido answers up to `passes` times. A reviewer that reports no
-   check may still be at work when CI concludes; with `wait` set, placido reads once
-   more before it ends, once the pull request is that old (see
+   the reviewer verifies, as in the review. Placido commits, pushes, and replies on
+   every comment: fixed in a commit, not changed and why, left out and drafted as a
+   follow-up in the follow-ups comment, or left for you to decide, which you are told
+   about. CI runs again on the push, and the reviewers may comment on it, in a loop:
+   the first `passes` fix whatever holds, and later ones, up to `max_passes`, only
+   while blocking or significant findings come up. A reviewer that reports no check
+   may still be at work when CI concludes; with `wait` set, placido reads once more
+   before it ends, once the pull request is that old (see
    [Review comments](#review-comments)).
 8. **Close.** After you merge, `placido close` runs your project's teardown,
    removes the worktree and its workspace, brings your base branch up to date, and
@@ -287,9 +288,10 @@ fix_rounds = 3         # fixes, each reviewed in full in a round of its own, bef
 
 ```toml
 [review_comments]
-accounts = ["review-bot[bot]"]   # whose comments on the run's pull request placido answers; none by default
-passes   = 2                     # how many times, each once CI concludes on what the last answer pushed
-wait     = "30m"                 # how long after the pull request opens a reviewer may still comment; 0s by default
+accounts   = ["review-bot[bot]"] # whose comments on the run's pull request placido answers; none by default
+passes     = 2                   # passes that fix whatever holds, each on what the last pass pushed
+max_passes = 5                   # passes in all that fix, the later ones only on a blocking or significant finding
+wait       = "30m"               # how long after the pull request opens a reviewer may still comment; 0s by default
 ```
 
 Placido knows GitHub's review threads and reviews, not any one reviewer, so the
@@ -301,7 +303,21 @@ that reports none, such as Codex's security review, may still be at work. Placid
 answers what is there, and reads again after each pass, at once when the pass pushed
 nothing and after CI when it pushed. With nothing left to answer, it waits until the
 pull request is `wait` old and reads once more: what came in by then gets a pass of its
-own, or, once `passes` are spent, is named to you.
+own.
+
+Each pass answers the comments that came in since the last one, mostly on what that
+pass pushed. Its reviewer rates each finding on the evidence, whatever the comment
+claims, and those ratings decide how far the loop goes:
+
+- the first `passes` fix whatever holds, of any severity;
+- a later pass, up to `max_passes` in all, fixes only when its comments bring a
+  blocking or significant finding, and then fixes its minor ones too. One that brings
+  only minor ones replies, drafts them as follow-ups, and pushes nothing, so no
+  reviewer has anything new to comment on and the loop ends;
+- after `max_passes`, comments are still judged and replied to, and whatever holds is
+  drafted as a follow-up.
+
+Every comment gets a reply, including one left for you, which says so.
 Comments on the pull request's conversation, such as a bot's summary, are not answered;
 nor are replies inside a thread. The review runs `final_rounds` more rounds after the
 one that judges the comments, and the last gates do not run again on its fixes, which

@@ -54,11 +54,15 @@ DEFAULTS: dict[str, Any] = {
     "limits": {"stage_attempts": 3, "quota_wait": "2h", "ci_wait": "1h"},
     # The comments other reviewers, such as a review bot, leave on the run's pull request:
     # the accounts whose comments placido answers once CI concludes (none: it answers
-    # none), and how many times, each on what the last answer pushed (decided 2026-11-14);
-    # and how long after the pull request opens a reviewer with no check to wait on may
-    # still comment, which placido waits out before it ends (none by default; decided
-    # 2026-11-19, as Codex's security review came after CI on Goiabada's #868).
-    "review_comments": {"accounts": [], "passes": 2, "wait": "0s"},
+    # none; decided 2026-11-14). Each pass answers what came in, each on what the last
+    # pass pushed: the first `passes` fix whatever holds; later ones, up to `max_passes`
+    # in all, fix only while a blocking or significant finding comes up; and after them
+    # placido still judges and replies, leaving what holds as follow-ups (decided with the
+    # user 2026-11-19). `wait` is how long after the pull request opens a reviewer with no
+    # check to wait on may still comment, which placido waits out before it ends (none by
+    # default; decided 2026-11-19, as Codex's security review came after CI on Goiabada's
+    # #868).
+    "review_comments": {"accounts": [], "passes": 2, "max_passes": 5, "wait": "0s"},
     # `placido pr`: two reviewers from different vendors, one after the other; the gates
     # placido runs once for both (none named: the slice and the final gates); and the
     # paths setup and the gates run on this machine, which a pull request changes only as
@@ -182,7 +186,8 @@ class ReviewComments:
     """Which reviewers' comments on the run's pull request placido answers, and how often."""
 
     accounts: tuple[str, ...] = ()  # GitHub logins, a bot's with or without its [bot]
-    passes: int = 2  # answers, each once CI concludes on the latest push
+    passes: int = 2  # passes that fix whatever holds, each once CI concludes on the latest push
+    max_passes: int = 5  # passes in all that fix, the later ones only on a blocking or significant finding
     wait: int = 0  # seconds after the pull request opens that placido reads again before it ends
 
 
@@ -416,12 +421,15 @@ def _review_comments(data: dict[str, Any]) -> ReviewComments:
     passes = _typed(table, "passes", DEFAULTS["review_comments"]["passes"], "review_comments")
     if passes < 1:
         raise ConfigError(f"review_comments.passes: must be at least 1, not {passes}")
+    most = _typed(table, "max_passes", max(passes, DEFAULTS["review_comments"]["max_passes"]), "review_comments")
+    if most < passes:
+        raise ConfigError(f"review_comments.max_passes: must be at least passes ({passes}), not {most}")
     wait = _typed(table, "wait", DEFAULTS["review_comments"]["wait"], "review_comments")
     try:
         seconds = parse_duration(wait)
     except ValueError:
         raise ConfigError(f"review_comments.wait: {wait!r} is not a duration like 30m or 1h") from None
-    return ReviewComments(tuple(a.strip() for a in accounts), passes, seconds)
+    return ReviewComments(tuple(a.strip() for a in accounts), passes, most, seconds)
 
 
 def _resolve(data: dict[str, Any], source: Path | None) -> Config:
@@ -544,6 +552,7 @@ def describe(config: Config, start: Path) -> str:
         "limits.ci_wait": format_duration(config.ci_wait),
         "review_comments.accounts": ", ".join(config.review_comments.accounts) or "-",
         "review_comments.passes": config.review_comments.passes,
+        "review_comments.max_passes": config.review_comments.max_passes,
         "review_comments.wait": format_duration(config.review_comments.wait),
     }
     width = max(len(key) for key in settings)

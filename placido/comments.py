@@ -7,9 +7,15 @@ GitHub could not attach to a line. The review loop (placido/review.py) then runs
 them as a stage of its own. The reviewer judges each comment, which becomes a finding
 or is not valid; the fixer fixes, disputes, or defers each finding; and the reviewer,
 resumed, verifies the answers, in rounds. Placido commits, pushes, replies on each
-thread (fixed in a commit, not changed and why, or left out as a follow-up), and
-waits for CI again, on which the reviewers may comment again: up to `passes` times.
-A reviewer with no check may still be at work when CI concludes (Codex's security
+thread (fixed in a commit, not changed and why, left out as a follow-up, or left for
+the user), and waits for CI again, on which the reviewers may comment again.
+
+Decided with the user 2026-11-19, each pass on what the last one pushed: the first
+`passes` fix whatever holds; later ones, up to `max_passes` in all, fix only while
+the comments bring a blocking or significant finding, and one that brings only minor
+ones leaves them as follow-ups and pushes nothing, which ends the passes; and after
+`max_passes`, comments are still judged and replied to, and what holds is left as
+follow-ups. Every comment gets a reply. A reviewer with no check may still be at work when CI concludes (Codex's security
 review on Goiabada's #868, 2026-11-19): before it ends, placido reads again once the
 pull request is `wait` old, and answers what came in a pass of its own.
 
@@ -21,7 +27,7 @@ Decided with the user 2026-11-14: what is valid is fixed in this pull request un
 it is big or needs a decision of theirs; what is left out becomes a follow-up drafted
 in the follow-ups comment, never a filed issue (placido files none, decided
 2026-10-02); and the run never stops to ask, so a comment only the user can settle is
-left unanswered for them, and they are told.
+left for them, which its reply says, and they are told.
 """
 
 from __future__ import annotations
@@ -273,6 +279,21 @@ class Loop(review.Loop):
     def _judged_words(self) -> str:
         return "a dispute or a deferral"
 
+    def _leave_out(self, round_: int, open_findings: list[dict[str, Any]]) -> str:
+        """After the first `passes`, a pass fixes only when its comments bring a blocking
+        or significant finding, and after `max_passes` not at all."""
+
+        rules = self.settings.review_comments
+        if round_ > 1 or self.pass_ <= rules.passes:
+            return ""
+        if self.pass_ > rules.max_passes:
+            return (f"Placido fixes the review comments on a pull request in {rules.max_passes} passes at most,"
+                    " and they are spent")
+        if any(f["severity"] != "minor" for f in open_findings):
+            return ""
+        first = "its first pass" if rules.passes == 1 else f"its first {rules.passes} passes"
+        return f"It is minor, and after {first} on review comments placido fixes only blocking and significant findings"
+
     def _check_findings(self, result: Path, round_: int, earlier: list[str]) -> list[str]:
         problems = super()._check_findings(result, round_, earlier)
         if round_ == 1 and not problems:
@@ -341,7 +362,7 @@ def _ends(finding: str, account: review.Review) -> tuple[str, str, str]:
         return "not-changed", note, ""
     if state in ("accepted-deferral", "deferred"):
         return "follow-up", note, ""
-    return "left", "no answer the reviewer accepted" if state else "not answered", ""
+    return "left", "No answer the reviewer accepted" if state else "Not answered", ""
 
 
 def settle(comments: list[Comment], account: review.Review, pass_: int) -> list[Answer]:
@@ -380,8 +401,8 @@ def left_out(comments: list[Comment], account: review.Review, pass_: int) -> lis
     ]
 
 
-def reply(answer: Answer, numbers: dict[str, tuple[int, str]], short: Callable[[str], str]) -> str | None:
-    """The reply on an answer's comment; None for one left to the user."""
+def reply(answer: Answer, numbers: dict[str, tuple[int, str]], short: Callable[[str], str]) -> str:
+    """The reply on an answer's comment: every comment gets one (decided 2026-11-19)."""
 
     text = _sentence(answer.text)
     if answer.outcome == "fixed":
@@ -393,7 +414,7 @@ def reply(answer: Answer, numbers: dict[str, tuple[int, str]], short: Callable[[
         drafted = (f" It is drafted as follow-up {where[0]} in [the follow-ups comment]({where[1]}), for the"
                    " maintainer to fix or file." if where else "")
         return f"Left out of this pull request. {text}{drafted}"
-    return None
+    return f"Left for the maintainer to decide. {text}"
 
 
 def _sentence(text: str) -> str:
@@ -456,17 +477,6 @@ def answer(
             if not comments:
                 if _wait_for_late(ctx, sleep, now):
                     continue
-                break
-            if done >= settings.passes:
-                urls = [c.url for c in comments]
-                if (runlog.last_event(run.path, "comments.unanswered") or {}).get("urls") != urls:
-                    run.event("comments.unanswered", count=len(comments), urls=urls)
-                    write_account(run.path)
-                    alerts.notify(run, ctx.herdr, "review comments left after the last pass",
-                                  f"{_count(len(comments), 'comment')} on {pr} came after placido's"
-                                  f" {_count(done, 'pass')}; they are yours", mail=False)
-                if _wait_for_late(ctx, sleep, now):
-                    continue  # to name what came in by then too
                 break
             pass_ = done + 1
             folder = run.path / "comments" / str(pass_)
@@ -569,7 +579,7 @@ def _reply(
     folder.mkdir(parents=True, exist_ok=True)
     for item in answers:
         text = reply(item, numbers, short)
-        if not item.source.startswith("T") or text is None or (pass_, item.source) in posted:
+        if not item.source.startswith("T") or (pass_, item.source) in posted:
             continue
         body = folder / f"{item.source}.md"
         body.write_text(text + "\n", encoding="utf-8")

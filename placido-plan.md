@@ -2446,3 +2446,14 @@ ran:
   project command that says when each reviewer is done: Codex marks that only in its
   own summary comment, whose format is its own, and a wait is simple and, in an
   unattended run, cheap.
+- With the user, later the same day: #868's first pass fixed CodeRabbit's 10 threads,
+  and its review of those fixes brought 10 more, with `passes = 2` the last answered.
+  The user's rule for the loop: two passes fix whatever holds, then up to five in all
+  while high or medium findings keep coming up; and every comment gets a reply.
+  `[review_comments] max_passes` (5 by default, at least `passes`). The severity is the
+  reviewer's own, blocking or significant, never the bot's label. A later pass with only
+  minor findings leaves them as follow-ups through the review loop's new `_leave_out`
+  hook and pushes nothing, which ends the loop as no reviewer has anything new; a pass
+  after `max_passes` judges and replies, leaving what holds as follow-ups, where the
+  old cap named the comments to the user unanswered. A comment left for the user now
+  has a reply saying so.

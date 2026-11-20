@@ -331,6 +331,11 @@ class Loop:
             if not open_findings:
                 self._event("decision", round=round_, decision="pass", reason="nothing open")
                 break
+            why = self._leave_out(round_, open_findings)
+            if why:
+                self._event("decision", round=round_, decision="leave out", reason=why)
+                account.followups += [{**f, "why": why} for f in open_findings]
+                break
 
             fixed = self._fix_round(round_, open_findings, step.path)
             if fixed is None:
@@ -419,6 +424,12 @@ class Loop:
 
     def _judged_words(self) -> str:
         return "a dispute"
+
+    def _leave_out(self, round_: int, open_findings: list[dict[str, Any]]) -> str:
+        """Why the findings open after a round are left out of the change unfixed, as
+        follow-ups; empty to fix them. The run's own review fixes them all."""
+
+        return ""
 
     def _check_findings(self, result: Path, round_: int, earlier: list[str]) -> list[str]:
         return check_findings(result.parent / "findings.json", round_, earlier if round_ > 1 else [])

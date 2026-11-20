@@ -361,18 +361,25 @@ class ReviewCommentsTest(unittest.TestCase):
 
     def test_names_the_accounts_to_answer(self):
         c = load_text('[review_comments]\naccounts = ["review-bot[bot]", " a-person "]\npasses = 3\nwait = "30m"\n')
-        self.assertEqual(c.review_comments, config.ReviewComments(("review-bot[bot]", "a-person"), 3, 1800))
+        self.assertEqual(c.review_comments,
+                         config.ReviewComments(("review-bot[bot]", "a-person"), 3, max_passes=5, wait=1800))
         text = config.describe(c, Path("."))
-        self.assertIn("review_comments.accounts  review-bot[bot], a-person", text)
-        self.assertIn("review_comments.passes    3", text)
-        self.assertIn("review_comments.wait      30m", text)
-        self.assertIn("review_comments.wait      0s", config.describe(config.load(None), Path(".")))
+        self.assertIn("review_comments.accounts    review-bot[bot], a-person", text)
+        self.assertIn("review_comments.passes      3", text)
+        self.assertIn("review_comments.max_passes  5", text)
+        self.assertIn("review_comments.wait        30m", text)
+        self.assertIn("review_comments.wait        0s", config.describe(config.load(None), Path(".")))
+
+    def test_the_most_passes_are_at_least_the_passes(self):
+        self.assertEqual(load_text('[review_comments]\npasses = 7\n').review_comments.max_passes, 7)
+        self.assertEqual(load_text('[review_comments]\nmax_passes = 3\n').review_comments.max_passes, 3)
 
     def test_refusals(self):
         cases = {
             "[review_comments]\naccounts = \"bot\"\n": "review_comments.accounts: must be a list of GitHub logins",
             "[review_comments]\naccounts = [\"\"]\n": "review_comments.accounts: must be a list of GitHub logins",
             "[review_comments]\npasses = 0\n": "review_comments.passes: must be at least 1",
+            "[review_comments]\npasses = 3\nmax_passes = 2\n": r"review_comments.max_passes: must be at least passes \(3\), not 2",
             "[review_comments]\nwait = \"soon\"\n": "review_comments.wait: 'soon' is not a duration",
             "[review_comments]\nwait = 30\n": "review_comments.wait: must be str",
             "[review_comments]\nrounds = 2\n": "review_comments.rounds: unknown key",
@@ -405,7 +412,7 @@ class ConfigCommandTest(unittest.TestCase):
             "review     codex -m gpt-6.2-sol -c model_reasoning_effort=max -c service_tier=fast", out
         )
         self.assertIn("  then     pi --provider openrouter", out)
-        self.assertIn("limits.quota_wait         2h", out)
+        self.assertIn("limits.quota_wait           2h", out)
 
     def test_defaults_when_there_is_no_file(self):
         with tempfile.TemporaryDirectory() as tmp:

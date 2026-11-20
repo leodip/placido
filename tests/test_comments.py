@@ -320,14 +320,14 @@ class PassTest(CommentsCase):
         self.assertTrue(dict(self.hub.replies)[101].startswith("Fixed in "))
         self.assertFalse(self.events("comments.followups"))
 
-    def test_an_escalation_is_left_unanswered_for_the_user(self):
+    def test_an_escalation_is_left_for_the_user_and_its_reply_says_so(self):
         self.hub.threads = [thread(101)]
         self.runner.reviews = [
             {"findings": [finding(1, "blocking")], "comments": [{"source": "T1", "title": "a", "finding": "R1-1"}]},
         ]
         self.runner.fixes = [{"answers": {"R1-1": "escalated"}}]
         self.assertEqual(self.answer(), "green")
-        self.assertEqual(self.hub.replies, [])
+        self.assertEqual(self.hub.replies, [(101, "Left for the maintainer to decide. because.\n")])
         self.assertEqual(self.ci_calls, 0)  # nothing pushed, so nothing new to review
         self.assertEqual(self.herdr.notes, ["placido · 450-x: review comments need your decision"])
         body = prbody.review_comments(list(runlog.read_events(self.run.path)))
@@ -338,19 +338,56 @@ class PassTest(CommentsCase):
 class LimitsTest(CommentsCase):
     PASSES = 1
 
-    def test_comments_after_the_last_pass_are_named(self):
+    def fixed(self, severity: str) -> None:
+        """A pass's one comment, judged a finding of `severity` and fixed."""
+
+        self.runner.reviews.append(
+            {"findings": [finding(1, severity)], "comments": [{"source": "T1", "title": "a", "finding": "R1-1"}]},
+        )
+        if severity != "minor":
+            self.runner.reviews.append({"findings": [], "verdicts": [{"id": "R1-1", "verdict": "resolved"}]})
+        self.runner.fixes.append({"answers": {"R1-1": "fixed"}, "change": "code"})
+
+    def comment_after_each_ci(self, *ids: int) -> None:
+        later = list(ids)
+        self.after_ci = lambda: later and self.hub.threads.append(thread(later.pop(0)))
+
+    def test_after_the_first_passes_a_minor_finding_is_left_out_and_ends_them(self):
+        self.post_follow_ups()
         self.hub.threads = [thread(101)]
-        self.runner.reviews = [
-            {"findings": [finding(1, "minor")], "comments": [{"source": "T1", "title": "a", "finding": "R1-1"}]},
-        ]
-        self.runner.fixes = [{"answers": {"R1-1": "fixed"}, "change": "code"}]
-        self.after_ci = lambda: self.hub.threads.append(thread(201))
+        self.fixed("minor")  # pass 1: any severity is fixed
+        self.runner.reviews.append(  # pass 2: only a minor finding
+            {"findings": [finding(1, "minor")], "comments": [{"source": "T1", "title": "b", "finding": "R1-1"}]},
+        )
+        self.comment_after_each_ci(201, 301)
         self.assertEqual(self.answer(), "green")
-        self.assertEqual(self.answer(), "green")  # resumed: named once
-        unanswered = self.events("comments.unanswered")
-        self.assertEqual(len(unanswered), 1)
-        self.assertEqual(unanswered[0]["urls"], [f"{PR}#discussion_r201"])
-        self.assertEqual(self.herdr.notes, ["placido · 450-x: review comments left after the last pass"])
+        self.assertEqual((self.hub.pushes, self.ci_calls), (1, 1))  # pass 2 pushed nothing, so no CI after it
+        self.assertEqual([e["pass"] for e in self.events("comments.passed")], [1, 2])
+        self.assertTrue(dict(self.hub.replies)[201].startswith(
+            "Left out of this pull request. It is minor, and after its first pass on review comments placido"
+            " fixes only blocking and significant findings. It is drafted as follow-up 2"), self.hub.replies)
+        self.assertEqual(self.runner.drafts, ["C2-R1-1"])
+        self.assertEqual(self.runner.fixes, [])
+
+    def test_serious_findings_earn_passes_up_to_the_most_then_comments_are_judged_and_replied_to(self):
+        self.settings = replace(self.settings, review_comments=config.ReviewComments((BOT,), 1, max_passes=2))
+        self.hub.threads = [thread(101)]
+        self.fixed("minor")  # pass 1
+        self.fixed("significant")  # pass 2: serious, so fixed
+        self.runner.reviews.append(  # pass 3: past the most, judged only
+            {"findings": [finding(1, "blocking")], "comments": [{"source": "T1", "title": "c", "finding": "R1-1"}]},
+        )
+        self.comment_after_each_ci(201, 301)
+        self.assertEqual(self.answer(), "green")
+        self.assertEqual((self.hub.pushes, self.ci_calls), (2, 2))
+        replies = dict(self.hub.replies)
+        self.assertTrue(replies[201].startswith("Fixed in "))
+        self.assertTrue(replies[301].startswith(
+            "Left out of this pull request. Placido fixes the review comments on a pull request in 2 passes at"
+            " most, and they are spent."), replies[301])
+        decisions = [(e["round"], e["decision"]) for e in self.events("comments.decision")]
+        self.assertEqual(decisions[-1], (1, "leave out"))
+        self.assertFalse(self.events("comments.unanswered"))
 
     def test_red_ci_on_the_answers_stops_the_passes(self):
         self.settings = replace(self.settings, review_comments=config.ReviewComments((BOT,), 3))
@@ -387,7 +424,7 @@ class LateTest(CommentsCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.settings = replace(self.settings, review_comments=config.ReviewComments((BOT,), 2, 30 * 60))
+        self.settings = replace(self.settings, review_comments=config.ReviewComments((BOT,), 2, wait=30 * 60))
         self.opened = datetime.fromisoformat(self.events("pr.opened")[0]["ts"])
         self.clock = self.opened + timedelta(minutes=10)
         self.slept: list[float] = []
@@ -447,15 +484,17 @@ class LateTest(CommentsCase):
         self.assertEqual(self.ci_calls, 1)  # pass 1 pushed nothing, so no CI before pass 2
         self.assertEqual(self.slept, [])
 
-    def test_after_the_last_pass_what_came_by_the_wait_is_named_too(self):
-        self.settings = replace(self.settings, review_comments=config.ReviewComments((BOT,), 1, 30 * 60))
+    def test_after_the_most_passes_what_came_by_the_wait_is_replied_to_too(self):
+        self.settings = replace(self.settings, review_comments=config.ReviewComments((BOT,), 1, 1, 30 * 60))
         self.hub.threads = [thread(101)]
         self.fixed(101)
-        self.after_ci = lambda: self.hub.threads.append(thread(201))
         self.on_sleep = lambda: self.hub.threads.append(thread(301))
+        self.runner.reviews.append(
+            {"findings": [], "comments": [{"source": "T1", "title": "d", "reply": "It holds: see greet.py:1."}]},
+        )
         self.assertEqual(self.answer(), "green")
-        urls = [e["urls"] for e in self.events("comments.unanswered")]
-        self.assertEqual(urls, [[f"{PR}#discussion_r201"], [f"{PR}#discussion_r201", f"{PR}#discussion_r301"]])
+        self.assertEqual(dict(self.hub.replies)[301], "Not changed. It holds: see greet.py:1.\n")
+        self.assertEqual(self.slept, [20 * 60])
 
 
 class FollowUpsCommentTest(CommentsCase):
