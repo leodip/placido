@@ -78,14 +78,37 @@ def review_items(run_dir: Path) -> list[dict[str, Any]]:
     return list((runlog.last_event(run_dir, "review.followups") or {}).get("items", []))
 
 
-def comment_items(run_dir: Path) -> list[dict[str, Any]]:
-    """What answering the review comments left out, every pass in order; each item's
-    id names its pass, as in C1-R1-2, so it never meets a review follow-up's."""
+def check_items(run_dir: Path, label: str | None = None) -> list[dict[str, Any]]:
+    """The fixes the checks fixers recommended outside the change, in order, or the one
+    of the fix step labelled label; each item's id names its step, as in K-ci-1."""
+
+    return [item for event in runlog.read_events(run_dir)
+            if (item := _check_item(event)) is not None and (label is None or event.get("label") == label)]
+
+
+def _check_item(event: dict[str, Any]) -> dict[str, Any] | None:
+    found = event.get("followup") if event.get("event") == "checks.unchanged" else None
+    if not isinstance(found, dict) or not event.get("label"):
+        return None
+    return {
+        "id": f"K-{event['label']}", "title": found.get("title"), "description": found.get("description"),
+        "why": f"It is outside this change: {event.get('what')} failed on it, and the fix found this. {event.get('why')}",
+        "url": "",
+    }
+
+
+def later_items(run_dir: Path) -> list[dict[str, Any]]:
+    """The follow-ups after the review's, in the order they came: what the checks fixers
+    found outside the change, and what each pass on the review comments left out, whose
+    ids name their pass, as in C1-R1-2. A new one only ever comes last, so the numbers
+    the pull request already shows hold."""
 
     items: list[dict[str, Any]] = []
     for event in runlog.read_events(run_dir):
         if event.get("event") == "comments.followups":
             items += [item for item in event.get("items", []) if isinstance(item, dict)]
+        elif (item := _check_item(event)) is not None:
+            items.append(item)
     return items
 
 
@@ -98,7 +121,7 @@ def all_drafts(run_dir: Path) -> list[Draft]:
     its drafted file or, when drafting failed, from what the review said."""
 
     found = [parse(p.read_text(encoding="utf-8"), p) for p in sorted(spec.issue_dir(run_dir).glob("followup-*.md"))]
-    for item in [*review_items(run_dir), *comment_items(run_dir)]:
+    for item in [*review_items(run_dir), *later_items(run_dir)]:
         path = folder(run_dir) / f"{item.get('id')}.md"
         if path.is_file():
             text = path.read_text(encoding="utf-8")
@@ -124,7 +147,7 @@ def draft(ctx: "driver.Context", agent: Any) -> None:  # noqa: F821
     step is logged and delivery goes on: the follow-ups are then posted as the review
     wrote them."""
 
-    items = review_items(ctx.run.path)
+    items = review_items(ctx.run.path) + check_items(ctx.run.path)
     if runlog.last_event(ctx.run.path, "followups.drafted") or runlog.last_event(ctx.run.path, "followups.draft_failed"):
         return
     root = Path(runlog.read_record(ctx.run.path).get("repo") or ctx.worktree)
@@ -155,6 +178,26 @@ def draft_comments(ctx: "driver.Context", agent: Any, pass_: int, items: list[di
         ctx.run.event("followups.draft_failed", outcome=outcome, comments=pass_)
         return
     ctx.run.event("followups.drafted", files=[f"{item.get('id')}.md" for item in items], comments=pass_)
+
+
+def draft_checks(ctx: "driver.Context", agent: Any, label: str) -> bool:  # noqa: F821
+    """Draft the fix a checks fixer recommended outside the change, after the pull request
+    is open, once per fix step; whether it recommended one. As draft() does, a failed step
+    leaves the item as the fixer wrote it."""
+
+    items = check_items(ctx.run.path, label)
+    done = [e for e in runlog.read_events(ctx.run.path)
+            if e.get("event") in ("followups.drafted", "followups.draft_failed") and e.get("checks") == label]
+    if not items or done:
+        return bool(items)
+    out = folder(ctx.run.path)
+    out.mkdir(parents=True, exist_ok=True)
+    outcome = _draft_step(ctx, agent, items, checks_prompt(ctx, items, out), f"followups-{label}")
+    if outcome != "success":
+        ctx.run.event("followups.draft_failed", outcome=outcome, checks=label)
+    else:
+        ctx.run.event("followups.drafted", files=[f"{item.get('id')}.md" for item in items], checks=label)
+    return True
 
 
 def _draft_step(ctx: "driver.Context", agent: Any, items: list[dict[str, Any]], task: str, name: str) -> str:  # noqa: F821
@@ -261,6 +304,38 @@ def comments_prompt(ctx: "driver.Context", items: list[dict[str, Any]], out: Pat
             lines.append(f"  - Left out because: {item.get('why')}")
         if item.get("url"):
             lines.append(f"  - Raised in: {item.get('url')}")
+    return "\n".join(lines) + "\n"
+
+
+def checks_prompt(ctx: "driver.Context", items: list[dict[str, Any]], out: Path) -> str:  # noqa: F821
+    """The drafting prompt for a fix a checks fixer recommended outside the change."""
+
+    issue = spec.issue_dir(ctx.run.path)
+    lines = [
+        "# Draft a fix found outside the change as a GitHub issue",
+        "",
+        f"Follow the placido follow-ups skill in {SKILL}. This follow-up comes from a failing check:"
+        " the fixer found its cause outside this change, changed nothing, and named the fix.",
+        "",
+        f"- **Agreement:** {issue / 'agreement.md'}",
+        decisions.prompt_line(ctx.run.path),
+        f"- **The fixer's steps:** under {ctx.run.path / 'steps'}, the folder whose name ends in fix-<the id after"
+        " K->; it holds the failing output the fixer read and its result.",
+        f"- **Code:** the worktree you are in, {ctx.worktree}. Read it; do not change it.",
+        f"- **Write:** one draft per follow-up, as {out}/<id>.md.",
+        f"- **Already drafted:** the files in {out} and beside the agreement in {issue}; a follow-up one"
+        " of them covers is a duplicate.",
+        "- **Notes for other issues:** none in this step; the run wrote them when it opened the pull request.",
+        "",
+        "## The follow-ups",
+        "",
+    ]
+    for item in items:
+        lines.append(f"- **{item.get('id')}** {item.get('title')}")
+        if item.get("description"):
+            lines.append(f"  - What: {item.get('description')}")
+        if item.get("why"):
+            lines.append(f"  - Left out because: {item.get('why')}")
     return "\n".join(lines) + "\n"
 
 

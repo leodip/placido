@@ -210,6 +210,20 @@ class DeliverTest(DeliverCase):
         self.assertEqual(self.gh.made("pr checks"), 4)
         self.assertEqual([e["outcome"] for e in self.events("ci.result")], ["red", "red"])
 
+    def test_a_fix_the_ci_fixer_names_outside_the_change_reaches_the_follow_ups(self):
+        self.fixer.unchanged = ("No code changes\n\nA test took random letters for a link.\n\n## Follow-up\n"
+                                "Assert no link on the markup\n\nThirteen tests look for the letters href.\n\n"
+                                "## Evidence\n- x\n")
+        rerun = dict(check("build", "pass"), link="https://github.com/leodip/goiabada/actions/runs/111/job/333")
+        self.gh.checks = [[check("build", "fail")], [rerun]]
+        self.assertEqual(self.deliver(), "green")
+        drafting = [p for p in self.fixer.prompts if p.startswith("# Draft a fix found outside the change")]
+        self.assertEqual(len(drafting), 1)
+        self.assertIn("**K-ci-1** Assert no link on the markup", drafting[0])
+        # The follow-ups comment was posted before CI; this one comes after it, numbered on.
+        self.assertEqual(self.events("followups.continued")[0]["start"], 1)
+        self.assertIn("Assert no link on the markup", self.gh.bodies["pr comment last"])
+
     def test_a_rerun_check_with_a_new_link_counts_though_never_seen_running(self):
         self.fixer.unchanged = "No code changes\n\nA flaky test.\n\n## Evidence\n- x\n"
         rerun = dict(check("build", "pass"), link="https://github.com/leodip/goiabada/actions/runs/111/job/333")

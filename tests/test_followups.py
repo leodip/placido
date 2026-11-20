@@ -118,6 +118,28 @@ class DraftStepTest(unittest.TestCase):
         self.assertEqual([d.title for d in drafts], ["chi", "Limiter"])
         self.assertEqual((drafts[1].body, drafts[1].why), ("d", "w"))
 
+    def test_a_fix_found_outside_the_change_is_drafted_with_the_reviews(self):
+        self.run.event("checks.unchanged", what="the last gates", why="The tunnel dropped.", label="last-gates-1",
+                       followup={"title": "Keep the tunnel alive", "description": "lib.sh has no keepalive."})
+        drafter = FakeDrafter(lambda: None)
+        self.draft(drafter)
+        task = drafter.calls[0][2]
+        self.assertIn("**K-last-gates-1** Keep the tunnel alive", task)
+        self.assertIn("Left out because: It is outside this change: the last gates failed on it", task)
+        self.assertEqual([d.key for d in followups.all_drafts(self.run.path)], ["", "F1", "K-last-gates-1"])
+
+    def test_later_follow_ups_keep_the_order_they_came_in(self):
+        # The pull request numbers them in this order, so one that comes later goes last.
+        self.run.event("checks.unchanged", what="the last gates", why="w", label="last-gates-1",
+                       followup={"title": "A", "description": "a"})
+        self.run.event("comments.followups", **{"pass": 1}, items=[{"id": "C1-R1-1", "title": "B"}])
+        self.run.event("checks.unchanged", what="the CI checks", why="w", label="ci-1")  # nothing to file
+        self.run.event("checks.unchanged", what="the CI checks", why="w", label="ci-2",
+                       followup={"title": "C", "description": "c"})
+        self.assertEqual([i["id"] for i in followups.later_items(self.run.path)],
+                         ["K-last-gates-1", "C1-R1-1", "K-ci-2"])
+        self.assertEqual([i["id"] for i in followups.check_items(self.run.path, "ci-2")], ["K-ci-2"])
+
     def test_no_step_without_follow_ups_or_github(self):
         self.run.event("review.followups", items=[])
         sh(self.repo, "git", "remote", "remove", "origin")

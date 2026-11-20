@@ -5,9 +5,10 @@ description: Draft each piece of work a placido change left out as a GitHub issu
 
 # Follow-ups to issue drafts, and notes for other issues
 
-The change is built and reviewed. The review left some work out of it, and the user
-chose not to fold it in. Each piece becomes a draft issue that the user reads in the
-pull request and files with one command. Your prompt lists the follow-ups, each with
+The change is built and reviewed. The review left some work out of it, or the review
+comments did, or a failing check's fixer found a cause outside the change. Each piece
+becomes a draft issue that the user reads in the pull request and files with one
+command. Your prompt lists the follow-ups, each with
 an id, what it is and why it was left out, and names the agreement, the decisions,
 the review, the worktree, and any drafts the interview already wrote.
 

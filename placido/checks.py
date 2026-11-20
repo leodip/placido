@@ -16,6 +16,7 @@ change, and asked the user twice while main's own e2e tests failed).
 
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -26,6 +27,7 @@ from placido.step import Step
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "checks" / "SKILL.md"
 MAX_FIXES = 2
 NO_CHANGES = "No code changes"  # a fixer's first line when nothing in the change causes the failure
+FOLLOW_UP = "## Follow-up"  # in a No code changes result: a fix outside the change, to draft as an issue
 NOTES = Path(".placido") / "notes" / "fix.md"
 
 
@@ -99,7 +101,7 @@ def fix(
         if unchanged(result) is None:
             return implement.check(result, ctx.worktree, head, entry, settings, ctx.env, ctx.run)
         # Nothing to run again: the checks failed on this very tree.
-        problems = decisions.check(result.parent, ctx.run.path)
+        problems = decisions.check(result.parent, ctx.run.path) + check_follow_up(result)
         if implement.git(ctx.worktree, "rev-parse", "HEAD") != head or implement.git(ctx.worktree, "status", "--porcelain"):
             problems.append(f"the result says '{NO_CHANGES}', but the worktree changed: put it back as it was"
                             f" (`git reset --hard {head}`), or write the result of a fix.")
@@ -112,7 +114,8 @@ def fix(
         return False
     why = unchanged(step.path / "result.md")
     if why is not None:
-        ctx.run.event("checks.unchanged", what=what, why=why)
+        found = follow_up(step.path / "result.md")
+        ctx.run.event("checks.unchanged", what=what, why=why, label=label, **({"followup": found} if found else {}))
         return False
     commit(ctx.worktree, step.path / "result.md", ctx.run, label)
     return True
@@ -125,8 +128,31 @@ def unchanged(result: Path) -> str | None:
     text = result.read_text(encoding="utf-8").strip() if result.is_file() else ""
     if not text.startswith(NO_CHANGES):
         return None
-    why = " ".join(text[len(NO_CHANGES):].split(implement.EVIDENCE, 1)[0].split()).lstrip(":.;, ")
+    why = " ".join(re.split(r"(?m)^## ", text[len(NO_CHANGES):], maxsplit=1)[0].split()).lstrip(":.;, ")
     return why[:500] or "the fixer gave no reason"
+
+
+def follow_up(result: Path) -> dict[str, str] | None:
+    """The fix a No code changes result recommends outside the change, as a follow-up
+    to draft: its title, the section's first line, and what to fix, the rest. #869's
+    fixer named the fix for a test that took ten random letters for a link, and it went
+    nowhere but the run's log (2026-11-20)."""
+
+    text = result.read_text(encoding="utf-8") if result.is_file() else ""
+    found = re.search(rf"(?ms)^{re.escape(FOLLOW_UP)}[ \t]*$(.*?)(?=^## |\Z)", text)
+    if not found:
+        return None
+    lines = found.group(1).strip().splitlines()
+    title = lines[0].strip().lstrip("#").strip() if lines else ""
+    description = "\n".join(lines[1:]).strip()
+    return {"title": title, "description": description} if title and description else None
+
+
+def check_follow_up(result: Path) -> list[str]:
+    text = result.read_text(encoding="utf-8") if result.is_file() else ""
+    if re.search(rf"(?m)^{re.escape(FOLLOW_UP)}[ \t]*$", text) and follow_up(result) is None:
+        return [f"the '{FOLLOW_UP}' section needs a title on its first line, then what to fix and where."]
+    return []
 
 
 def outside(run_dir: Path, what: str) -> str | None:

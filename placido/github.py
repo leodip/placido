@@ -296,6 +296,8 @@ def await_ci(
             github.push(branch)
             run.event("github.pushed", branch=branch, commit=implement.git(ctx.worktree, "rev-parse", "HEAD"))
             continue
+        if followups.draft_checks(ctx, fixer, f"ci-{seen}"):
+            update_follow_ups(github, run, number)
         if reran:
             break
         runs = _rerun(run, github, failed)

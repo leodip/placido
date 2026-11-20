@@ -45,7 +45,11 @@ base branch fails the same way for a reason outside this change, a flake whose c
 you cannot find, an outage, a broken CI setup), change nothing and write the result
 as `No code changes` (below): placido runs the failed checks once more, as a flake or
 an outage may pass then, and if they still fail, leaves them failing and the pull
-request says why. Do not ask the user about it. When fixing the failure needs the user's
+request says why. Do not ask the user about it. When you can see what would fix the
+cause, such as the same fragile assertion in other tests, a test environment that drops
+its connections, or a bug the failure points at, add a `## Follow-up` section: placido
+drafts it as an issue on the pull request, so the cause is not lost once the checks pass.
+An outage that has passed needs none. When fixing the failure needs the user's
 decision, write the result as `Blocked: <the question, in one line>` followed by the
 evidence, and wait in this tab: placido brings the user here. Record their decision
 in the decisions file your prompt names, as the implement skill shows, then go on; a
@@ -73,7 +77,15 @@ No code changes
 
 <what causes the failure, and why it is not this change's>
 
+## Follow-up
+<the issue's title, in one line>
+
+<what to fix and where, with the files and lines: enough for someone who never saw
+this run>
+
 ## Evidence
 - The failing output's key line, and what places its cause outside the change, such
   as the same failure on the base branch.
 ```
+
+Leave out `## Follow-up` when there is nothing to file.

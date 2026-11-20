@@ -158,6 +158,25 @@ class FinalGatesTest(unittest.TestCase):
         self.assertEqual([(e["attempt"], e.get("by")) for e in passed], [(2, "rerun")])
         self.assertNotIn("last_gates.gave_up", self.events())
 
+    def test_a_fix_the_fixer_names_outside_the_change_is_kept_as_a_follow_up(self):
+        self.fixer.unchanged = ("No code changes\n\nThe SSH tunnel to Mailpit dropped.\n\n## Follow-up\n"
+                                "Keep the e2e tunnel alive\n\nlib.sh opens it with no keepalive:\nadd one.\n\n"
+                                "## Evidence\n- x\n")
+        checks.last_gates(self.ctx(final="", last="full"), config.AgentSpec("claude", "opus", "high"))
+        self.assertEqual(checks.outside(self.run.path, "the last gates"), "The SSH tunnel to Mailpit dropped.")
+        event = runlog.last_event(self.run.path, "checks.unchanged")
+        self.assertEqual(event["label"], "last-gates-1")
+        self.assertEqual(event["followup"], {"title": "Keep the e2e tunnel alive",
+                                             "description": "lib.sh opens it with no keepalive:\nadd one."})
+
+    def test_a_follow_up_section_needs_a_title_and_what_to_fix(self):
+        self.fixer.unchanged = "No code changes\n\nmain's.\n\n## Follow-up\nOnly a title\n\n## Evidence\n- x\n"
+        checks.last_gates(self.ctx(final="", last="full"), config.AgentSpec("claude", "opus", "high"))
+        self.assertEqual(self.fixer.problems,
+                         ["the '## Follow-up' section needs a title on its first line, then what to fix and where."])
+        self.fixer.unchanged = "No code changes\n\nmain's.\n\n## Evidence\n- x\n"
+        self.assertNotIn("followup", runlog.last_event(self.run.path, "checks.unchanged") or {})
+
     def test_the_reason_may_follow_on_the_first_line(self):
         result = self.tmp / "result.md"
         result.write_text("No code changes: main fails them too.\n\n## Evidence\n- x\n")
