@@ -34,7 +34,7 @@ DEFAULTS: dict[str, Any] = {
         # end of the interview (decided 2026-11-05, after #783).
         "vet": {"agent": "codex", "model": "gpt-6.2-sol", "effort": "xhigh", "tier": "fast"},
         "implement": {"agent": "claude", "model": "opus", "effort": "high"},
-        "review": {"agent": "codex", "model": "gpt-6.2-sol", "effort": "max", "tier": "fast"},
+        "review": {"agent": "codex", "model": "gpt-6.2-sol", "effort": "xhigh", "tier": "fast"},
         # A retro reads whole runs, several with --last, so it spends far more than an
         # interview: on Opus rather than following `spec` onto Fable (2026-11-20).
         "retro": {"agent": "claude", "model": "opus", "effort": "high"},
@@ -73,7 +73,7 @@ DEFAULTS: dict[str, Any] = {
     "pr": {
         "reviewers": [
             {"agent": "claude", "model": "opus", "effort": "xhigh"},
-            {"agent": "codex", "model": "gpt-6.2-sol", "effort": "max", "tier": "fast"},
+            {"agent": "codex", "model": "gpt-6.2-sol", "effort": "xhigh", "tier": "fast"},
         ],
         "gates": [],
         # Placido's own project scripts, and the agents' project settings, whose hooks and

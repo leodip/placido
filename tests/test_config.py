@@ -24,7 +24,7 @@ class DefaultsTest(unittest.TestCase):
         roles = self.config.roles
         self.assertEqual(roles["spec"].agent, AgentSpec("claude", "fable", "high"))
         self.assertEqual(roles["implement"].agent, AgentSpec("claude", "opus", "high"))
-        self.assertEqual(roles["review"].agent, AgentSpec("codex", "gpt-6.2-sol", "max", "fast"))
+        self.assertEqual(roles["review"].agent, AgentSpec("codex", "gpt-6.2-sol", "xhigh", "fast"))
 
     def test_fallback_chain_is_claude_then_deepseek(self):
         self.assertEqual(
@@ -56,8 +56,8 @@ class AgentArgsTest(unittest.TestCase):
 
     def test_codex_always_names_its_tier(self):
         self.assertEqual(
-            AgentSpec("codex", "gpt-6.2-sol", "max", "fast").args(),
-            ["-m", "gpt-6.2-sol", "-c", "model_reasoning_effort=max", "-c", "service_tier=fast"],
+            AgentSpec("codex", "gpt-6.2-sol", "xhigh", "fast").args(),
+            ["-m", "gpt-6.2-sol", "-c", "model_reasoning_effort=xhigh", "-c", "service_tier=fast"],
         )
         self.assertIn("service_tier=default", AgentSpec("codex", "gpt-6.2-sol", "max").args())
 
@@ -134,7 +134,7 @@ class OverrideTest(unittest.TestCase):
 
     def test_changing_the_agent_alone_picks_its_default_model(self):
         c = load_text('[roles.review]\nagent = "claude"\n')
-        self.assertEqual(c.roles["review"].agent, AgentSpec("claude", "opus", "max", "fast"))
+        self.assertEqual(c.roles["review"].agent, AgentSpec("claude", "opus", "xhigh", "fast"))
         c = load_text('[roles.spec]\nagent = "pi"\n')
         self.assertEqual(c.roles["spec"].agent.model, "deepseek/deepseek-v4.1-flash")
 
@@ -298,7 +298,7 @@ class PRSettingsTest(unittest.TestCase):
         c = config.load(None)
         self.assertEqual(
             [r.agent for r in c.pr.reviewers],
-            [AgentSpec("claude", "opus", "xhigh"), AgentSpec("codex", "gpt-6.2-sol", "max", "fast")],
+            [AgentSpec("claude", "opus", "xhigh"), AgentSpec("codex", "gpt-6.2-sol", "xhigh", "fast")],
         )
         self.assertEqual(c.pr.reviewers[1].fallback, c.roles["review"].fallback)
         self.assertEqual(c.pr.host_paths, (".placido", ".claude", ".codex", ".mcp.json"))
@@ -409,7 +409,7 @@ class ConfigCommandTest(unittest.TestCase):
         self.assertIn("unit  make unit", out)
         self.assertIn("slice  unit", out)
         self.assertIn(
-            "review     codex -m gpt-6.2-sol -c model_reasoning_effort=max -c service_tier=fast", out
+            "review     codex -m gpt-6.2-sol -c model_reasoning_effort=xhigh -c service_tier=fast", out
         )
         self.assertIn("  then     pi --provider openrouter", out)
         self.assertIn("limits.quota_wait           2h", out)

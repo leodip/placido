@@ -236,7 +236,7 @@ Each role has an agent, model, and effort, and a fallback chain:
 | `spec` (the interview) | claude, Fable, high effort |
 | `vet` (checks the agreement against the code before it is sealed) | codex, gpt-6.2-sol, xhigh, fast tier |
 | `implement` | claude, Opus, high |
-| `review` | codex, gpt-6.2-sol, max, fast tier |
+| `review` | codex, gpt-6.2-sol, xhigh, fast tier |
 | `fix` | as `implement` |
 | `retro` | claude, Opus, high (it reads whole runs, so not Fable like `spec`) |
 | `scan` (`placido pr`, confined) | claude, Opus, high |
@@ -279,7 +279,7 @@ ci_wait        = "1h"  # wait this long for CI on the pull request
 [pr]                   # placido pr: reviewing other people's pull requests
 reviewers = [          # each reviews on its own, in this order; each may name a fallback list
   { agent = "claude", model = "opus", effort = "xhigh" },
-  { agent = "codex", model = "gpt-6.2-sol", effort = "max", tier = "fast" },
+  { agent = "codex", model = "gpt-6.2-sol", effort = "xhigh", tier = "fast" },
 ]
 gates = []             # commands run once before the reviews; none named: the slice and final gates
 host_paths = [".placido", ".claude", ".codex", ".mcp.json"]  # run here: changes run on the scan's word

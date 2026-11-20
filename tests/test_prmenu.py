@@ -88,7 +88,7 @@ class SummaryTest(MenuTestCase):
         self.assertIn("F1  significant bugs        `greet.py:1` the greeting [A1, B1: all]", text)
         self.assertIn("Found outside this change (for you only, never in the comment):\n  - old bug (x.py) [security]", text)
         self.assertIn("Gates: unit pass · lint pass", text)
-        self.assertIn("Reviewers: A claude opus xhigh (1 findings); B codex gpt-6.2-sol max (1 findings)", text)
+        self.assertIn("Reviewers: A claude opus xhigh (1 findings); B codex gpt-6.2-sol xhigh (1 findings)", text)
         self.assertIn("---- the comment to the contributor ----\nThanks for this.", text)
 
 

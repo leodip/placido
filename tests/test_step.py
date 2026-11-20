@@ -834,8 +834,8 @@ class NamesTest(unittest.TestCase):
 
     def test_launch_args(self):
         self.assertEqual(
-            step.launch_args(AgentSpec("codex", "gpt-6.2-sol", "max", "fast")),
-            ["-m", "gpt-6.2-sol", "-c", "model_reasoning_effort=max", "-c", "service_tier=fast",
+            step.launch_args(AgentSpec("codex", "gpt-6.2-sol", "xhigh", "fast")),
+            ["-m", "gpt-6.2-sol", "-c", "model_reasoning_effort=xhigh", "-c", "service_tier=fast",
              "-c", "features.memories=false", "-c", "check_for_update_on_startup=false", "-c", "daybreak=false",
              "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust"],
         )
