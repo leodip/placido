@@ -32,10 +32,20 @@ failure, the worktree is as you found it, and the result says so.
   do not end your turn while a background command or monitor runs: placido reads the
   end of your turn as the end of your work.
 
-When nothing in the change causes the failure (a test the base branch fails the same
-way, a flaky test, an outage, a broken CI setup), change nothing and write the result
-as `No code changes` (below): placido leaves the check failing, and the pull request
-says why. Do not ask the user about it. When fixing the failure needs the user's
+**A flaky test is yours to fix when you can show its cause,** even though the change
+did not cause it: a random value that can collide with what the test looks for, a
+timing or ordering assumption, state left by another test. The pull request needs
+its checks green, and the same flake would fail the next one. Fix the test's cause,
+the smallest way, never by weakening the test (above); the commit body says it was
+flaky and why. #869's test checked that an email had no `href`, and its random
+address of ten letters came out as `reset+tag.hrefdtxscl@example.com`.
+
+When nothing in the change causes the failure and you cannot fix it here (a test the
+base branch fails the same way for a reason outside this change, a flake whose cause
+you cannot find, an outage, a broken CI setup), change nothing and write the result
+as `No code changes` (below): placido runs the failed checks once more, as a flake or
+an outage may pass then, and if they still fail, leaves them failing and the pull
+request says why. Do not ask the user about it. When fixing the failure needs the user's
 decision, write the result as `Blocked: <the question, in one line>` followed by the
 evidence, and wait in this tab: placido brings the user here. Record their decision
 in the decisions file your prompt names, as the implement skill shows, then go on; a
