@@ -166,13 +166,50 @@ class DeliverTest(DeliverCase):
         self.assertEqual(self.deliver(), "pending")
         self.assertEqual(self.gh.made("pr checks"), 0)
 
-    def test_red_after_the_fixes(self):
-        self.gh.checks = [[check("build", "fail")]] * 3
+    def test_red_after_the_fixes_and_a_run_again(self):
+        # The second fix fails its checks, so nothing is pushed: the failed jobs run again.
+        self.gh.checks = [[check("build", "fail")]] * 2 + [[check("build", "pending")], [check("build", "fail")]]
         self.assertEqual(self.deliver(), "red")
         self.assertEqual(len(self.fixer.prompts), 2)
+        self.assertEqual(self.gh.made("run rerun"), 1)
+        self.assertEqual(len(self.events("checks.fix_failed")), 1)
+        self.assertEqual([e["outcome"] for e in self.events("ci.result")], ["red", "red", "red"])
         self.assertIn("> **CI is red after placido's fixes (build).**", self.gh.bodies["pr edit last"])
 
-    def test_review_comments_are_answered_once_ci_is_green_and_decide_the_outcome(self):
+    def test_a_failure_the_fixer_finds_outside_the_change_runs_again_once(self):
+        # #869: a test whose random address spelled "href" failed once; the fixer changed
+        # nothing, and the run stopped red with no action taken (2026-11-20).
+        self.fixer.unchanged = "No code changes\n\nA flaky test.\n\n## Evidence\n- x\n"
+        rerun = dict(check("build", "fail"), link="https://github.com/leodip/goiabada/actions/runs/111/job/333")
+        self.gh.checks = [
+            [check("build", "fail"), check("CodeRabbit", "pass")],
+            [check("build", "fail")],  # gh still answers the old failure: not the rerun's outcome
+            [dict(rerun, bucket="pending")],
+            [dict(rerun, bucket="pass")],
+        ]
+        self.assertEqual(self.deliver(), "green")
+        rerun_calls = [argv for argv in self.gh.calls if argv[1:3] == ["run", "rerun"]]
+        self.assertEqual(rerun_calls, [["gh", "run", "rerun", "111", "--failed", "-R", "leodip/goiabada"]])
+        self.assertEqual(self.events("ci.rerun")[0]["runs"], ["111"])
+        self.assertEqual([e["outcome"] for e in self.events("ci.result")], ["red", "green"])
+        self.assertEqual((len(self.fixer.prompts), len(self.events("github.pushed"))), (1, 1))
+
+    def test_the_failed_jobs_run_again_only_once(self):
+        self.fixer.unchanged = "No code changes\n\nAn outage.\n\n## Evidence\n- x\n"
+        rerun = dict(check("build", "fail"), link="https://github.com/leodip/goiabada/actions/runs/111/job/333")
+        self.gh.checks = [[check("build", "fail")], [dict(rerun, bucket="pending")], [rerun]]
+        self.assertEqual(self.deliver(), "red")
+        self.assertEqual(self.gh.made("run rerun"), 1)
+        self.assertEqual(len(self.fixer.prompts), 2)  # the fixer looks at the second failure too
+        self.assertEqual([e["outcome"] for e in self.events("ci.result")], ["red", "red"])
+
+    def test_a_failed_check_with_no_actions_run_is_not_run_again(self):
+        self.fixer.unchanged = "No code changes\n\nThe bot's.\n\n## Evidence\n- x\n"
+        self.gh.checks = [[dict(check("bot", "fail"), link="https://app.coderabbit.ai/change-stack/leodip/goiabada/pull/450/7")]]
+        self.assertEqual(self.deliver(), "red")
+        self.assertEqual((self.gh.made("run rerun"), len(self.events("ci.rerun"))), (0, 0))
+
+    def test_review_comments_are_answered_once_ci_concludes_and_decide_the_outcome(self):
         from unittest import mock
 
         from placido import comments
@@ -194,11 +231,19 @@ class DeliverTest(DeliverCase):
         waits[0](60)  # it waits as CI's wait does
         self.assertEqual(self.now, before + 60)
 
-        self.gh.checks = [[check("build", "fail")]] * 3
+        # Red CI, after the fixes: the comments are answered all the same (#869).
+        self.gh.checks = [[check("build", "fail")]] * 2 + [[check("build", "pending")], [check("build", "fail")]]
         seen.clear()
         with mock.patch.object(comments, "answer", answer):
             self.assertEqual(self.deliver(), "red")
-        self.assertEqual(seen, [])  # red CI goes back to placido run, unanswered
+        self.assertEqual(seen, [(450, "placido/439-rate-limit", "red")])
+
+        # CI still running when the wait ends: the reviewers may not be done either.
+        self.gh.checks = [[check("build", "pending")]] * 500
+        seen.clear()
+        with mock.patch.object(comments, "answer", answer):
+            self.assertEqual(self.deliver(), "pending")
+        self.assertEqual(seen, [])
 
     def test_no_ci_at_all(self):
         self.assertEqual(self.deliver(), "none")

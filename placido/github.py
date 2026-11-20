@@ -179,6 +179,15 @@ class GitHub:
             "-F", f"body=@{body}", "--jq", ".html_url",
         )
 
+    def rerun_failed(self, failed: list[dict[str, Any]]) -> list[str]:
+        """Run the failed jobs again, in the GitHub Actions runs behind the failed checks;
+        those runs' ids. A check from elsewhere, such as a review bot's, has no run."""
+
+        runs = sorted({found.group(1) for c in failed if (found := JOB.search(str(c.get("link") or "")))})
+        for run_id in runs:
+            self._call("gh", "run", "rerun", run_id, "--failed", "-R", self.repo)
+        return runs
+
     def failed_log(self, link: str) -> str:
         found = JOB.search(link or "")
         if not found:
@@ -207,7 +216,9 @@ def deliver(
     sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
 ) -> str:
     """Push, open or update the pull request, file follow-ups, wait for CI and fix it,
-    then answer the review comments the project's reviewers left (placido/comments.py).
+    then answer the review comments the project's reviewers left (placido/comments.py),
+    once CI has concluded, red or not: a reviewer's comments do not wait on CI, and a
+    failure placido could not fix is no reason to leave them (#869, 2026-11-20).
     Returns "local" without a GitHub remote, else the CI outcome: "green", "red",
     "none" (no checks), or "pending" (still running when ci_wait ran out); or
     "comments-failed" when answering the review comments failed."""
@@ -239,7 +250,7 @@ def deliver(
         return await_ci(ctx, github, fixer, number, branch, sleep, clock)
 
     outcome = ci()
-    if outcome in ("green", "none"):
+    if outcome != "pending":
         from placido import comments
 
         outcome = comments.answer(ctx, github, number, branch, ci, outcome, sleep)
@@ -254,28 +265,55 @@ def await_ci(
     """Wait for CI on the head pushed last, and fix a red run up to MAX_FIXES times,
     pushing each fix; the outcome, as deliver's. Each wait is numbered in the run, so
     the logs of a later one, after review comments were answered, keep a folder of
-    their own."""
+    their own.
+
+    When no fix could be pushed (the fixer found nothing in the change that causes the
+    failure, or its fix failed the checks), the failed jobs run once more, as a flaky
+    test or an outage may pass then: #869 stopped red, with nothing done, on a test
+    whose random address happened to spell "href" (2026-11-20)."""
 
     run = ctx.run
     outcome = "none"
-    for attempt in range(checks.MAX_FIXES + 1):
+    fixes, waits, reran = 0, 0, False
+    stale: set[str] = set()
+    while True:
+        waits += 1
         status.show(run.path, status.text(status.WAITING, f"CI on #{number}"))
         head = implement.git(ctx.worktree, "rev-parse", "HEAD")
         run.event("ci.wait", pr=number, commit=head[:12], limit=config.format_duration(ctx.settings.ci_wait))
         outcome, failed = _await_ci(
             github, number, head, ctx.settings.ci_wait, sleep, clock, _progress(run, f"CI on #{number}"),
+            stale=stale,
         )
-        run.event("ci.result", outcome=outcome, attempt=attempt + 1, failed=[c.get("name") for c in failed])
-        if outcome != "red" or attempt == checks.MAX_FIXES:
+        run.event("ci.result", outcome=outcome, attempt=waits, failed=[c.get("name") for c in failed])
+        if outcome != "red" or fixes == checks.MAX_FIXES:
             break
+        fixes += 1
         seen = sum(1 for e in runlog.read_events(run.path) if e.get("event") == "ci.result" and e.get("outcome") == "red")
         logs = _save_logs(github, run.path / "ci" / str(seen), failed)
         gates = list(ctx.settings.final_gates or ctx.settings.slice_gates)
-        if not checks.fix(ctx, fixer, "the CI checks", logs, gates, f"ci-{seen}"):
+        if checks.fix(ctx, fixer, "the CI checks", logs, gates, f"ci-{seen}"):
+            github.push(branch)
+            run.event("github.pushed", branch=branch, commit=implement.git(ctx.worktree, "rev-parse", "HEAD"))
+            continue
+        if reran or not _rerun(run, github, failed):
             break
-        github.push(branch)
-        run.event("github.pushed", branch=branch, commit=implement.git(ctx.worktree, "rev-parse", "HEAD"))
+        reran = True
+        stale = {str(c.get("link")) for c in failed if c.get("link")}
     return outcome
+
+
+def _rerun(run: runlog.Run, github: GitHub, failed: list[dict[str, Any]]) -> bool:
+    """Run the failed jobs again; whether any did."""
+
+    try:
+        runs = github.rerun_failed(failed)
+    except GitHubError as error:
+        run.event("ci.rerun_failed", error=str(error)[-300:])
+        return False
+    if runs:
+        run.event("ci.rerun", runs=runs, checks=[c.get("name") for c in failed])
+    return bool(runs)
 
 
 def _title(record: dict[str, Any], run_dir: Path) -> str:
@@ -286,6 +324,7 @@ def _await_ci(
     github: GitHub, number: int, head: str, limit: float,
     sleep: Callable[[float], None], clock: Callable[[], float],
     progress: Callable[[str, float], None] = lambda text, seconds: None, arrived: bool = False,
+    stale: set[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Wait for the checks on head, the commit just pushed, to conclude: the outcome
     and the failed checks. Until GitHub has moved the pull request to head, its checks
@@ -294,8 +333,11 @@ def _await_ci(
     still waiting for, so a long CI run is not mistaken for a hung placido. With
     arrived, the pull request is at head already, so another head means it moved on:
     "moved", at once, where #619's merge waited an hour for a head pushed over
-    (2026-10-21)."""
+    (2026-10-21). stale holds the links of failed checks whose jobs were just run
+    again: until each is running or gone, gh still answers its old failure. A check
+    that starts running is dropped from it, as its job may keep its link."""
 
+    stale = set() if stale is None else stale
     began = clock()
     moved = clock()
     told = clock()
@@ -311,7 +353,8 @@ def _await_ci(
         waited = clock() - began
         if not found and clock() - moved >= ATTACH_SECONDS:
             return "none", []
-        if found and not any(c.get("bucket") == "pending" for c in found):
+        stale -= {str(c.get("link")) for c in found if c.get("bucket") == "pending"}
+        if found and not any(c.get("bucket") == "pending" or str(c.get("link")) in stale for c in found):
             failed = [c for c in found if c.get("bucket") in ("fail", "cancel")]
             return ("red" if failed else "green"), failed
         if waited >= limit:

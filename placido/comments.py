@@ -1,10 +1,10 @@
 """Answering the comments other reviewers leave on the run's pull request.
 
-Once CI concludes on the pull request, placido reads what the project's
-`[review_comments] accounts` left on it that nobody has answered: each review thread
-one of them started, and the text of each review of theirs, which may hold comments
-GitHub could not attach to a line. The review loop (placido/review.py) then runs on
-them as a stage of its own. The reviewer judges each comment, which becomes a finding
+Once CI concludes on the pull request, green or red, placido reads what the
+project's `[review_comments] accounts` left on it that nobody has answered: each
+review thread one of them started, and the text of each review of theirs, which may
+hold comments GitHub could not attach to a line. The review loop (placido/review.py)
+then runs on them as a stage of its own. The reviewer judges each comment, which becomes a finding
 or is not valid; the fixer fixes, disputes, or defers each finding; and the reviewer,
 resumed, verifies the answers, in rounds. Placido commits, pushes, replies on each
 thread (fixed in a commit, not changed and why, left out as a follow-up, or left for
@@ -525,8 +525,8 @@ def answer(
         if not settled.get("changed"):
             continue  # nothing pushed, so no CI to wait for: read what came in meanwhile
         outcome = ci()
-        if outcome not in ("green", "none"):
-            break
+        if outcome == "pending":
+            break  # CI never concluded, so neither may the reviewers' reviews of the push
     return outcome
 
 

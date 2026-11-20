@@ -58,7 +58,10 @@ is posted, pushed, or merged until you pick it (see
 6. **Pull request.** Placido runs your project's last gates, if it has any, on the
    reviewed change, then pushes the branch once, opens the pull request ready for
    review (`Closes #N`, then a summary of everything the run did and decided), and
-   waits for CI. A red run's failed logs go to a fixer agent, up to twice. The body
+   waits for CI. A red run's failed logs go to a fixer agent, up to twice; a flaky
+   test whose cause it can show is fixed too. When no fix can be pushed, the failed
+   jobs run once more, as a flake or an outage may pass then, and a failing last gate
+   likewise runs once more before placido gives up on it. The body
    says what the change does, its decisions, and what the review found. Release
    notes, when upgrading asks something of the people who run the project, go in a
    comment of their own, as the agreement wrote them. The
@@ -67,7 +70,7 @@ is posted, pushed, or merged until you pick it (see
    on the pull request, each with the `gh issue create` command that files it;
    placido files none. Other open issues the change affects get a short note.
 7. **Review comments.** When the project names reviewers for placido to answer, such
-   as a review bot, placido reads what they left once CI concludes: each thread one of
+   as a review bot, placido reads what they left once CI concludes, green or red: each thread one of
    them started that nobody has answered, and the text of their reviews, which may hold
    comments GitHub could not attach to a line. The reviewer judges each comment, which
    becomes a finding or is not valid; the fixer fixes, disputes, or defers each finding,

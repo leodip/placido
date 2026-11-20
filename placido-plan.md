@@ -2478,3 +2478,16 @@ ran:
   interview moved there (2026-11-09), where the reason given, one session per issue,
   does not hold for a retro that reads whole runs, several with `--last`. `retro` now
   has its own default, Opus at high, as `implement` and the `placido pr` roles do.
+- #261's run (#869) stopped with CI red and nothing done, and its seven CodeRabbit
+  comments unread. The CI fixer had found the cause, a test whose random address of
+  ten letters came out as `reset+tag.hrefdtxscl@example.com` against an assertion
+  that the email holds no `href`, and changed nothing, as the checks skill said of a
+  flaky test; placido then stopped, and answered review comments only on green CI.
+  The user: an error is never to be left without action, and review comments are
+  always tracked and acted on. Now the checks skill fixes a flaky test whose cause it
+  can show; when no fix can be pushed, the failed CI jobs run once more (`gh run rerun
+  --failed`), and a failing final or last gate likewise runs once more, before placido
+  gives up; and the review comments are answered once CI concludes, green or red,
+  stopping only when CI never concludes. While a job runs again, gh still answers its
+  old failure for a while: the wait takes a failed check whose link it had seen fail as
+  still running until it runs or goes.

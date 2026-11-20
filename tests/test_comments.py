@@ -389,20 +389,37 @@ class LimitsTest(CommentsCase):
         self.assertEqual(decisions[-1], (1, "leave out"))
         self.assertFalse(self.events("comments.unanswered"))
 
-    def test_red_ci_on_the_answers_stops_the_passes(self):
+    def test_red_ci_on_the_answers_does_not_leave_the_next_comments_unanswered(self):
+        # A failure placido could not fix is the CI stage's to report; the comments the
+        # bot left on the push are still answered (#869, 2026-11-20).
         self.settings = replace(self.settings, review_comments=config.ReviewComments((BOT,), 3))
         self.hub.threads = [thread(101)]
-        self.runner.reviews = [
-            {"findings": [finding(1, "minor")], "comments": [{"source": "T1", "title": "a", "finding": "R1-1"}]},
-        ]
-        self.runner.fixes = [{"answers": {"R1-1": "fixed"}, "change": "code"}]
+        self.fixed("minor")
+        self.fixed("minor")
+        later = [201]
 
         def red() -> str:
             self.ci_calls += 1
-            self.hub.threads.append(thread(201))  # the bot comments on the push, but CI is red
+            if later:
+                self.hub.threads.append(thread(later.pop(0)))  # the bot comments on the push
             return "red"
 
-        self.assertEqual(comments.answer(self.ctx(), self.hub, 450, "b", red, "green"), "red")
+        self.assertEqual(comments.answer(self.ctx(), self.hub, 450, "b", red, "red"), "red")
+        self.assertEqual([e["pass"] for e in self.events("comments.passed")], [1, 2])
+        self.assertEqual(self.ci_calls, 2)
+        self.assertEqual(sorted(dict(self.hub.replies)), [101, 201])
+
+    def test_ci_that_never_concludes_on_the_answers_stops_the_passes(self):
+        self.settings = replace(self.settings, review_comments=config.ReviewComments((BOT,), 3))
+        self.hub.threads = [thread(101)]
+        self.fixed("minor")
+
+        def pending() -> str:
+            self.ci_calls += 1
+            self.hub.threads.append(thread(201))  # its review of the push may not be done
+            return "pending"
+
+        self.assertEqual(comments.answer(self.ctx(), self.hub, 450, "b", pending, "green"), "pending")
         self.assertEqual((self.ci_calls, len(self.events("comments.pass"))), (1, 1))
 
     def test_no_accounts_answers_nothing(self):

@@ -136,10 +136,27 @@ class FinalGatesTest(unittest.TestCase):
         self.assertEqual(checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high")), "failed")
         self.assertEqual(self.fixer.problems, [])
         self.assertEqual(len(self.fixer.prompts), 1)
-        self.assertEqual(self.events().count("gate.start"), 1)  # the gates failed on this very tree
+        # The fixer's check runs nothing (the gates failed on this very tree); placido then
+        # runs the failed gates once more before it gives up.
+        self.assertEqual(self.events().count("gate.start"), 2)
+        self.assertTrue((self.run.path / "last-gates" / "2" / "gates" / "full.log").is_file())
         self.assertEqual(sh(self.repo, "git", "rev-list", "--count", "HEAD"), "1")
         self.assertEqual(checks.outside(self.run.path, "the last gates"), "main fails the same e2e tests: #620 changed them.")
-        self.assertIn("last_gates.gave_up", self.events())
+        self.assertEqual(self.events()[-2:], ["last_gates.failed", "last_gates.gave_up"])
+
+    def test_a_flaky_gate_the_fixer_leaves_passes_when_run_once_more(self):
+        self.fixer.unchanged = "No code changes\n\nA flaky test.\n\n## Evidence\n- x\n"
+        flag = self.tmp / "ran-once"  # outside the worktree, which the fixer must leave as it was
+        cfg = self.tmp / "flaky.toml"
+        cfg.write_text(f'[commands.flaky]\nrun = "test -f {flag} || {{ touch {flag}; exit 1; }}"\n'
+                       '[gates]\nlast = ["flaky"]\n')
+        ctx = driver.Context(self.run, self.fixer, None, config.load(cfg),
+                             config.AgentSpec("claude", "opus", "high"), self.repo, {})
+        self.assertEqual(checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high")), "passed")
+        self.assertEqual(len(self.fixer.prompts), 1)
+        passed = [e for e in runlog.read_events(self.run.path) if e["event"] == "last_gates.passed"]
+        self.assertEqual([(e["attempt"], e.get("by")) for e in passed], [(2, "rerun")])
+        self.assertNotIn("last_gates.gave_up", self.events())
 
     def test_the_reason_may_follow_on_the_first_line(self):
         result = self.tmp / "result.md"

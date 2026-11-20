@@ -70,6 +70,17 @@ def _gates(ctx: "driver.Context", fixer: "config.AgentSpec", kind: str, names: l
         run.event(f"{kind}_gates.passed", attempt=2, by="fix")
         return "passed"
     failed = [n for n in names if any(p.startswith(f"gate {n} (`") for p in problems)]
+    # Nothing fixed: the failed gates run once more before placido gives up, as a flaky
+    # test may pass then; #869's e2e was left failing on one try (2026-11-20).
+    again = run.path / f"{kind}-gates" / "2"
+    again.mkdir(parents=True, exist_ok=True)
+    status.show(run.path, status.text(status.WORKING, f"{kind} gates, once more"))
+    problems = implement.run_gates(failed or names, ctx.settings, ctx.worktree, again, ctx.env, run)
+    if not problems:
+        run.event(f"{kind}_gates.passed", attempt=2, by="rerun")
+        return "passed"
+    run.event(f"{kind}_gates.failed", attempt=2, problems=problems)
+    failed = [n for n in names if any(p.startswith(f"gate {n} (`") for p in problems)]
     run.event(f"{kind}_gates.gave_up", gates=failed)
     return "failed"
 

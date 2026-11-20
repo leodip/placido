@@ -359,9 +359,9 @@ def _review(ctx: driver.Context, reviewer: config.AgentSpec) -> int:
 def _deliver(ctx: driver.Context, outcome: str) -> int:
     """Hand the reviewed change over: run the last gates, push it and open the pull
     request, wait for CI, answer the review comments the project names reviewers for,
-    then end the run. Its work is done once CI is green, or there is no CI or GitHub;
-    what is left (trying the branch, merging, escalations, comments left for the user,
-    last gates that still fail) is the user's."""
+    on red CI too, then end the run. Its work is done once CI is green, or there is no
+    CI or GitHub; what is left (trying the branch, merging, escalations, comments left
+    for the user, last gates that still fail) is the user's."""
 
     last = checks.last_gates(ctx, ctx.settings.roles["fix"].agent)
     followups.draft(ctx, ctx.settings.roles["fix"].agent)
