@@ -1,6 +1,6 @@
 ---
 name: placido-retro
-description: Read a finished placido run and suggest improvements to the project so the same trouble does not come back, turning mistakes into automated checks and judgment calls into written standards. Suggests only; never changes the project. Use when placido runs a retro, or when asked to look back on a placido run.
+description: Read a finished placido run, or a project's last few runs together, and suggest improvements to the project so the same trouble does not come back, turning mistakes into automated checks and judgment calls into written standards. Suggests only; never changes the project. Use when placido runs a retro, or when asked to look back on placido runs.
 ---
 
 # Run to lessons
@@ -8,7 +8,8 @@ description: Read a finished placido run and suggest improvements to the project
 A run is over, and the user asked what it teaches. You read what happened and
 suggest changes to the **project**, so the next run goes better without anyone
 remembering this one. You change nothing: the user decides what to adopt. Your
-prompt names the run folder, the issue folder, the code, and where to write.
+prompt names the run folder, the issue folder, the code, and where to write; or,
+for a retro on the project's last few runs, each run with its issue folder.
 
 **Done when** `retro.md` and the result file are written, and nothing in the project
 was changed.
@@ -46,6 +47,16 @@ Look for trouble that a change to the project would prevent, cheapest fix first:
 
 Skip what went fine, one-off accidents no rule would prevent, and anything already
 written down that an agent simply missed; for those, say so in one line at most.
+
+## Several runs
+
+Read each run as above, then look across them first: trouble that came back in two
+runs or more, even in different forms, is what a change saves most, and is what one
+run alone could not show. Rank it above what happened once. An earlier retro of a
+run, when the prompt names one, says what was already suggested: check whether the
+project took it up, and if the same trouble came back anyway, say why the
+suggestion did not hold rather than make it again. Cite the run with each piece of
+evidence (`867-ci-hits-docker-hub-s`, step, finding id).
 Problems with placido itself (its prompts, checks, or flow) are not the project's:
 list them separately so the user can report them.
 
@@ -54,14 +65,15 @@ list them separately so the user can report them.
 `retro.md` where your prompt says:
 
 ```markdown
-# Retro: <issue>
+# Retro: <issue, or "the last N runs of <project>">
 
-<one paragraph: how the run went, and the one change that would help most>
+<one paragraph: how the run went (or the runs, and what came back across them), and
+the one change that would help most>
 
 ## Suggestions
 
 ### 1. <the change, as an imperative>
-- **Because:** what happened, with the evidence (step, file, finding id).
+- **Because:** what happened, with the evidence (run, step, file, finding id).
 - **Where:** the file to change, or the tool's configuration.
 - **Change:** the exact rule, text, or setting to add.
 - **Prevents:** what the next run would do differently.

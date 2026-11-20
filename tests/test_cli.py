@@ -168,3 +168,87 @@ class PRCommandTest(unittest.TestCase):
     def test_no_menu_option(self):
         args = cli.build_parser().parse_args(["pr", "602", "--no-menu"])
         self.assertEqual((args.pr, args.no_menu, args.func), ("602", True, cli.cmd_pr))
+
+
+class RetroCommandTest(unittest.TestCase):
+    """placido retro on a closed run, by default or by issue, and on the last few together."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.runs = Path(tmp.name) / "runs"
+        self.repo = Path(tmp.name) / "proj"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        here = os.getcwd()
+        os.chdir(self.repo)
+        self.addCleanup(os.chdir, here)
+        patch = mock.patch.dict(os.environ, {"PLACIDO_RUNS_DIR": str(self.runs), "HERDR_PANE_ID": "w7:p1"})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.older = self.made("01-a", 1000)
+        self.newer = self.made("02-b", 2000)
+        self.calls = []
+
+    def made(self, issue: str, age: int) -> Path:
+        path = self.runs / "proj" / issue / "2026-01-01T000000"
+        path.mkdir(parents=True)
+        (path / "run.json").write_text(json.dumps({"project": "proj", "issue": issue, "repo": str(self.repo)}))
+        events = ("run.ready", "run.end", "run.closed")
+        (path / "events.jsonl").write_text("".join(json.dumps({"event": e}) + "\n" for e in events))
+        os.utime(path / "run.json", (age, age))
+        return path
+
+    def retro(self, runner, agent, runs, code):
+        from placido.step import StepResult
+
+        self.calls.append((runner, runs, code))
+        (runner.run.path / "retro.md").write_text("# Retro\n\n## Suggestions\n\nNone.\n")
+        return StepResult("success", runner.run.path)
+
+    def placido(self, *argv: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), mock.patch("sys.stderr", err), \
+                mock.patch.object(cli.retrospect, "retro", side_effect=self.retro), mock.patch.object(cli, "Herdr"):
+            code = cli.main(["retro", *argv])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_with_every_run_closed_the_newest(self):
+        code, out, _ = self.placido()
+        self.assertEqual(code, 0)
+        ((runner, runs, code_dir),) = self.calls
+        self.assertEqual((runs, runner.run.path, code_dir), ([self.newer], self.newer, self.repo.resolve()))
+        self.assertEqual(runner.workspace_id, "w7")
+        self.assertIn("placido: a retro on 02-b, its run of 2026-01-01T000000", out)
+
+    def test_an_issue_by_prefix(self):
+        self.assertEqual(self.placido("01")[0], 0)
+        self.assertEqual(self.calls[0][1], [self.older])
+
+    def test_the_last_runs_together_in_a_folder_of_their_own(self):
+        code, out, _ = self.placido("--last", "5")
+        self.assertEqual(code, 0)
+        ((runner, runs, code_dir),) = self.calls
+        self.assertEqual((runs, code_dir), ([self.newer, self.older], self.repo.resolve()))
+        host = runner.run.path
+        self.assertEqual(host.parent, self.runs / "proj" / "retros")
+        self.assertEqual(runner.env["PLACIDO_RUN_DIR"], str(host))
+        self.assertIn("placido: a retro on the last 2 runs of proj: 02-b, 01-a", out)
+        self.assertIn(f"placido: kept in {host / 'retro.md'}", out)
+
+    def test_last_names_no_issue_and_takes_at_least_one_run(self):
+        for argv, error in ((("--last", "2", "01"), "name no issue or run with it"),
+                            (("--last", "0"), "at least 1 run, not 0")):
+            with self.subTest(argv=argv):
+                code, _, err = self.placido(*argv)
+                self.assertEqual(code, 1)
+                self.assertIn(error, err)
+        self.assertEqual(self.calls, [])
+        self.assertFalse((self.runs / "proj" / "retros").exists())
+
+    def test_outside_herdr_several_runs_are_refused_before_any_folder_is_made(self):
+        with mock.patch.dict(os.environ, {"HERDR_PANE_ID": ""}):
+            code, _, err = self.placido("--last", "2")
+        self.assertEqual(code, 1)
+        self.assertIn("a retro on several runs; run placido retro from a Herdr pane", err)
+        self.assertFalse((self.runs / "proj" / "retros").exists())

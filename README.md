@@ -404,7 +404,11 @@ Afterwards:
   time, outcome, and tokens; `--runs` shows trends across runs.
 - **`placido retro`** has an agent read the run and suggest changes to the project,
   such as a lint rule or a note for agents, so the same trouble does not come back.
-  It changes nothing.
+  It changes nothing. It works after `placido close` too: with no run open it takes
+  the project's newest, and `placido retro 867` takes an issue's by name or prefix.
+  `placido retro --last 5` reads the last five finished runs together, ranking the
+  trouble that came back across them first; that retro is kept in the project's
+  `retros/` folder under the runs.
 - **`placido close`**, once you have merged or given up: teardown, worktree, and
   workspace go. Your main checkout is then pulled (a fast-forward, only when it is on
   the base branch with no changes), and the issue's branch is deleted if its pull
@@ -567,7 +571,7 @@ notes for these agents go in `.placido/notes/pr.md` (all of them), `scan.md`,
 | `placido close [issue]` | Teardown, worktree, and workspace removed, base pulled, merged branch deleted; `--force` discards changes |
 | `placido status` | Every issue in progress, those needing you first |
 | `placido report [run]` | A run's steps, time, and tokens; `--runs` for trends, `--json` for data |
-| `placido retro` | Suggestions for the project from a finished run |
+| `placido retro [issue]` | Suggestions for the project from a run, closed ones too; `--last N` reads the last N together |
 | `placido runs` / `placido log [run]` | The runs, and one run's events |
 | `placido config` | The resolved configuration and agent commands |
 | `placido mutate` | Used by agents: break one piece of code, run the tests, restore it |

@@ -409,34 +409,54 @@ def _deliver(ctx: driver.Context, outcome: str) -> int:
 
 
 def cmd_retro(args: argparse.Namespace) -> int:
-    """Look back on a run and suggest project improvements, changing nothing."""
+    """Look back on a run, or the project's last few together, and suggest project
+    improvements, changing nothing."""
 
     try:
         root = start.project_root(Path.cwd())
         settings = config.load(config.find_config(root))
         runs_root = runlog.runs_dir()
-        path = runlog.resolve_run(args.run, runs_root) if args.run else start.select_run(Path.cwd(), runs_root)
+        if args.last is not None:
+            if args.issue or args.run:
+                raise start.StartError("--last takes the newest runs; name no issue or run with it")
+            if args.last < 1:
+                raise start.StartError(f"--last needs at least 1 run, not {args.last}")
+            runs = start.last_runs(Path.cwd(), runs_root, args.last)
+        elif args.run:
+            runs = [runlog.resolve_run(args.run, runs_root)]
+        else:
+            runs = [start.past_run(Path.cwd(), runs_root, args.issue)]
     except (start.StartError, config.ConfigError) as error:
         print(f"placido: {error}", file=sys.stderr)
         return 1
     agent = _agent_for(args, settings, "retro")
     if agent is None:
         return 1
-    created = runlog.last_event(path, "worktree.created") or {}
+    one = runs[0] if args.last is None else None
+    created = (runlog.last_event(one, "worktree.created") or {}) if one else {}
     worktree = Path(created.get("path", ""))
     if created.get("path") and worktree.is_dir():
         workspace, code = created["workspace"], worktree
-    else:  # a closed run: the agent works from this pane's workspace and the main checkout
+    else:  # a closed run, or several: the agent works from this pane's workspace and the main checkout
         pane = os.environ.get("HERDR_PANE_ID", "")
         if not pane:
-            print("placido: the run is closed; run placido retro from a Herdr pane", file=sys.stderr)
+            what = "the run is closed" if one else "a retro on several runs"
+            print(f"placido: {what}; run placido retro from a Herdr pane", file=sys.stderr)
             return 1
         workspace, code = pane.split(":")[0], root
-    run = runlog.Run(path, echo=sys.stdout)
-    runner = step.Step(run, Herdr(), workspace, code, env=start.env_of(path), quota_wait=settings.quota_wait)
+    if one:
+        print(f"placido: a retro on {one.parent.name}, its run of {one.name}")
+        host, env = one, start.env_of(one)
+    else:
+        print(f"placido: a retro on the last {len(runs)} runs of {root.name}: "
+              + ", ".join(run.parent.name for run in runs))
+        host = retrospect.folder(runs_root, root.name)
+        env = start.run_env(root.name, host.parent.name, None, root, host, root)
+    run = runlog.Run(host, echo=sys.stdout)
+    runner = step.Step(run, Herdr(), workspace, code, env=env, quota_wait=settings.quota_wait)
     _log_override(run, args, agent)
     try:
-        result = retrospect.retro(runner, agent, path, code)
+        result = retrospect.retro(runner, agent, runs, code)
     except HerdrError as error:
         run.event("step.failed", error=str(error))
         print(f"placido: {error}", file=sys.stderr)
@@ -444,7 +464,9 @@ def cmd_retro(args: argparse.Namespace) -> int:
     if result.outcome != "success":
         print(f"\nplacido: the retro ended {result.outcome}; see {result.path}", file=sys.stderr)
         return 1
-    print("\n" + (path / "retro.md").read_text(encoding="utf-8"))
+    print("\n" + (host / "retro.md").read_text(encoding="utf-8"))
+    if not one:
+        print(f"placido: kept in {host / 'retro.md'}")
     return 0
 
 
@@ -777,8 +799,13 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--run", help="a run as `placido runs` lists it (default: the active run)")
     _override_options(check)
     check.set_defaults(func=cmd_review)
-    look = commands.add_parser("retro", help="look back on a run and suggest project improvements")
-    look.add_argument("--run", help="a run as `placido runs` lists it (default: the active run)")
+    look = commands.add_parser("retro", help="look back on a run, closed ones too, and suggest project improvements")
+    look.add_argument("issue", nargs="?",
+                      help="the issue, in full or by a unique prefix: its newest run (default: the active"
+                           " run, or with none, the project's newest)")
+    look.add_argument("--run", help="a run as `placido runs` lists it")
+    look.add_argument("--last", type=int, metavar="N",
+                      help="the project's last N finished runs, closed ones too, looked back on together")
     _override_options(look)
     look.set_defaults(func=cmd_retro)
     contrib = commands.add_parser(

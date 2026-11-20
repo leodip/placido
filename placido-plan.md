@@ -2457,3 +2457,20 @@ ran:
   after `max_passes` judges and replies, leaving what holds as follow-ups, where the
   old cap named the comments to the user unanswered. A comment left for the user now
   has a reply saying so.
+
+### 2026-11-20
+
+- With the user: `placido retro` in Goiabada's main checkout, after #867's run was
+  closed, said "no active run; run `placido start <issue>` first", as it picked a run
+  the way the commands that act on one do. A retro looks back, and a closed run is
+  the usual one to look back on (the step already worked from the main checkout
+  then), so with no run open it now takes the project's newest, and an issue's newest
+  by name or prefix (`placido retro 867`), as `placido report` did. Reviews of
+  contributors' pull requests are left out: they have no issue or agreement.
+- The user's idea: retro the last N runs. `placido retro --last N` has one agent read
+  the project's last N finished runs (ready and ended, closed or not) together, rather
+  than N retros, since trouble that comes back across runs is what a check or a note
+  saves most, and one run alone cannot show it. An earlier retro of a run is named in
+  the prompt, so the agent checks whether its suggestions held rather than repeat
+  them. That retro is kept in `<runs>/<project>/retros/<time>/`, with no run.json:
+  it is no issue's run, and `runs`, `status`, `report` and run selection never see it.

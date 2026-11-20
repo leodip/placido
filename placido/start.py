@@ -91,6 +91,63 @@ def find_run(root: Path, runs_root: Path, issue: str, unready: bool = False) -> 
     raise StartError(f"{issue!r} is ambiguous: {', '.join(sorted(r.parent.name for r in found))}")
 
 
+def past_run(cwd: Path, runs_root: Path, issue: str | None = None) -> Path:
+    """The run a command that looks back on one means, closed runs included. With
+    issue, in full or by a unique prefix, that issue's newest run. Otherwise the run
+    select_run picks, or, with no run active in the project, its newest, so a run can
+    still be looked back on after `placido close`. Reviews of contributors' pull
+    requests are left out: they have no issue to look back on."""
+
+    root = project_root(cwd)
+    runs = [run for run in runlog.all_runs(runs_root) if _issue_run_of(run, root)]
+    if issue:
+        named = [run for run in runs if run.parent.name == issue] or [
+            run for run in runs if run.parent.name.startswith(issue)
+        ]
+        found = sorted({run.parent.name for run in named})
+        if len(found) == 1:
+            return named[0]
+        if not found:
+            raise StartError(f"no run of {root.name} matches {issue!r}")
+        raise StartError(f"{issue!r} is ambiguous: {', '.join(found)}")
+    if runlog.active_runs(runs_root, root.name, str(root)):
+        return select_run(cwd, runs_root)
+    if not runs:
+        raise StartError(f"no run of {root.name} yet; run `placido start <issue>` first")
+    return runs[0]
+
+
+def last_runs(cwd: Path, runs_root: Path, count: int) -> list[Path]:
+    """The project's newest finished runs, up to count, newest first, closed ones
+    included: those that got ready and ended. One still going, or whose setup failed,
+    has little to look back on yet."""
+
+    root = project_root(cwd)
+    finished = []
+    for run in runlog.all_runs(runs_root):
+        if len(finished) == count:
+            break
+        if _issue_run_of(run, root):
+            kinds = {event.get("event") for event in runlog.read_events(run)}
+            if {"run.ready", "run.end"} <= kinds:
+                finished.append(run)
+    if not finished:
+        raise StartError(f"no finished run of {root.name} yet")
+    return finished
+
+
+def _issue_run_of(run: Path, root: Path) -> bool:
+    """Whether a run is one of this repository's issue runs."""
+
+    if run.parent.parent.name != root.name:
+        return False
+    try:
+        record = runlog.read_record(run)
+    except (OSError, ValueError):
+        return False
+    return record.get("repo") in (None, str(root)) and record.get("kind") != "pr"
+
+
 def branch_name(issue: str) -> str:
     return f"placido/{issue}"
 

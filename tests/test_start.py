@@ -563,6 +563,72 @@ class SelectRunTest(StartTestCase):
         with self.assertRaisesRegex(start.StartError, "no active placido run uses this worktree"):
             start.select_run(self.tmp / "other", self.runs)
 
+
+class PastRunTest(StartTestCase):
+    """placido retro looks back on a run, which is often closed by then."""
+
+    def test_with_none_active_the_newest_closed_run(self):
+        repo = make_repo(self.tmp)
+        self.start("01", repo).event("run.closed")
+        second = self.start("02", repo)
+        second.event("run.closed")
+        with self.assertRaisesRegex(start.StartError, "no active run"):
+            start.select_run(repo, self.runs)
+        self.assertEqual(start.past_run(repo, self.runs), second.path)
+
+    def test_an_active_run_comes_before_a_newer_closed_one(self):
+        repo = make_repo(self.tmp)
+        first = self.start("01", repo)
+        self.start("02", repo).event("run.closed")
+        self.assertEqual(start.past_run(repo, self.runs), first.path)
+
+    def test_an_issue_by_prefix_closed_or_not(self):
+        repo = make_repo(self.tmp)
+        first = self.start("01", repo)
+        first.event("run.closed")
+        second = self.start("02", repo)
+        self.assertEqual(start.past_run(repo, self.runs, "01"), first.path)
+        self.assertEqual(start.past_run(repo, self.runs, "02-many-names"), second.path)
+        with self.assertRaisesRegex(start.StartError, "ambiguous: 01-shout-flag, 02-many-names"):
+            start.past_run(repo, self.runs, "0")
+        with self.assertRaisesRegex(start.StartError, "no run of proj matches '9'"):
+            start.past_run(repo, self.runs, "9")
+
+    def test_a_contributor_review_is_left_out(self):
+        repo = make_repo(self.tmp)
+        with self.assertRaisesRegex(start.StartError, "no run of proj yet"):
+            start.past_run(repo, self.runs)
+        run = self.start("01", repo)
+        run.event("run.closed")
+        review = self.runs / "proj" / "pr-7" / "2099-01-01T000000"
+        review.mkdir(parents=True)
+        (review / "run.json").write_text(json.dumps({"kind": "pr", "repo": str(repo)}))
+        self.assertEqual(start.past_run(repo, self.runs), run.path)
+        with self.assertRaisesRegex(start.StartError, "no run of proj matches 'pr'"):
+            start.past_run(repo, self.runs, "pr")
+
+    def test_the_last_finished_runs_closed_or_not(self):
+        repo = make_repo(self.tmp)
+        with self.assertRaisesRegex(start.StartError, "no finished run of proj yet"):
+            start.last_runs(repo, self.runs, 3)
+
+        def made(issue: str, record: dict, *events: str, age: int) -> Path:
+            path = self.runs / "proj" / issue / "2026-01-01T000000"
+            path.mkdir(parents=True)
+            (path / "run.json").write_text(json.dumps({"repo": str(repo), **record}))
+            (path / "events.jsonl").write_text("".join(json.dumps({"event": e}) + "\n" for e in events))
+            os.utime(path / "run.json", (age, age))
+            return path
+
+        closed = made("05-old", {}, "run.ready", "run.end", "run.closed", age=1000)
+        made("06-setup", {}, "run.end", age=2000)  # its setup failed
+        made("pr-7", {"kind": "pr"}, "run.ready", "run.end", age=3000)
+        ended = self.start("01", repo)
+        ended.event("run.end", outcome="passed")
+        self.start("02", repo)  # still going
+        self.assertEqual(start.last_runs(repo, self.runs, 5), [ended.path, closed])
+        self.assertEqual(start.last_runs(repo, self.runs, 1), [ended.path])
+
     def test_projects_sharing_a_folder_name_do_not_mix(self):
         repo = make_repo(self.tmp)
         self.start("01", repo)
