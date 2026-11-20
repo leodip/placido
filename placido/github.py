@@ -275,7 +275,7 @@ def await_ci(
     run = ctx.run
     outcome = "none"
     fixes, waits, reran = 0, 0, False
-    stale: set[str] = set()
+    stale: dict[tuple[str, str], str] = {}
     while True:
         waits += 1
         status.show(run.path, status.text(status.WAITING, f"CI on #{number}"))
@@ -296,24 +296,37 @@ def await_ci(
             github.push(branch)
             run.event("github.pushed", branch=branch, commit=implement.git(ctx.worktree, "rev-parse", "HEAD"))
             continue
-        if reran or not _rerun(run, github, failed):
+        if reran:
+            break
+        runs = _rerun(run, github, failed)
+        if not runs:
             break
         reran = True
-        stale = {str(c.get("link")) for c in failed if c.get("link")}
+        stale = {
+            _check_key(c): str(c.get("link"))
+            for c in failed if (found := JOB.search(str(c.get("link") or ""))) and found.group(1) in runs
+        }
     return outcome
 
 
-def _rerun(run: runlog.Run, github: GitHub, failed: list[dict[str, Any]]) -> bool:
-    """Run the failed jobs again; whether any did."""
+def _rerun(run: runlog.Run, github: GitHub, failed: list[dict[str, Any]]) -> list[str]:
+    """Run the failed jobs again; the ids of the Actions runs that did."""
 
     try:
         runs = github.rerun_failed(failed)
     except GitHubError as error:
         run.event("ci.rerun_failed", error=str(error)[-300:])
-        return False
+        return []
     if runs:
         run.event("ci.rerun", runs=runs, checks=[c.get("name") for c in failed])
-    return bool(runs)
+    return runs
+
+
+def _check_key(check: dict[str, Any]) -> tuple[str, str]:
+    """A check across its runs: its workflow and its name, as its link changes when
+    its job runs again."""
+
+    return str(check.get("workflow") or ""), str(check.get("name") or "")
 
 
 def _title(record: dict[str, Any], run_dir: Path) -> str:
@@ -324,7 +337,7 @@ def _await_ci(
     github: GitHub, number: int, head: str, limit: float,
     sleep: Callable[[float], None], clock: Callable[[], float],
     progress: Callable[[str, float], None] = lambda text, seconds: None, arrived: bool = False,
-    stale: set[str] | None = None,
+    stale: dict[tuple[str, str], str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Wait for the checks on head, the commit just pushed, to conclude: the outcome
     and the failed checks. Until GitHub has moved the pull request to head, its checks
@@ -333,11 +346,14 @@ def _await_ci(
     still waiting for, so a long CI run is not mistaken for a hung placido. With
     arrived, the pull request is at head already, so another head means it moved on:
     "moved", at once, where #619's merge waited an hour for a head pushed over
-    (2026-10-21). stale holds the links of failed checks whose jobs were just run
-    again: until each is running or gone, gh still answers its old failure. A check
-    that starts running is dropped from it, as its job may keep its link."""
+    (2026-10-21). stale holds the failed checks whose jobs were just run again, by
+    workflow and name, with their old links: none counts until each is seen again,
+    running or with a new link. Until then gh answers the old failure, or no such check
+    at all: #869 read the other checks' green 1.6 seconds after its rerun, while the
+    rerun job was not listed yet (2026-11-20). A check from elsewhere, such as a review
+    bot's, is never in it, as nothing ran it again."""
 
-    stale = set() if stale is None else stale
+    stale = {} if stale is None else stale
     began = clock()
     moved = clock()
     told = clock()
@@ -353,8 +369,11 @@ def _await_ci(
         waited = clock() - began
         if not found and clock() - moved >= ATTACH_SECONDS:
             return "none", []
-        stale -= {str(c.get("link")) for c in found if c.get("bucket") == "pending"}
-        if found and not any(c.get("bucket") == "pending" or str(c.get("link")) in stale for c in found):
+        for c in found:
+            key = _check_key(c)
+            if key in stale and (c.get("bucket") == "pending" or str(c.get("link")) != stale[key]):
+                del stale[key]
+        if found and not stale and not any(c.get("bucket") == "pending" for c in found):
             failed = [c for c in found if c.get("bucket") in ("fail", "cancel")]
             return ("red" if failed else "green"), failed
         if waited >= limit:

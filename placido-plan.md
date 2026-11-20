@@ -2491,3 +2491,10 @@ ran:
   stopping only when CI never concludes. While a job runs again, gh still answers its
   old failure for a while: the wait takes a failed check whose link it had seen fail as
   still running until it runs or goes.
+- That rule was not enough. On resume, #869 read CI green 1.6 seconds after its rerun:
+  for a moment gh listed every check but the rerun one, and the rest were green. The
+  retro on the last three runs caught it; the rerun job did pass, three minutes later.
+  The wait now holds each rerun check by workflow and name, with its old link, until it
+  is listed again, running or with a new link; gone no longer counts. Only the checks
+  whose Actions run ran again are held: a failed review bot's check, which nothing ran
+  again, held the wait for the whole hour before.

@@ -194,6 +194,38 @@ class DeliverTest(DeliverCase):
         self.assertEqual([e["outcome"] for e in self.events("ci.result")], ["red", "green"])
         self.assertEqual((len(self.fixer.prompts), len(self.events("github.pushed"))), (1, 1))
 
+    def test_a_rerun_check_counts_only_once_it_is_listed_again(self):
+        # #869: 1.6 seconds after the rerun, gh listed every check but the rerun one, and
+        # placido read the others' green as the outcome (2026-11-20).
+        self.fixer.unchanged = "No code changes\n\nA flaky test.\n\n## Evidence\n- x\n"
+        rerun = dict(check("build", "fail"), link="https://github.com/leodip/goiabada/actions/runs/111/job/333")
+        lint = dict(check("lint", "pass"), link="https://github.com/leodip/goiabada/actions/runs/111/job/444")
+        self.gh.checks = [
+            [check("build", "fail"), lint],
+            [lint],  # the rerun job is not listed yet
+            [lint, dict(rerun, bucket="pending")],
+            [lint, rerun],
+        ]
+        self.assertEqual(self.deliver(), "red")
+        self.assertEqual(self.gh.made("pr checks"), 4)
+        self.assertEqual([e["outcome"] for e in self.events("ci.result")], ["red", "red"])
+
+    def test_a_rerun_check_with_a_new_link_counts_though_never_seen_running(self):
+        self.fixer.unchanged = "No code changes\n\nA flaky test.\n\n## Evidence\n- x\n"
+        rerun = dict(check("build", "pass"), link="https://github.com/leodip/goiabada/actions/runs/111/job/333")
+        self.gh.checks = [[check("build", "fail")], [rerun]]
+        self.assertEqual(self.deliver(), "green")
+        self.assertEqual(self.gh.made("pr checks"), 2)
+
+    def test_a_failed_bot_check_does_not_hold_up_the_rerun_ones(self):
+        self.fixer.unchanged = "No code changes\n\nA flaky test, and the bot's.\n\n## Evidence\n- x\n"
+        bot = dict(check("bot", "fail"), workflow="", link="https://app.coderabbit.ai/change-stack/leodip/goiabada/pull/450/7")
+        rerun = dict(check("build", "fail"), link="https://github.com/leodip/goiabada/actions/runs/111/job/333")
+        self.gh.checks = [[check("build", "fail"), bot], [bot, dict(rerun, bucket="pending")], [bot, dict(rerun, bucket="pass")]]
+        self.assertEqual(self.deliver(), "red")
+        self.assertEqual(self.gh.made("pr checks"), 3)
+        self.assertEqual(self.events("ci.result")[1]["failed"], ["bot"])
+
     def test_the_failed_jobs_run_again_only_once(self):
         self.fixer.unchanged = "No code changes\n\nAn outage.\n\n## Evidence\n- x\n"
         rerun = dict(check("build", "fail"), link="https://github.com/leodip/goiabada/actions/runs/111/job/333")
