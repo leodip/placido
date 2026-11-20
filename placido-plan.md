@@ -2498,3 +2498,15 @@ ran:
   is listed again, running or with a new link; gone no longer counts. Only the checks
   whose Actions run ran again are held: a failed review bot's check, which nothing ran
   again, held the wait for the whole hour before.
+- The same retro raised two more points about placido. First, the replies: in #261,
+  24 replies had only 4 distinct texts, because round 1 made one finding of six threads
+  and the reply is the finding's note. Now a fixer answering a finding made of several
+  comments also writes `replies`, one per comment, keyed by its source. Placido sends
+  the fix back when one is missing, and posts each reply on its own comment. Second, a
+  fix the checks fixer saw outside the change, here the 13 assertions that look for the
+  letters `href`, was recorded only in the event log. Now a `No code changes` result
+  may end with `## Follow-up`, a title and what to fix. Placido drafts it with the
+  review's follow-ups, and one that comes during CI is drafted then and added to the
+  pull request's follow-ups comment. The retro's other point, ending the comment loop
+  once a pass uses its round budget, was not taken: the reviewers' next comments would
+  then go unanswered.

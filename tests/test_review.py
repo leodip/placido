@@ -81,6 +81,9 @@ class FakeRunner:
     def _fix(self, folder: Path, check) -> StepResult:
         plan = self.fixes.pop(0)
         answers = [{"id": i, "status": s, "note": "because"} for i, s in plan["answers"].items()]
+        for answer in answers:  # a fixer's reply to each comment of a finding made of several
+            if answer["id"] in plan.get("replies", {}):
+                answer["replies"] = plan["replies"][answer["id"]]
         (folder / "resolutions.json").write_text(json.dumps({"resolutions": answers}))
         result = folder / "result.md"
         change = plan.get("change")
@@ -91,7 +94,7 @@ class FakeRunner:
             result.write_text("Fix review findings\n\nWhat changed.\n\n## Evidence\n- ok\n")
         else:
             result.write_text(f"{review.NO_CHANGES}\n")
-        problems = check(result)
+        problems = self.fix_problems = check(result)
         return StepResult("invalid" if problems else "success", folder)
 
 

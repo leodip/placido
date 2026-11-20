@@ -220,6 +220,40 @@ def check_comments(path: Path, comments: list[Comment]) -> list[str]:
     return problems
 
 
+def shared(findings: Path) -> dict[str, list[str]]:
+    """From round 1's findings.json, each finding more than one comment named, with them."""
+
+    entries = json.loads(findings.read_text(encoding="utf-8")).get("comments", [])
+    sources: dict[str, list[str]] = {}
+    for entry in entries:
+        if isinstance(entry, dict) and entry.get("finding"):
+            sources.setdefault(str(entry["finding"]), []).append(str(entry["source"]))
+    return {finding: names for finding, names in sources.items() if len(names) > 1}
+
+
+def check_replies(path: Path, open_findings: list[dict[str, Any]], shared_: dict[str, list[str]]) -> list[str]:
+    """A finding made of several comments answers each in a reply of its own: one note on
+    all of them read as a form letter, as on #869's threads (2026-11-20)."""
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    by_id = {e.get("id"): e for e in data.get("resolutions", []) if isinstance(e, dict)}
+    problems = []
+    for finding in open_findings:
+        sources = shared_.get(finding["id"])
+        if not sources:
+            continue
+        replies = by_id.get(finding["id"], {}).get("replies")
+        replies = replies if isinstance(replies, dict) else {}
+        missing = [s for s in sources if not isinstance(replies.get(s), str) or not replies[s].strip()]
+        if missing:
+            problems.append(f"finding {finding['id']} answers comments {', '.join(sources)}: give it \"replies\","
+                            f" one per comment, keyed by its source ({', '.join(missing)} missing).")
+        extra = sorted(set(replies) - set(sources))
+        if extra:
+            problems.append(f"finding {finding['id']}'s replies name {', '.join(extra)}, which it does not answer.")
+    return problems
+
+
 def first_prompt(
     run_dir: Path, worktree: Path, folder: Path, comments_md: Path, comments: list[Comment], pr: str,
     accounts: tuple[str, ...], budget: int, settings: config.Config,
@@ -269,6 +303,7 @@ class Loop(review.Loop):
         )
         self.STEPS = f"comments-{pass_}-"
         self.pass_, self.folder, self.comments, self.pr = pass_, folder, comments, pr
+        self.first: Path | None = None  # round 1's folder, once its judgment of the comments holds
 
     def _budget(self) -> int:
         return self.settings.final_rounds + 1
@@ -298,7 +333,17 @@ class Loop(review.Loop):
         problems = super()._check_findings(result, round_, earlier)
         if round_ == 1 and not problems:
             problems = check_comments(result.parent / "findings.json", self.comments)
+            if not problems:
+                self.first = result.parent
         return problems
+
+    def _shared(self) -> dict[str, list[str]]:
+        """The findings round 1 made of more than one comment, each with those comments."""
+
+        return shared(self.first / "findings.json") if self.first else {}
+
+    def _check_resolutions(self, path: Path, open_findings: list[dict[str, Any]]) -> list[str]:
+        return super()._check_resolutions(path, open_findings) or check_replies(path, open_findings, self._shared())
 
     def _about(self) -> str:
         notes = self.worktree / NOTES
@@ -323,7 +368,13 @@ class Loop(review.Loop):
         return super()._reviewer_task(folder, round_, budget, fix_commits, resolutions, earlier, handover) + self._about()
 
     def _fixer_task(self, folder: Path, open_path: Path, review_md: Path) -> str:
-        return super()._fixer_task(folder, open_path, review_md) + self._about()
+        task = super()._fixer_task(folder, open_path, review_md) + self._about()
+        shared_ = self._shared()
+        if shared_:
+            task += ("\n## Findings made of several comments\n\nEach of these answers more than one comment:"
+                     " give it `replies`, one for each comment, as the skill says.\n\n"
+                     + "".join(f"- **{finding}:** {', '.join(sources)}\n" for finding, sources in sorted(shared_.items())))
+        return task
 
     def _commit(self, result: Path, round_: int) -> str:
         return review._commit(
@@ -335,16 +386,21 @@ class Loop(review.Loop):
 # ---- what became of each comment ----------------------------------------------------------
 
 
-def _ends(finding: str, account: review.Review) -> tuple[str, str, str]:
+def _ends(finding: str, account: review.Review, source: str = "") -> tuple[str, str, str]:
     """How a finding ended: its outcome, the note that says why, and the commit that
-    fixed it, from the loop's account."""
+    fixed it, from the loop's account. The note is the fixer's reply to source, when
+    its last answer to a finding of several comments gave each its own."""
 
+    own = ""
+    for entry in account.rounds:
+        if finding in entry.get("answers", {}):
+            own = str((entry.get("replies", {}).get(finding) or {}).get(source) or "").strip()
     for item in account.escalated:
         if item["id"] == finding:
-            return "left", str(item.get("why") or ""), ""
+            return "left", own or str(item.get("why") or ""), ""
     for item in account.followups:
         if item["id"] == finding:
-            return "follow-up", str(item.get("why") or ""), ""
+            return "follow-up", own or str(item.get("why") or ""), ""
     state = note = commit = latest = ""
     for entry in account.rounds:
         verdict = next((v for v in entry["verdicts"] if v["id"] == finding), None)
@@ -357,11 +413,11 @@ def _ends(finding: str, account: review.Review) -> tuple[str, str, str]:
             if answer == "fixed":
                 commit = latest
     if state in ("resolved", "fixed"):
-        return "fixed", note, commit
+        return "fixed", own or note, commit
     if state in ("accepted-dispute", "disputed"):
-        return "not-changed", note, ""
+        return "not-changed", own or note, ""
     if state in ("accepted-deferral", "deferred"):
-        return "follow-up", note, ""
+        return "follow-up", own or note, ""
     return "left", "No answer the reviewer accepted" if state else "Not answered", ""
 
 
@@ -379,7 +435,7 @@ def settle(comments: list[Comment], account: review.Review, pass_: int) -> list[
         if entry.get("reply") is not None:
             answers.append(Answer(**common, outcome="not-changed", text=str(entry["reply"]).strip()))
             continue
-        outcome, text, commit = _ends(entry["finding"], account)
+        outcome, text, commit = _ends(entry["finding"], account, comment.source)
         key = f"C{pass_}-{entry['finding']}" if outcome == "follow-up" else ""
         answers.append(Answer(**common, outcome=outcome, text=text.strip(), commit=commit,
                               finding=entry["finding"], key=key))

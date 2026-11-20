@@ -75,6 +75,17 @@ these differences:
   the maintainer, after "Fixed in <commit>." or "Not changed.": write it for the
   comment's author, plainly, in two to four sentences: what changed and the test that
   covers it, or why not. Mention no account (`@name`): a mention summons it.
+- **One reply per comment.** When a finding answers several comments (your prompt
+  lists them), the note says what changed for the finding as a whole, and `replies`
+  holds a reply for each comment, keyed by its source, answering what that comment
+  raised: the form it named and the test that now covers that form. The same paragraph
+  on six threads reads as a form letter, and leaves each author to find their own
+  case in it.
+
+  ```json
+  {"id": "R1-1", "status": "fixed", "note": "what changed, and the tests that cover it",
+   "replies": {"T1": "the answer to T1's case", "T2": "the answer to T2's case"}}
+  ```
 - **Fix it now** unless it is too big for this pull request (more than about an
   afternoon's work, tests and docs included), needs a decision only the maintainer can
   make (say which, with the options), needs a migration or a new public contract (an

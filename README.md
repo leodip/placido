@@ -76,7 +76,7 @@ is posted, pushed, or merged until you pick it (see
    becomes a finding or is not valid; the fixer fixes, disputes, or defers each finding,
    fixing in this pull request whatever is not big and needs no decision of yours; and
    the reviewer verifies, as in the review. Placido commits, pushes, and replies on
-   every comment: fixed in a commit, not changed and why, left out and drafted as a
+   every comment, each in its own words when one finding answers several: fixed in a commit, not changed and why, left out and drafted as a
    follow-up in the follow-ups comment, or left for you to decide, which you are told
    about. CI runs again on the push, and the reviewers may comment on it, in a loop:
    the first `passes` fix whatever holds, and later ones, up to `max_passes`, only
@@ -193,6 +193,9 @@ its fix before committing it, and not after; when the fix cannot pass, the pull
 request opens anyway, with the failure at the top of its description. A fixer that
 finds the cause outside the change, such as a test the base branch fails the same way,
 changes nothing and says why, and the description gives that reason with the failure.
+When it can see the fix all the same, such as the same fragile assertion in other
+tests, it names it, and placido drafts it as a follow-up on the pull request, as it
+does for a CI failure the fixer finds outside the change.
 
 Setup, teardown, the gates, and every agent's tab get these variables, so your own
 scripts can find the run's resources:

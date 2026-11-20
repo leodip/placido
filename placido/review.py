@@ -344,6 +344,7 @@ class Loop:
             before, after, resolutions, answers = fixed
             account.rounds[-1]["answers"] = {i: a.get("status") for i, a in answers.items()}
             account.rounds[-1]["notes"] = {i: str(a.get("note") or "") for i, a in answers.items()}
+            account.rounds[-1]["replies"] = {i: a["replies"] for i, a in answers.items() if isinstance(a.get("replies"), dict)}
             account.rounds[-1]["commit"] = after if after != before else None
             fix_commits = f"{before[:12]}..{after[:12]}" if after != before else ""
             self._sort_answers(open_findings, answers, account)
@@ -434,6 +435,9 @@ class Loop:
     def _check_findings(self, result: Path, round_: int, earlier: list[str]) -> list[str]:
         return check_findings(result.parent / "findings.json", round_, earlier if round_ > 1 else [])
 
+    def _check_resolutions(self, path: Path, open_findings: list[dict[str, Any]]) -> list[str]:
+        return check_resolutions(path, open_findings)
+
     def _reviewer_task(
         self, folder: Path, round_: int, budget: int, fix_commits: str, resolutions: Path | None,
         earlier: list[str], handover: list[Path] | None,
@@ -486,7 +490,7 @@ class Loop:
         resolutions = folder / "resolutions.json"
 
         def check(result: Path) -> list[str]:
-            problems = decisions.check(result.parent, self.run.path) or check_resolutions(resolutions, open_findings)
+            problems = decisions.check(result.parent, self.run.path) or self._check_resolutions(resolutions, open_findings)
             if problems:
                 return problems
             first = result.read_text(encoding="utf-8").strip().splitlines()[:1]

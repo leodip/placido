@@ -232,6 +232,20 @@ class CheckTest(unittest.TestCase):
         self.assertTrue(any("thread T2 needs exactly one entry, not 0" in p for p in problems), problems)
         self.assertTrue(any("finding R1-2 comes from no comment" in p for p in problems), problems)
 
+    def test_a_finding_of_several_comments_replies_to_each(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "resolutions.json"
+            path.write_text(json.dumps({"resolutions": [
+                {"id": "R1-1", "status": "fixed", "note": "n", "replies": {"T1": "a", "T2": " ", "T3": "c"}},
+                {"id": "R1-2", "status": "fixed", "note": "n"},
+            ]}))
+            problems = comments.check_replies(path, [{"id": "R1-1"}, {"id": "R1-2"}], {"R1-1": ["T1", "T2"]})
+        self.assertEqual(problems, [
+            'finding R1-1 answers comments T1, T2: give it "replies", one per comment, keyed by its source'
+            ' (T2 missing).',
+            "finding R1-1's replies name T3, which it does not answer.",
+        ])
+
     def test_a_missing_list_is_named(self):
         self.assertEqual(self.check({"findings": []}),
                          ['findings.json needs a "comments" list, one entry per comment, as the skill says.'])
@@ -319,6 +333,39 @@ class PassTest(CommentsCase):
         self.assertEqual(decisions, [(1, "next round"), (2, "next round"), (3, "pass")])
         self.assertTrue(dict(self.hub.replies)[101].startswith("Fixed in "))
         self.assertFalse(self.events("comments.followups"))
+
+    def several(self) -> None:
+        """Two threads round 1 makes one finding of."""
+
+        self.hub.threads = [thread(101), thread(102)]
+        self.runner.reviews = [
+            {"findings": [finding(1, "significant")], "comments": [
+                {"source": "T1", "title": "Use y in greet", "finding": "R1-1"},
+                {"source": "T2", "title": "Use y in wave", "finding": "R1-1"},
+            ]},
+            {"findings": [], "verdicts": [{"id": "R1-1", "verdict": "resolved"}]},
+        ]
+
+    def test_a_finding_of_several_comments_answers_each_in_its_own_words(self):
+        # #869: six threads made one finding, and each got the same paragraph (2026-11-20).
+        self.several()
+        self.runner.fixes = [{"answers": {"R1-1": "fixed"}, "change": "code",
+                              "replies": {"R1-1": {"T1": "greet() uses y now.", "T2": "So does wave()."}}}]
+        self.assertEqual(self.answer(), "green")
+        sha = sh(self.repo, "git", "rev-parse", "--short", "HEAD")
+        self.assertEqual(dict(self.hub.replies), {101: f"Fixed in {sha}. greet() uses y now.\n",
+                                                  102: f"Fixed in {sha}. So does wave().\n"})
+        fix_task = next(t for t in self.runner.tasks if "## Findings made of several comments" in t)
+        self.assertIn("- **R1-1:** T1, T2\n", fix_task)
+        self.assertEqual(sum("## Findings made of several comments" in t for t in self.runner.tasks), 1)
+
+    def test_a_finding_of_several_comments_with_one_note_is_sent_back(self):
+        self.several()
+        self.runner.fixes = [{"answers": {"R1-1": "fixed"}, "change": "code"}]
+        self.answer()
+        self.assertEqual(self.runner.fix_problems, [
+            'finding R1-1 answers comments T1, T2: give it "replies", one per comment, keyed by its source'
+            ' (T1, T2 missing).'])
 
     def test_an_escalation_is_left_for_the_user_and_its_reply_says_so(self):
         self.hub.threads = [thread(101)]
