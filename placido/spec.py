@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,20 @@ SECTIONS = ("## Problem", "## Solution", "## Decisions", "## Seams", "## Slices"
 # shows how it moved (decided 2026-10-24).
 BENCHMARK = "Benchmark"
 BENCHMARK_LINES = ("Command", "Baseline", "Target")
+# When the interview settles with the user that nothing can be built until something
+# outside the project happens, such as an upstream release, the result's first line
+# says when to start, and placido ends the run as deferred: an outcome of its own,
+# neither a failure nor work abandoned. Decided 2026-11-21: #494's interview settled
+# twice, a month apart, that it waits for golangci-lint 2.16.0. With no way to end, the
+# agent left the step waiting, placido emailed that it exited, and `placido close`
+# recorded the run as abandoned; the second run measured everything again.
+DEFERRED = "Deferred:"
+
+
+@dataclass(frozen=True)
+class Deferral:
+    trigger: str  # when to start, in one line
+    why: str  # what the interview found, and what the change will need then
 
 
 def section(text: str, name: str, level: int = 2) -> str:
@@ -67,9 +82,54 @@ def prompt(run_dir: Path, worktree: Path, settings: config.Config) -> str:
         f"- **Slice gates:** every slice runs {', '.join(settings.slice_gates) or 'no gates'};"
         " give a slice extra gates only from the commands below, each a command's name with"
         " the arguments its description asks for, if any, after it (\"data mysql\").",
+        f"- **Nothing to build yet:** when the user decides the issue waits for something outside"
+        f" the project, write no agreement: write the result as `{DEFERRED} <when to start>`, then"
+        " why, as the skill's section on deferring says. Placido ends the run as deferred"
+        + (" and posts the result on the issue." if record.get("issue_number") else "."),
     ]
+    for run, event in deferred_before(run_dir):
+        lines.append(
+            f"- **Deferred before:** run {run.name} ended deferred: {event.get('trigger')}. Its reasons"
+            f" are in {event.get('result')}. Check first whether that has come to pass, and build on what"
+            " it found rather than measure it all again."
+        )
     menu = config.command_menu(settings)
     return "\n".join(lines) + "\n\n" + (menu or "The project defines no commands.\n")
+
+
+def deferral(result: Path) -> Deferral | None:
+    """The deferral a spec result states, or None when it states none."""
+
+    text = result.read_text(encoding="utf-8").strip() if result.is_file() else ""
+    if not text.startswith(DEFERRED):
+        return None
+    first, _, rest = text.partition("\n")
+    return Deferral(first[len(DEFERRED):].strip(), rest.strip())
+
+
+def deferral_problems(found: Deferral) -> list[str]:
+    """What a deferral lacks, worded for the agent to fix."""
+
+    problems = []
+    if not found.trigger:
+        problems.append(f"the result's first line needs when to start after '{DEFERRED}', in one line,"
+                        f" such as '{DEFERRED} start once <the release> is out'.")
+    if not found.why:
+        problems.append("the deferral needs why after its first line: what you found, with the evidence,"
+                        " and what the change will need then.")
+    return problems
+
+
+def deferred_before(run_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
+    """The issue's other runs whose spec deferred it, oldest first, each with that event."""
+
+    runs = sorted(p for p in issue_dir(run_dir).iterdir() if p != run_dir and (p / "run.json").is_file())
+    found = []
+    for run in runs:
+        event = runlog.last_event(run, "spec.deferred")
+        if event is not None:
+            found.append((run, event))
+    return found
 
 
 def check(folder: Path, settings: config.Config) -> list[str]:

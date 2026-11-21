@@ -8,7 +8,8 @@ Every status starts with one state word, then says where the run is:
     waiting · quota until 15:40
     done · review passed        stopped · slice 2 gave up
 
-The detail stays short; a step is named without its number, as its tab is.
+The detail stays short; a step is named without its number, as its tab is. A run its
+interview deferred is at rest too: `done · deferred: <when to start>`.
 """
 
 from __future__ import annotations

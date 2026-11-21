@@ -2526,3 +2526,22 @@ ran:
   now kept whole: in the event, the summary's Last gates line and the pull request's
   quote, the only places it shows (the email and the status never carry it). The
   summary names the logs before the reason, which now ends the line.
+- Third, an interview that settles "nothing to build yet" had no way to end. #494
+  waits for golangci-lint 2.16.0; its interview reached that on 2026-10-23 and again on
+  2026-11-20. Both times the agent wrote no result, so the spec step kept waiting,
+  placido emailed "spec-wct-p2 exited" when the agent quit, and `placido close`
+  recorded the run as abandoned, "closed before the work was done". The second run
+  measured everything again, since the first had recorded nothing. Now waiting is the
+  user's decision in the interview, and the agent then writes its result as
+  `Deferred: <when to start>`, then why. The check takes that shape alone, with no
+  agreement and no vet. Placido records `spec.deferred` and posts the trigger and the
+  reasons as a comment on the issue when it is on GitHub, the one comment a run
+  posts before a pull request, so the next run's interview reads it in issue.md; a
+  post that fails is logged and printed with the `gh` command that posts it by hand.
+  The run ends `deferred`, an outcome of its own: `placido status` shows `done ·
+  deferred: <when to start>`, `placido runs` shows `deferred`, the summary says when
+  to start and where it was posted, and `placido close` keeps it. `placido spec`,
+  `run` and `review` refuse a deferred run. The retro's prompt names every run's
+  outcome, a deferred one with its trigger, and its skill reads a deferral as an end
+  the interview chose. A later run of the issue gets a prompt line naming the earlier
+  deferral and its reasons, so it checks that first.

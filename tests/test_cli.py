@@ -8,7 +8,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from placido import cli, doctor
+from placido import cli, doctor, runlog
 from placido.doctor import FAIL, OK, WARN
 
 PLACIDO = Path(__file__).resolve().parent.parent / "bin" / "placido"
@@ -96,6 +96,13 @@ class RunCommandsTest(unittest.TestCase):
         self.assertRegex(lines[0], r"^trial/00-trial/\S+  success$")
         self.assertEqual(lines[1], "other/01-x/r1                       unfinished")
         self.assertTrue(lines[2].startswith(f"trial/00-trial/{first.name}"))
+
+    def test_runs_shows_a_deferred_run_as_deferred(self):
+        run = runlog.Run.create(self.root, "goiabada", "494-drop", {})
+        run.event("run.end", outcome="deferred", reason="start once tool 2.16.0 is out")
+        code, out, _ = self.placido("runs")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.split(), [f"goiabada/494-drop/{run.path.name}", "deferred"])
 
     def test_runs_limit(self):
         self.placido("trial")

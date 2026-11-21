@@ -32,10 +32,17 @@ class RetroTest(unittest.TestCase):
     def test_prompt_points_at_the_run_the_issue_and_the_code(self):
         text = retro.prompt([self.run.path], self.code, self.run.path / "steps" / "05-retro")
         self.assertIn(str(retro.SKILL), text)
-        self.assertIn(f"**The run:** {self.run.path} (start with summary.md", text)
+        self.assertIn(f"**The run:** {self.run.path} (outcome: unfinished; start with summary.md", text)
         self.assertIn(f"**The issue:** {self.run.path.parent}", text)
         self.assertIn(f"**The project:** {self.code}. Read it; change nothing.", text)
         self.assertIn("05-retro/retro.md", text)
+
+    def test_a_deferred_run_is_named_as_deferred_with_its_trigger(self):
+        self.run.event("run.end", outcome="deferred", reason="start once tool 2.16.0 is out")
+        text = retro.prompt([self.run.path], self.code, self.run.path / "steps" / "05-retro")
+        self.assertIn(f"**The run:** {self.run.path} (outcome: deferred, nothing built: start once tool 2.16.0 is"
+                      " out; start with summary.md", text)
+        self.assertIn("A run whose outcome is **deferred** ended where its interview chose to", retro.SKILL.read_text())
 
     def test_the_retro_is_kept_in_the_run_folder(self):
         runner = FakeRunner(self.run, "# Retro: 02-x\n\nClean.\n\n## Suggestions\n\nNone.\n")
@@ -51,9 +58,9 @@ class RetroTest(unittest.TestCase):
         text = retro.prompt([self.run.path, older.path], self.code, Path("/r/steps/01-retro"))
         self.assertIn("# Retro on the last 2 runs of proj", text)
         self.assertIn("these runs are looked back on together", text)
-        self.assertLess(text.index(f"  - 02-x: {self.run.path} (issue folder {self.run.path.parent})"),
-                        text.index(f"  - 01-y: {older.path} (issue folder {older.path.parent}); an earlier"
-                                   f" retro of it: {older.path / 'retro.md'}"))
+        self.assertLess(text.index(f"  - 02-x: {self.run.path} (outcome: unfinished; issue folder {self.run.path.parent})"),
+                        text.index(f"  - 01-y: {older.path} (outcome: unfinished; issue folder {older.path.parent});"
+                                   f" an earlier retro of it: {older.path / 'retro.md'}"))
         self.assertNotIn("an earlier retro of it: " + str(self.run.path), text)
         self.assertIn("/r/steps/01-retro/retro.md", text)
 

@@ -33,7 +33,7 @@ def prompt(runs: list[Path], code: Path, folder: Path) -> str:
             "",
             f"Follow the placido retro skill in {SKILL}.",
             "",
-            f"- **The run:** {runs[0]} (start with summary.md, then events.jsonl and steps/).",
+            f"- **The run:** {runs[0]} ({ended(runs[0])}; start with summary.md, then events.jsonl and steps/).",
             f"- **The issue:** {issue} (agreement.md, and {decisions.FILE} if the user decided anything).",
         ]
     else:
@@ -45,7 +45,7 @@ def prompt(runs: list[Path], code: Path, folder: Path) -> str:
             "- **The runs**, newest first. In each, start with summary.md, then events.jsonl and"
             f" steps/; its issue folder holds agreement.md, and {decisions.FILE} if the user"
             " decided anything:",
-            *(f"  - {run.parent.name}: {run} (issue folder {spec.issue_dir(run)})"
+            *(f"  - {run.parent.name}: {run} ({ended(run)}; issue folder {spec.issue_dir(run)})"
               + (f"; an earlier retro of it: {run / 'retro.md'}" if (run / "retro.md").is_file() else "")
               for run in runs),
         ]
@@ -55,6 +55,17 @@ def prompt(runs: list[Path], code: Path, folder: Path) -> str:
         f"- **Write:** {folder / 'retro.md'}.",
     ]
     return "\n".join(lines) + "\n"
+
+
+def ended(run: Path) -> str:
+    """How a run ended, for the retro's prompt: a deferred one with when to start, so it
+    is read as the end its interview chose, not as a failure or work abandoned."""
+
+    outcome = runlog.outcome(run)
+    if outcome == "deferred":
+        trigger = (runlog.last_event(run, "run.end") or {}).get("reason")
+        return f"outcome: deferred, nothing built: {trigger}"
+    return f"outcome: {outcome}"
 
 
 def folder(runs_root: Path, project: str, clock: Callable[[], datetime] = runlog.local_now) -> Path:

@@ -149,6 +149,8 @@ def cmd_spec(args: argparse.Namespace) -> int:
         return 1
     _, settings, path, created = found
     folder = spec.issue_dir(path)
+    if _refuse_deferred(path):
+        return 1
     if spec.sealed(folder):
         print(f"placido: the agreement in {folder} is already sealed; remove seal.json to redo it", file=sys.stderr)
         return 1
@@ -171,12 +173,55 @@ def cmd_spec(args: argparse.Namespace) -> int:
         runner.status(status.text(status.STOPPED, f"spec {result.outcome.replace('-', ' ')}"))
         print(f"\nplacido: the specification ended {result.outcome}; see {result.path}", file=sys.stderr)
         return 1
+    deferred = spec.deferral(result.path / "result.md")
+    if deferred is not None:
+        return _defer(run, runner, worktree, deferred, result.path / "result.md")
     spec.seal(folder, run)
     runner.status(status.text(status.READY, "run placido run"))
     slices = spec.load_slices(folder)
     count = f"{len(slices)} slice{'s' if len(slices) != 1 else ''}"
     print(f"\nagreement sealed: {folder / 'agreement.md'} ({count})")
     return _after_seal(args)
+
+
+def _defer(run: runlog.Run, runner: step.Step, worktree: Path, deferred: spec.Deferral, result: Path) -> int:
+    """End the run as deferred: the interview settled with the user that nothing can
+    be built until its trigger. The trigger and the reasons go on the issue when it is
+    on GitHub; a post that fails says how to post it by hand. The run then waits for
+    `placido close`, as a finished one does, and never goes on to `placido run`."""
+
+    run.event("spec.deferred", trigger=deferred.trigger, result=str(result))
+    posted, failed = None, ""
+    try:
+        posted = github.post_deferral(run, worktree, deferred)
+    except (github.GitHubError, OSError) as error:
+        failed = str(error)
+        run.event("deferral.post_failed", error=failed)
+    run.event("run.end", outcome="deferred", reason=deferred.trigger)
+    runner.status(status.text(status.DONE, f"deferred: {deferred.trigger}"))
+    summary.write(run.path)
+    print(f"\nrun deferred, nothing built: {deferred.trigger}")
+    if posted:
+        print(f"posted on the issue: {posted}")
+    if failed:
+        record = runlog.read_record(run.path)
+        repo = start.origin_repo(Path(record.get("repo") or worktree))
+        print(f"placido: posting it on the issue failed: {failed}\npost it with: gh issue comment"
+              f" {record.get('issue_number')} -R {repo} --body-file {run.path / 'deferral-comment.md'}",
+              file=sys.stderr)
+    print(f"summary: {run.path / 'summary.md'}\nClose the run with placido close once you are done with it.")
+    return 0
+
+
+def _refuse_deferred(path: Path) -> bool:
+    """Whether the run ended deferred, saying so: nothing more happens in it."""
+
+    if runlog.outcome(path) != "deferred":
+        return False
+    trigger = (runlog.last_event(path, "run.end") or {}).get("reason")
+    print(f"placido: this run ended deferred ({trigger}); close it with placido close, and start the issue"
+          " again once that has come to pass", file=sys.stderr)
+    return True
 
 
 def _after_seal(args: argparse.Namespace, run_command: Callable[[argparse.Namespace], int] | None = None) -> int:
@@ -207,6 +252,8 @@ def _slice_context(
         return None
     _, settings, path, created = found
     folder = spec.issue_dir(path)
+    if _refuse_deferred(path):
+        return None
     if not spec.sealed(folder):
         print(f"placido: no sealed agreement in {folder}; run `placido spec` first", file=sys.stderr)
         return None

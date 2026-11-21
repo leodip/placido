@@ -57,9 +57,19 @@ def _facts(
     run_dir: Path, record: dict[str, Any], events: list[dict[str, Any]], stopped: str | None,
 ) -> list[str]:
     state = runlog.outcome(run_dir)
+    deferred = next((e for e in reversed(events) if e.get("event") == "spec.deferred"), None) \
+        if state == "deferred" else None
     if state == "unfinished":
         state = f"stopped ({stopped}); run placido again to resume" if stopped else "in progress"
+    elif deferred:
+        state = f"deferred, nothing built: {deferred.get('trigger')}"
     facts = [f"- **State:** {state}"]
+    if deferred:
+        posted = next((e for e in reversed(events) if e.get("event") == "deferral.posted"), None)
+        failed = next((e for e in reversed(events) if e.get("event") == "deferral.post_failed"), None)
+        where = (f"; posted on {posted.get('url')}" if posted else
+                 f"; posting it on the issue failed: {failed.get('error')}" if failed else "")
+        facts.append(f"- **Deferral:** why, in {deferred.get('result')}{where}")
     if record.get("issue_source"):
         facts.append(f"- **Issue:** {record['issue_source']}")
     if record.get("branch"):

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from placido import config, driver, github, runlog
+from placido import config, driver, github, runlog, spec
 from placido.proc import Result
 from tests.test_checks import FakeFixer
 
@@ -112,6 +112,31 @@ class DeliverCase(unittest.TestCase):
 
     def events(self, kind: str) -> list[dict]:
         return [e for e in runlog.read_events(self.run.path) if e["event"] == kind]
+
+
+class DeferralTest(DeliverCase):
+    DEFERRAL = spec.Deferral("start once tool 2.16.0 is out", "The pinned 2.15.0 bundles the old analyzer.")
+
+    def test_the_trigger_and_the_reasons_go_on_the_issue(self):
+        url = github.post_deferral(self.run, self.repo, self.DEFERRAL, self.hub)
+        self.assertEqual(url, "https://github.com/leodip/goiabada/issues/439#issuecomment-9001")
+        comment = next(argv for argv in self.gh.calls if argv[1:3] == ["issue", "comment"])
+        self.assertEqual(comment[3:6], ["439", "-R", "leodip/goiabada"])
+        self.assertEqual(self.gh.bodies["issue comment"],
+                         "**Deferred:** start once tool 2.16.0 is out\n\nThe pinned 2.15.0 bundles the old analyzer.\n\n"
+                         f"From placido's run `439-rate-limit/{self.run.path.name}`, which ends here with nothing built.\n")
+        self.assertEqual([(e["issue"], e["url"]) for e in self.events("deferral.posted")], [(439, url)])
+
+    def test_an_issue_not_on_github_gets_nothing(self):
+        sh(self.repo, "git", "remote", "remove", "origin")
+        self.assertIsNone(github.post_deferral(self.run, self.repo, self.DEFERRAL, self.hub))
+        record = runlog.read_record(self.run.path)
+        del record["issue_number"]
+        (self.run.path / "run.json").write_text(json.dumps(record))
+        sh(self.repo, "git", "remote", "add", "origin", "https://github.com/leodip/goiabada.git")
+        self.assertIsNone(github.post_deferral(self.run, self.repo, self.DEFERRAL, self.hub))
+        self.assertEqual(self.gh.calls, [])
+        self.assertEqual(self.events("deferral.posted"), [])
 
 
 class DeliverTest(DeliverCase):

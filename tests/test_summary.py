@@ -41,6 +41,16 @@ class SummaryTest(unittest.TestCase):
         text = summary.write(self.run.path, stopped="gave-up")
         self.assertIn("- **State:** stopped (gave-up); run placido again to resume", text)
 
+    def test_a_deferred_run_says_when_to_start_and_where_it_was_posted(self):
+        self.run.event("run.start")
+        self.run.event("spec.deferred", trigger="start once tool 2.16.0 is out", result="/r/01-spec/result.md")
+        self.run.event("deferral.posted", issue=494, url="https://github.com/o/r/issues/494#issuecomment-1")
+        self.run.event("run.end", outcome="deferred", reason="start once tool 2.16.0 is out")
+        text = summary.write(self.run.path)
+        self.assertIn("- **State:** deferred, nothing built: start once tool 2.16.0 is out\n"
+                      "- **Deferral:** why, in /r/01-spec/result.md; posted on"
+                      " https://github.com/o/r/issues/494#issuecomment-1\n", text)
+
     def test_last_gates_failing_from_outside_the_change_say_why(self):
         self.run.event("run.start")
         self.run.event("checks.unchanged", what="the last gates", why="main fails them too.")

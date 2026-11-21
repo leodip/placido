@@ -53,6 +53,13 @@ class BoardTest(unittest.TestCase):
         self.assertIn("sandbox   02-many-names   done · passed · placido close when finished", lines[2])
         self.assertNotIn(closed.path.parent.name, "\n".join(lines))
 
+    def test_a_deferred_issue_is_at_rest_and_says_when_to_start(self):
+        self.run_of("goiabada", "494-drop-nolintlint", "done · deferred: start once tool 2.16.0 is out", "run.end")
+        self.run_of("goiabada", "439-rate-limit", "working · slice 2/3")
+        lines = status.board(self.root, now=time.time()).splitlines()
+        self.assertIn("goiabada  494-drop-nolintlint  done · deferred: start once tool 2.16.0 is out"
+                      " · placido close when finished", lines[1])
+
     def test_a_retried_worktree_shows_only_its_newest_run(self):
         old = self.run_of("goiabada", "331-strip", "stopped · setup failed")
         os.utime(old.path / "run.json", (1, 1))
