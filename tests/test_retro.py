@@ -3,16 +3,20 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from placido import config, retro, runlog
+from placido import config, retro, runlog, status
+from placido.herdr import HerdrError
 from placido.step import StepResult
 
 
 class FakeRunner:
-    def __init__(self, run: runlog.Run, text: str | None) -> None:
-        self.run, self.text, self.calls = run, text, []
+    def __init__(self, run: runlog.Run, text: str | None, error: Exception | None = None) -> None:
+        self.run, self.text, self.calls, self.error = run, text, [], error
 
     def __call__(self, role, agent, task, name=None, check=None, **kwargs):
         self.calls.append((role, agent.agent, task))
+        status.show(self.run.path, "working · retro")  # as the step does while it works
+        if self.error is not None:
+            raise self.error
         folder = self.run.step_dir(1, name)
         if self.text is not None:
             (folder / "retro.md").write_text(self.text)
@@ -80,6 +84,36 @@ class RetroTest(unittest.TestCase):
         done = runlog.last_event(folder, "retro.done")
         self.assertEqual(done["runs"], [str(self.run.path), str(older.path)])
         self.assertNotIn(folder, runlog.all_runs(root))
+
+    def retro_of_several(self, runner_for) -> Path:
+        root = self.run.path.parent.parent.parent
+        folder = retro.folder(root, "proj")
+        runner = runner_for(runlog.Run(folder))
+        try:
+            retro.retro(runner, config.AgentSpec("claude", "opus", "high"), [self.run.path], self.code)
+        except HerdrError:
+            pass
+        return folder
+
+    def test_a_retro_s_folder_ends_done_or_stopped_not_working(self):
+        # A retro of the last six runs finished on 2026-11-21, its folder still `working · retro`.
+        done = self.retro_of_several(lambda host: FakeRunner(host, "# Retro\n\n## Suggestions\n\nNone.\n"))
+        self.assertEqual(status.read(done), "done · retro")
+        refused = self.retro_of_several(lambda host: FakeRunner(host, None))
+        self.assertEqual(status.read(refused), "stopped · retro invalid")
+        broken = self.retro_of_several(lambda host: FakeRunner(host, None, HerdrError("tab gone")))
+        self.assertEqual(status.read(broken), "stopped · retro failed")
+
+    def test_a_run_s_own_folder_gets_its_status_back(self):
+        status.show(self.run.path, "you · the last gates fail on pull request 889")
+        retro.retro(FakeRunner(self.run, "# Retro\n\n## Suggestions\n\nNone.\n"),
+                    config.AgentSpec("claude", "opus", "high"), [self.run.path], self.code)
+        self.assertEqual(status.read(self.run.path), "you · the last gates fail on pull request 889")
+        (self.run.path / status.FILE).unlink()
+        with self.assertRaises(HerdrError):
+            retro.retro(FakeRunner(self.run, None, HerdrError("tab gone")),
+                        config.AgentSpec("claude", "opus", "high"), [self.run.path], self.code)
+        self.assertFalse((self.run.path / status.FILE).exists())  # it had none, and gets none
 
     def test_a_missing_or_shapeless_retro_is_sent_back(self):
         for text, problem in ((None, "write the retro"), ("# Retro\n\nfine\n", "'## Suggestions'")):

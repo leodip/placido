@@ -2545,3 +2545,10 @@ ran:
   outcome, a deferred one with its trigger, and its skill reads a deferral as an end
   the interview chose. A later run of the issue gets a prompt line naming the earlier
   deferral and its reasons, so it checks that first.
+- Fourth, a retro's folder never reached a final status: the retro of the last six
+  runs had `retro.done` and a successful `step.end`, and its status still said
+  `working · retro`, as the step leaves it while it works. A retro's own folder now
+  ends `done · retro`, or `stopped · retro <how the step ended>`, a broken step
+  included. A retro of one run works in that run's folder, so the run gets back the
+  status it had: the retro is not the run's work, and `done · retro` there would have
+  shown a run waiting for the user as done.

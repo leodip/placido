@@ -16,7 +16,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from placido import config, decisions, runlog, spec
+from placido import config, decisions, runlog, spec, status
 from placido.step import Step, StepResult
 
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "retro" / "SKILL.md"
@@ -91,14 +91,40 @@ def check(result: Path) -> list[str]:
 
 def retro(runner: Step, agent: config.AgentSpec, runs: list[Path], code: Path) -> StepResult:
     """Run the retro step, then keep its retro.md in the runner's run folder too: the
-    run's own, or with several runs, the retro's folder."""
+    run's own, or with several runs, the retro's folder. The step leaves its status
+    there as working; settle() gives the folder its final one, however the step ends."""
 
     from placido.step import next_step_number
 
-    folder = runner.run.path / "steps" / f"{next_step_number(runner.run):02d}-retro"
-    result = runner("retro", agent, prompt(runs, code, folder), name="retro", check=check)
-    if result.outcome == "success":
-        kept = runner.run.path / "retro.md"
-        shutil.copyfile(result.path / "retro.md", kept)
-        runner.run.event("retro.done", path=str(kept), runs=[str(run) for run in runs])
-    return result
+    host = runner.run.path
+    before = status.read(host) if (host / "run.json").is_file() else None
+    folder = host / "steps" / f"{next_step_number(runner.run):02d}-retro"
+    outcome = "failed"
+    try:
+        result = runner("retro", agent, prompt(runs, code, folder), name="retro", check=check)
+        outcome = result.outcome
+        if result.outcome == "success":
+            kept = host / "retro.md"
+            shutil.copyfile(result.path / "retro.md", kept)
+            runner.run.event("retro.done", path=str(kept), runs=[str(run) for run in runs])
+        return result
+    finally:
+        settle(host, before, outcome)
+
+
+def settle(host: Path, before: str | None, outcome: str) -> None:
+    """The final status of a retro's folder: done, or stopped with how the step ended.
+    A retro of the last six runs finished on 2026-11-21, and its folder still said
+    `working · retro`. A run's own folder gets back the status it had before the
+    retro (before, "" for none): the retro is not the run's work, so it does not
+    change where the run is."""
+
+    if before is not None:
+        if before:
+            status.show(host, before)
+        else:
+            (host / status.FILE).unlink(missing_ok=True)
+    elif outcome == "success":
+        status.show(host, status.text(status.DONE, "retro"))
+    else:
+        status.show(host, status.text(status.STOPPED, f"retro {outcome.replace('-', ' ')}"))
