@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from placido import checks, config, driver, runlog
+from placido import checks, config, driver, implement, runlog
 from placido.step import StepResult
 
 RESULT = "Fix the final gates: add ok.txt\n\nThe gate needs it.\n\n## Evidence\n- passes\n"
@@ -108,6 +108,7 @@ class FinalGatesTest(unittest.TestCase):
         self.assertEqual(outcome, "passed")
         self.assertIn("Fix the last gates", self.fixer.prompts[0])
         self.assertIn("last-gates/1/gates/full.log", self.fixer.prompts[0])
+        self.assertIn(implement.subject_line(), self.fixer.prompts[0])
         self.assertIn("Placido-Check-Fix: last-gates-1", sh(self.repo, "git", "log", "-1", "--format=%B"))
         self.assertIn("last_gates.passed", self.events())
         self.assertEqual(self.events().count("gate.start"), 2)

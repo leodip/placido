@@ -2510,3 +2510,14 @@ ran:
   pull request's follow-ups comment. The retro's other point, ending the comment loop
   once a pass uses its round budget, was not taken: the reviewers' next comments would
   then go unanswered.
+
+### 2026-11-21
+
+- The retro on Goiabada's last six runs (`retros/2026-11-21T090903`) raised four
+  points about placido. First, the commit subject: placido refuses one over 72
+  characters, but no prompt said so, and in #420 `09-implement-slice-7` (75) and
+  `29-comments-2-fix-2` (74) were sent back for it. Now every prompt whose first line
+  placido commits or merges with states the limit, from the constant the checks hold
+  (`implement.SUBJECT_MAX`): the implementer's, the review's and the comments' fixers,
+  the checks fixer, and `placido pr`'s fixer, judge and decide roles. The skills say 72
+  too, and a test holds their number to the constant.

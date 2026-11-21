@@ -12,10 +12,28 @@ SKILL = Path(__file__).resolve().parent.parent / "skills" / "implement" / "SKILL
 NOTES = Path(".placido") / "notes" / "implement.md"
 EVIDENCE = "## Evidence"
 BLOCKED = "Blocked:"
+# The longest commit subject placido commits or merges with. Each prompt whose first
+# line becomes one states it (subject_line), as each check holds it (long_subject):
+# on #420 two results came back at 75 and 74 characters, from prompts that never said.
+SUBJECT_MAX = 72
 
 
 class ImplementError(RuntimeError):
     pass
+
+
+def subject_line(label: str = "Commit subject", where: str = "your result's first line") -> str:
+    """The prompt line that states SUBJECT_MAX."""
+
+    return f"- **{label}:** {where}, at most {SUBJECT_MAX} characters; placido refuses a longer one."
+
+
+def long_subject(subject: str, what: str = "commit subject") -> list[str]:
+    """The problem with a subject over SUBJECT_MAX, worded for the agent; none when it fits."""
+
+    if len(subject) <= SUBJECT_MAX:
+        return []
+    return [f"the {what} is {len(subject)} characters; keep it to {SUBJECT_MAX}."]
 
 
 def committed(run_dir: Path) -> set[int]:
@@ -107,6 +125,7 @@ def prompt(run_dir: Path, worktree: Path, entry: dict[str, Any], settings: confi
         f"- **Agreement:** {folder / 'agreement.md'} (sealed; read it in full)",
         f"- **This slice:** {entry['id']}, \"{entry['title']}\": {entry['delivers']}",
         f"- **Code:** the worktree you are in, {worktree}. Change it; do not commit.",
+        subject_line(),
         f"- **Tests first:** {'yes' if settings.test_first else 'no, write them after the code'}.",
         f"- **Gates for this slice:** {', '.join(gates) or 'none'}. Each is a command below, with any"
         " arguments after its name. Run each with `placido gate <gate>` once your work is done:"
@@ -205,8 +224,8 @@ def check(
     subject = message(result).splitlines()[0].strip() if message(result) else ""
     if not subject:
         problems.append("the result has no commit subject on its first line.")
-    elif len(subject) > 72:
-        problems.append(f"the commit subject is {len(subject)} characters; keep it to 72.")
+    else:
+        problems += long_subject(subject)
     if EVIDENCE not in result.read_text(encoding="utf-8"):
         problems.append(f"the result has no '{EVIDENCE}' section.")
     if git(worktree, "rev-parse", "HEAD") != head:

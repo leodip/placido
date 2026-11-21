@@ -239,6 +239,7 @@ def fixer_prompt(
         f"- **Gates:** {gates}. Run each with `placido gate <gate>` once your fixes are done:"
         " placido commits only when they all pass, and runs again only those whose files changed"
         " since they passed.",
+        implement.subject_line(),
         f"- **Write:** {folder / 'resolutions.json'}.",
     ]
     menu = config.command_menu(settings)

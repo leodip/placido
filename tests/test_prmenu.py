@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 from unittest import mock
 
-from placido import alerts, decisions, pr, pragents, prcheck, prgh, prmenu, runlog
+from placido import alerts, decisions, implement, pr, pragents, prcheck, prgh, prmenu, runlog
 from tests.test_pr import CONFIG, PRTestCase, finding, git_commit, sh
 
 
@@ -620,6 +620,7 @@ class FixLoopTest(MenuTestCase):
         self.assertEqual(self.runner.problems, [])
         second = next(c["task"] for c in self.runner.calls if c["name"] == "r2-fix-1")
         self.assertIn(str(self.run.path / "rounds" / "2" / "final.md"), second)
+        self.assertIn(implement.subject_line(), second)
         judge = next(c["task"] for c in self.runner.calls if c["name"] == "r3-judge")
         self.assertIn(f"--remerge-diff {self.head[:12]}..{reviewed.head[:12]}`", judge)  # every change made here
         self.assertIn("push", self.keys(reviewed))
@@ -1265,6 +1266,9 @@ class DecisionsTest(MenuTestCase):
         self.assertIn("pr-decide", call["task"])
         self.assertIn("its 2 decision(s) for the maintainer", call["task"])
         self.assertIn("decided.json", call["task"])
+        self.assertIn("- **Squash subject:** merge.md's first line, at most 72 characters", call["task"])
+        judge = next(c["task"] for c in self.runner.calls if c["name"] == "r1-judge")
+        self.assertIn("- **Squash subject:** merge.md's first line, at most 72 characters", judge)
         self.assertEqual([k for k in self.kinds() if k.startswith("pr.")][-3:], ["pr.judged", "pr.ready", "pr.decided"])
         step = runlog.last_event(self.run.path, "pr.decided")["step"]
         self.assertEqual(decisions.entries(self.run.path), [(1, step), (2, step)])

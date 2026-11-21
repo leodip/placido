@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -289,6 +290,32 @@ class PromptTest(SliceTestCase):
         self.assertIn("**Gates for this slice:** unit, data.", text)
         self.assertIn("at least 1 killed", text)
         self.assertIn("- **unit**, `test -f feature.txt`", text)
+
+    def test_states_the_commit_subject_limit(self):
+        # #420: two results came back at 75 and 74 characters from prompts that never said.
+        text = implement.prompt(self.run.path, self.repo, SLICES[1], self.settings)
+        self.assertIn("- **Commit subject:** your result's first line, at most 72 characters;"
+                      " placido refuses a longer one.", text)
+
+
+class SubjectTest(unittest.TestCase):
+    def test_a_subject_over_the_limit_is_refused(self):
+        self.assertEqual(implement.long_subject("x" * implement.SUBJECT_MAX), [])
+        self.assertEqual(implement.long_subject("x" * 73), ["the commit subject is 73 characters; keep it to 72."])
+        self.assertEqual(implement.long_subject("x" * 80, "squash subject"),
+                         ["the squash subject is 80 characters; keep it to 72."])
+
+    def test_the_skills_state_the_limit_placido_holds(self):
+        # The prompts state it from SUBJECT_MAX; the skills' own words must not drift from it.
+        skills = implement.SKILL.parent.parent
+        stated = {}
+        for path in sorted(skills.glob("*/SKILL.md")):
+            numbers = re.findall(r"subject[^.]*?at\s+most\s+(\d+)", path.read_text(), re.S)
+            if numbers:
+                stated[path.parent.name] = {int(n) for n in numbers}
+        self.assertEqual(set(stated), {"implement", "fix", "checks", "pr-fix", "pr-judge"})
+        for name, numbers in stated.items():
+            self.assertEqual(numbers, {implement.SUBJECT_MAX}, name)
 
 
 class BenchmarkPromptTest(SliceTestCase):

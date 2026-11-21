@@ -22,6 +22,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from placido import implement
+
 AREAS = ("correctness", "gaps", "bugs", "security", "standards", "tests")
 SEVERITIES = ("blocking", "significant", "minor")
 SIZES = ("small", "medium", "large")
@@ -221,8 +223,8 @@ def check_final(folder: Path, ids: list[str], earlier: list[str]) -> list[str]:
         subject = first_line(folder / "merge.md")
         if not subject:
             problems.append(f"{folder / 'merge.md'} needs the squash commit's subject on its first line.")
-        elif len(subject) > 72:
-            problems.append(f"the squash subject is {len(subject)} characters; keep it to 72.")
+        else:
+            problems += implement.long_subject(subject, "squash subject")
     return problems
 
 
@@ -318,8 +320,8 @@ def check_decided(folder: Path, final: dict[str, Any]) -> list[str]:
         subject = first_line(folder / "merge.md")
         if not subject:
             problems.append(f"{folder / 'merge.md'} needs the squash commit's subject on its first line.")
-        elif len(subject) > 72:
-            problems.append(f"the squash subject is {len(subject)} characters; keep it to 72.")
+        else:
+            problems += implement.long_subject(subject, "squash subject")
     return problems
 
 

@@ -28,7 +28,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import config, decisions, fallback, prcheck, status
+from placido import config, decisions, fallback, implement, prcheck, status
 from placido.pr import (
     Context, Lane, PRStop, Round, close_agents, close_orphans, contributor_round, current_round, done, gates,
     host_changes, lane_for, letter, notify, open_agents, primary_lane, release_lanes, round_by_number, settle, setup,
@@ -555,6 +555,7 @@ def judge_prompt(ctx: Context, rnd: Round, folder: Path) -> str:
             " the comment and the squash message say what they changed, as the skill's Draft for the contributor section does."
         )
     lines += [
+        implement.subject_line("Squash subject", "merge.md's first line"),
         f"- **Write:** {folder / 'final.json'}, {folder / 'comment.md'}, and, when the verdict is"
         f" merge or fix-here, {folder / 'merge.md'}.",
     ]
@@ -641,6 +642,7 @@ def decide_prompt(ctx: Context, rnd: Round, folder: Path, final: dict[str, Any])
         + (f" and {folder / 'merge.md'}" if (folder / "merge.md").is_file() else "")
         + ", copies of the round's: bring these in line with what the user decides.",
         decisions.prompt_line(ctx.run.path, OVER),
+        implement.subject_line("Squash subject", "merge.md's first line"),
         f"- **Write:** {folder / 'decided.json'}, the drafts, and the result file.",
     ]
     menu = config.command_menu(ctx.settings)
