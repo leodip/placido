@@ -6,6 +6,7 @@ import argparse
 from typing import Callable
 import json
 import os
+import shlex
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -214,13 +215,23 @@ def _defer(run: runlog.Run, runner: step.Step, worktree: Path, deferred: spec.De
     if posted:
         print(f"posted on the issue: {posted}")
     if failed:
-        record = runlog.read_record(run.path)
-        repo = issues.repo_of(str(record.get("issue_source") or ""))
-        print(f"placido: posting it on the issue failed: {failed}\npost it with: gh issue comment"
-              f" {record.get('issue_number')} -R {repo} --body-file {run.path / 'deferral-comment.md'}",
-              file=sys.stderr)
+        print(f"placido: posting it on the issue failed: {failed}\n{_post_by_hand(run, result)}", file=sys.stderr)
     print(f"summary: {run.path / 'summary.md'}\nClose the run with placido close once you are done with it.")
     return 0
+
+
+def _post_by_hand(run: runlog.Run, result: Path) -> str:
+    """How to post a deferral whose post failed: the gh command, quoted for the shell;
+    or, when even its text could not be written, where that text is."""
+
+    body = run.path / github.DEFERRAL_COMMENT
+    if not body.is_file():
+        return f"its text is the trigger and the why, above {spec.EVIDENCE}, in {result}"
+    record = runlog.read_record(run.path)
+    repo = issues.repo_of(str(record.get("issue_source") or "")) or "?"
+    return "post it with: " + shlex.join(
+        ["gh", "issue", "comment", str(record.get("issue_number")), "-R", repo, "--body-file", str(body)]
+    )
 
 
 def _refuse_deferred(path: Path) -> bool:

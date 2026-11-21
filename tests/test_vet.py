@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -351,7 +352,6 @@ class SpecCommandTest(unittest.TestCase):
         self.assertEqual(runlog.last_event(self.run.path, "deferral.post_failed")["error"], "gh issue comment: HTTP 502")
         self.assertEqual(runlog.outcome(self.run.path), "deferred")
         self.assertIn("posting it on the issue failed: gh issue comment: HTTP 502", err)
-        self.assertIn(f"--body-file {self.run.path / 'deferral-comment.md'}", err)
         self.assertIn("posting it on the issue failed: gh issue comment: HTTP 502",
                       (self.run.path / "summary.md").read_text())
 
@@ -360,6 +360,30 @@ class SpecCommandTest(unittest.TestCase):
         self.assertEqual(interview.roles, ["spec", "vet"])
         ((problem,),) = interview.sent_back
         self.assertIn("found 2 problems", problem)
+
+
+class PostByHandTest(unittest.TestCase):
+    """What placido prints when a deferral's post fails."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        # Codex, reviewing 444aead: a runs folder with a space split the printed --body-file.
+        self.run = runlog.Run.create(Path(tmp.name) / "my runs", "repo", "494-x", {
+            "issue_number": 494, "issue_source": "https://github.com/o/r/issues/494"})
+        self.result = self.run.path / "steps" / "01-spec" / "result.md"
+
+    def test_the_command_is_quoted_for_the_shell(self):
+        body = self.run.path / github.DEFERRAL_COMMENT
+        body.write_text("**Deferred:** x\n")
+        said = cli._post_by_hand(self.run, self.result)
+        self.assertTrue(said.startswith("post it with: "))
+        self.assertEqual(shlex.split(said.removeprefix("post it with: ")),
+                         ["gh", "issue", "comment", "494", "-R", "o/r", "--body-file", str(body)])
+
+    def test_without_the_comment_s_text_it_points_at_the_result(self):
+        self.assertEqual(cli._post_by_hand(self.run, self.result),
+                         f"its text is the trigger and the why, above ## Evidence, in {self.result}")
 
 
 class RoleTest(unittest.TestCase):

@@ -457,6 +457,9 @@ def _post_follow_ups(github: GitHub, run: runlog.Run, record: dict[str, Any], pr
         run.event("issue.noted", issue=number, url=url)
 
 
+DEFERRAL_COMMENT = "deferral-comment.md"  # in the run folder: the comment a deferral posts
+
+
 def post_deferral(run: runlog.Run, worktree: Path, deferral: spec.Deferral, github: GitHub | None = None) -> str | None:
     """The run's deferral as a comment on its issue, so the issue says when to start
     and the next run's interview reads it in issue.md; the comment's URL, or None when
@@ -469,7 +472,7 @@ def post_deferral(run: runlog.Run, worktree: Path, deferral: spec.Deferral, gith
     repo = issues.repo_of(str(record.get("issue_source") or "")) if number else None
     if repo is None:
         return None
-    body = run.path / "deferral-comment.md"
+    body = run.path / DEFERRAL_COMMENT
     body.write_text(
         f"**{spec.DEFERRED}** {deferral.trigger}\n\n{deferral.why}\n\n"
         f"From placido's run `{run.path.parent.name}/{run.path.name}`, which ends here with nothing built.\n",
