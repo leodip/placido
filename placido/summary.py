@@ -88,6 +88,13 @@ def _facts(
         why = checks.outside(run_dir, "the last gates")
         cause = f". Nothing in this change causes it: {why}" if why else ""
         facts.append(f"- **Last gates:** fail after placido's fixes{failed}; logs in {run_dir / 'last-gates'}{cause}")
+    for note in prbody.flaky(events):
+        tests = [str(test).replace("`", "'") for test in note.get("tests") or []]
+        more = int(note.get("count") or 0) - len(tests)
+        named = ("; ".join(f"`{test}`" for test in tests) + (f"; and {more} more" if more > 0 else "")) \
+            if tests else "tests its log does not name"
+        facts.append(f"- **Flaky tests:** {prbody.flaky_gate(note)} passed only on a rerun of {named};"
+                     f" log {note.get('log')}")
     if events:
         took = _seconds(events[0].get("ts"), events[-1].get("ts"))
         facts.append(f"- **Time:** {str(events[0].get('ts', ''))[:16].replace('T', ' ')}"

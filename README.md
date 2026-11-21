@@ -202,6 +202,14 @@ When it can see the fix all the same, such as the same fragile assertion in othe
 tests, it names it, and placido drafts it as a follow-up on the pull request, as it
 does for a CI failure the fixer finds outside the change.
 
+A gate that runs its failed tests again, and passes on that, can say so, since a
+passing gate's log is read by nobody: a line of its output that starts with `FLAKY`,
+then the tests' names, one per indented or bulleted line right after it, or on the
+rest of that line (`FLAKY: test_login_retries`). When a final or last gate passes,
+placido carries those names from its log into the pull request's description, under
+"Flaky tests", with where the log is, up to 20 a gate, and into the run's summary. A
+gate that prints no `FLAKY` line adds nothing.
+
 Setup, teardown, the gates, and every agent's tab get these variables, so your own
 scripts can find the run's resources:
 

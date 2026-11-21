@@ -2577,3 +2577,15 @@ ran:
   which refuses a deferred run. The test of the post's destination now holds it. A
   draft cut short by a failing disk, with the user then posting it by hand unread, is
   an accepted risk.
+- Goiabada's e2e gate now reruns its failed tests once and passes when they do,
+  printing `FLAKY: these tests did not pass on the first run and passed on the rerun:`
+  and the tests' names, indented, one per line. Placido writes the pull request itself
+  and shows a passing gate's log to nobody, so the names would have gone unseen. That
+  is now a convention any gate can use (README): a line that starts with `FLAKY`, then
+  the names on the indented or bulleted lines right after it, or on the rest of the
+  line. When the final or last gates pass, by their first run, a fix, or placido's own
+  rerun, each gate's passing log (`gate.end` now names it; a reused pass, the one it
+  reused) is read for FLAKY lines, and `<kind>_gates.flaky` records up to 20 names, the
+  count, and the log. The pull request gets a "Flaky tests" section with each gate, its
+  tests, and its log's place in the run folder (no home path goes out), and the summary
+  a line. Nothing is added when no FLAKY line is there.

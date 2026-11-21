@@ -199,7 +199,7 @@ def run_gates(
             name, command, worktree, env, log, run.path, "placido",
             lambda s, said, n=name: run.progress(f"gate {n} running", s, said),
         )
-        run.event("gate.end", gate=name, exit=code, seconds=round(seconds, 1))
+        run.event("gate.end", gate=name, exit=code, seconds=round(seconds, 1), log=str(log))
         if code != 0:
             problems.append(f"gate {name} (`{command}`) failed with exit {code}; its output is in {log}.")
     return problems
