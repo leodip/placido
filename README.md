@@ -41,9 +41,10 @@ is posted, pushed, or merged until you pick it (see
    decisions that contradict each other come back to the interview while you are
    still there, rather than stopping the run at night. When you decide with it that
    nothing can be built yet, as for an issue that waits on an upstream release, the
-   run ends *deferred*: placido posts when to start, and why, on the issue, where the
-   next run's interview reads it, and `placido status`, `runs` and `retro` show the
-   run as deferred, not failed or abandoned. When the issue's goal is a number (faster, smaller, fewer), the
+   run ends *deferred*. When the issue is on GitHub, placido posts when to start, and
+   a short why the interview shows you first, on it, where the next run's interview
+   reads it; the evidence stays with the run. `placido status`, `runs` and `retro`
+   show the run as deferred, not failed or abandoned. When the issue's goal is a number (faster, smaller, fewer), the
    agreement makes it a *benchmark*: a command, today's baseline, and a target. Each
    slice reports the number before and after, the review holds the change to the
    target, and the pull request shows how it moved.
