@@ -2521,3 +2521,8 @@ ran:
   (`implement.SUBJECT_MAX`): the implementer's, the review's and the comments' fixers,
   the checks fixer, and `placido pr`'s fixer, judge and decide roles. The skills say 72
   too, and a test holds their number to the constant.
+- Second, the checks fixer's reason for changing nothing was cut at 500 characters, so
+  #420's and #492's summaries ended mid-word ("(`src/*/web` and `e2e/` are u"). It is
+  now kept whole: in the event, the summary's Last gates line and the pull request's
+  quote, the only places it shows (the email and the status never carry it). The
+  summary names the logs before the reason, which now ends the line.

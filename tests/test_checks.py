@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from placido import checks, config, driver, implement, runlog
+from placido import checks, config, driver, implement, prbody, runlog, summary
 from placido.step import StepResult
 
 RESULT = "Fix the final gates: add ok.txt\n\nThe gate needs it.\n\n## Evidence\n- passes\n"
@@ -177,6 +177,24 @@ class FinalGatesTest(unittest.TestCase):
                          ["the '## Follow-up' section needs a title on its first line, then what to fix and where."])
         self.fixer.unchanged = "No code changes\n\nmain's.\n\n## Evidence\n- x\n"
         self.assertNotIn("followup", runlog.last_event(self.run.path, "checks.unchanged") or {})
+
+    def test_the_reason_is_kept_whole(self):
+        # #420's and #492's were cut at 500 characters, so their summaries stopped mid-word.
+        why = (
+            "The one e2e failure was a WebKit navigation that never reached the server: the test's second"
+            " `page.goto` sent its request, which never got an answer, until the 60-second test timeout. The"
+            " VPS's nginx logged no request from the test machine for that whole minute. This branch changes"
+            " only Go repository guards, `core/pkgload`, docs and two comments in the servers' `server.go`;"
+            " it touches nothing the admin console serves (`src/*/web` and `e2e/` are unchanged). The same"
+            " test passed on chromium and firefox at both viewports, and on webkit at 1440x900, in this run."
+        )
+        self.assertGreater(len(why), 500)
+        self.fixer.unchanged = f"No code changes\n\n{why}\n\n## Evidence\n- x\n"
+        checks.last_gates(self.ctx(final="", last="full"), config.AgentSpec("claude", "opus", "high"))
+        self.assertEqual(runlog.last_event(self.run.path, "checks.unchanged")["why"], why)
+        self.assertEqual(checks.outside(self.run.path, "the last gates"), why)
+        self.assertIn(f"Nothing in this change causes it: {why}\n", summary.write(self.run.path))
+        self.assertIn(f"Nothing in this change causes it: {why}\n", prbody.build(self.run.path, []))
 
     def test_the_reason_may_follow_on_the_first_line(self):
         result = self.tmp / "result.md"

@@ -45,8 +45,8 @@ class SummaryTest(unittest.TestCase):
         self.run.event("run.start")
         self.run.event("checks.unchanged", what="the last gates", why="main fails them too.")
         self.run.event("last_gates.gave_up", gates=["e2e"])
-        self.assertIn("- **Last gates:** fail after placido's fixes (e2e); nothing in this change causes it: main fails"
-                      " them too.; logs in", summary.write(self.run.path))
+        self.assertIn(f"- **Last gates:** fail after placido's fixes (e2e); logs in {self.run.path / 'last-gates'}."
+                      " Nothing in this change causes it: main fails them too.\n", summary.write(self.run.path))
 
     def test_a_finished_run(self):
         self.run.event("run.start")

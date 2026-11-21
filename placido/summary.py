@@ -76,8 +76,8 @@ def _facts(
     if last:
         failed = f" ({', '.join(last.get('gates') or [])})" if last.get("gates") else ""
         why = checks.outside(run_dir, "the last gates")
-        cause = f"; nothing in this change causes it: {why}" if why else ""
-        facts.append(f"- **Last gates:** fail after placido's fixes{failed}{cause}; logs in {run_dir / 'last-gates'}")
+        cause = f". Nothing in this change causes it: {why}" if why else ""
+        facts.append(f"- **Last gates:** fail after placido's fixes{failed}; logs in {run_dir / 'last-gates'}{cause}")
     if events:
         took = _seconds(events[0].get("ts"), events[-1].get("ts"))
         facts.append(f"- **Time:** {str(events[0].get('ts', ''))[:16].replace('T', ' ')}"

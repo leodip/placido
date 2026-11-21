@@ -123,13 +123,14 @@ def fix(
 
 def unchanged(result: Path) -> str | None:
     """Why the fixer changed nothing, when its result says it did not: what it wrote
-    above the evidence, in one paragraph; else None."""
+    above the evidence, in one paragraph, whole; else None. The summary and the pull
+    request quote it, and a cut at 500 characters left #420's and #492's mid-word."""
 
     text = result.read_text(encoding="utf-8").strip() if result.is_file() else ""
     if not text.startswith(NO_CHANGES):
         return None
     why = " ".join(re.split(r"(?m)^## ", text[len(NO_CHANGES):], maxsplit=1)[0].split()).lstrip(":.;, ")
-    return why[:500] or "the fixer gave no reason"
+    return why or "the fixer gave no reason"
 
 
 def follow_up(result: Path) -> dict[str, str] | None:
