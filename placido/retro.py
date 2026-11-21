@@ -102,11 +102,11 @@ def retro(runner: Step, agent: config.AgentSpec, runs: list[Path], code: Path) -
     outcome = "failed"
     try:
         result = runner("retro", agent, prompt(runs, code, folder), name="retro", check=check)
-        outcome = result.outcome
         if result.outcome == "success":
             kept = host / "retro.md"
             shutil.copyfile(result.path / "retro.md", kept)
             runner.run.event("retro.done", path=str(kept), runs=[str(run) for run in runs])
+        outcome = result.outcome  # only once its retro.md is kept: a failed copy is no success
         return result
     finally:
         settle(host, before, outcome)

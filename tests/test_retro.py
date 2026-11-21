@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 from placido import config, retro, runlog, status
 from placido.herdr import HerdrError
@@ -103,6 +104,15 @@ class RetroTest(unittest.TestCase):
         self.assertEqual(status.read(refused), "stopped · retro invalid")
         broken = self.retro_of_several(lambda host: FakeRunner(host, None, HerdrError("tab gone")))
         self.assertEqual(status.read(broken), "stopped · retro failed")
+
+    def test_a_retro_whose_report_cannot_be_kept_is_not_done(self):
+        # Codex, reviewing 8a02533: the status said done once the step did, before the copy.
+        with mock.patch.object(retro.shutil, "copyfile", side_effect=OSError("disk full")), \
+                self.assertRaises(OSError):
+            self.retro_of_several(lambda host: FakeRunner(host, "# Retro\n\n## Suggestions\n\nNone.\n"))
+        (folder,) = (self.run.path.parent.parent / "retros").iterdir()
+        self.assertEqual(status.read(folder), "stopped · retro failed")
+        self.assertIsNone(runlog.last_event(folder, "retro.done"))
 
     def test_a_run_s_own_folder_gets_its_status_back(self):
         status.show(self.run.path, "you · the last gates fail on pull request 889")
