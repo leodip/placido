@@ -75,6 +75,11 @@ class FlakyTest(unittest.TestCase):
         self.assertEqual(self.names("ok\nFLAKY: test_login_retries\ndone\n"), ["test_login_retries"])
         self.assertEqual(self.names("FLAKY test_a, test_b\n"), ["test_a, test_b"])
 
+    def test_output_after_an_inline_name_is_not_a_name(self):
+        # Codex, reviewing 488fcc3: the indented line after it was taken, and the name lost.
+        self.assertEqual(self.names("FLAKY: test_login_retries\n  Runner exited cleanly\n  5 passed (3s)\n"),
+                         ["test_login_retries"])
+
     def test_bulleted_lines_colours_and_repeats(self):
         self.assertEqual(self.names(
             "\x1b[33mFLAKY\x1b[0m:\n- test_a\n* test_b\n\nnot a name\nFLAKY:\n  1. test_a\n  2) test_c\nRan 3\n"),

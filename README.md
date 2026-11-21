@@ -204,8 +204,9 @@ does for a CI failure the fixer finds outside the change.
 
 A gate that runs its failed tests again, and passes on that, can say so, since a
 passing gate's log is read by nobody: a line of its output that starts with `FLAKY`,
-then the tests' names, one per indented or bulleted line right after it, or on the
-rest of that line (`FLAKY: test_login_retries`). When a final or last gate passes,
+then the tests' names, on the rest of that line (`FLAKY: test_login_retries`), or,
+when that line ends with a colon or names nothing, one per indented or bulleted line
+right after it. When a final or last gate passes,
 placido carries those names from its log into the pull request's description, under
 "Flaky tests", with where the log is, up to 20 a gate, and into the run's summary. A
 gate that prints no `FLAKY` line adds nothing.

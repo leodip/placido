@@ -31,8 +31,9 @@ from placido import config, proc
 RECORD = "gates.jsonl"  # in the run folder, shared by every step of the run
 TAIL = 30  # lines of the gate's output shown to the agent
 # A gate that runs its failed tests again, and passes on that, can say so in its output: a
-# line that starts with FLAKY, then the tests' names, on the indented or bulleted lines
-# right after it, or on the rest of that line. Placido carries the names from a passing
+# line that starts with FLAKY, then the tests' names, on the rest of that line, or, when it
+# ends with a colon or names nothing, on the indented or bulleted lines right after it.
+# Placido carries the names from a passing
 # final or last gate's log into the pull request and the summary, since it shows a passing
 # gate's log to nobody (decided 2026-11-21, when Goiabada's e2e gate began to rerun them).
 FLAKY = "FLAKY"
@@ -100,9 +101,10 @@ def passed(run_dir: Path, gate: str, command: str, tree: str | None) -> dict[str
 
 def flaky(log: Path) -> list[str] | None:
     """The tests a gate's log says passed only when it ran them again, in order and once
-    each; None when no line of it starts with FLAKY. A FLAKY line's names are the indented
-    or bulleted lines right after it, or, when none follow, the rest of the line, unless
-    that ends with a colon as a heading does; [] when no FLAKY line names any."""
+    each; None when no line of it starts with FLAKY. A FLAKY line names the rest of the
+    line; one that ends with a colon, as a heading does, or names nothing names the
+    indented or bulleted lines right after it instead, so output that follows an inline
+    name is never taken for one; [] when no FLAKY line names any."""
 
     try:
         text = log.read_text(encoding="utf-8", errors="replace")
@@ -117,14 +119,13 @@ def flaky(log: Path) -> list[str] | None:
         if not match:
             continue
         found = found or []
-        names = []
-        while (i < len(lines) and lines[i].strip() and (lines[i][:1].isspace() or _BULLET.match(lines[i]))
-               and not _FLAKY_LINE.match(lines[i].strip())):
+        rest = match.group(1).strip()
+        heading = not rest or rest.endswith(":")
+        names = [] if heading else [rest]
+        while (heading and i < len(lines) and lines[i].strip()
+               and (lines[i][:1].isspace() or _BULLET.match(lines[i])) and not _FLAKY_LINE.match(lines[i].strip())):
             names.append(_BULLET.sub("", lines[i].strip()))
             i += 1
-        rest = match.group(1).strip()
-        if not names and rest and not rest.endswith(":"):
-            names = [rest]
         found += [name for name in dict.fromkeys(names) if name and name not in found]
     return found
 
