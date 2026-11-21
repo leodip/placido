@@ -472,12 +472,9 @@ def post_deferral(run: runlog.Run, worktree: Path, deferral: spec.Deferral, gh: 
     repo = issues.repo_of(str(record.get("issue_source") or "")) if number else None
     if repo is None:
         return None
+    # Exactly what the interview showed the user: the trigger and the why, nothing more.
     body = run.path / DEFERRAL_COMMENT
-    body.write_text(
-        f"**{spec.DEFERRED}** {deferral.trigger}\n\n{deferral.why}\n\n"
-        f"From placido's run `{run.path.parent.name}/{run.path.name}`, which ends here with nothing built.\n",
-        encoding="utf-8",
-    )
+    body.write_text(f"**{spec.DEFERRED}** {deferral.trigger}\n\n{deferral.why}\n", encoding="utf-8")
     url = GitHub(repo, worktree, gh).comment("issue", int(number), body)
     run.event("deferral.posted", issue=number, url=url)
     return url
