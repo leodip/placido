@@ -340,11 +340,17 @@ class SpecCommandTest(unittest.TestCase):
 
     def test_an_interrupted_post_leaves_the_run_deferred(self):
         # Codex, reviewing 444aead: run.end came after the post, so an interrupt left none,
-        # and placido close then called the run abandoned.
+        # and placido close then called the run abandoned. Reviewing 0051abb: it then said
+        # to run placido spec again, which refuses a deferred run, and wrote no summary.
         with mock.patch.object(github, "post_deferral", side_effect=KeyboardInterrupt):
-            self.defer(code=130)
+            _, _, err = self.defer(code=130)
         self.assertEqual(runlog.outcome(self.run.path), "deferred")
         self.assertEqual(status.read(self.run.path), "done · deferred: start once tool 2.16.0 is out")
+        self.assertEqual(runlog.last_event(self.run.path, "deferral.post_failed")["error"], "interrupted")
+        self.assertIn("posting it on the issue failed: interrupted. It may have gone out before the interrupt:"
+                      " look at the issue first.", err)
+        self.assertNotIn("Run the same command again", err)
+        self.assertIn("posting it on the issue failed: interrupted", (self.run.path / "summary.md").read_text())
 
     def test_a_deferral_that_cannot_be_posted_says_how_to_post_it(self):
         with mock.patch.object(github, "post_deferral", side_effect=github.GitHubError("gh issue comment: HTTP 502")):

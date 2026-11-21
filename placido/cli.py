@@ -198,26 +198,33 @@ def _defer(run: runlog.Run, runner: step.Step, worktree: Path, deferred: spec.De
     be built until its trigger. The trigger and the reasons go on the issue when it is
     on GitHub; a post that fails says how to post it by hand. The run then waits for
     `placido close`, as a finished one does, and never goes on to `placido run`. The
-    interview decided the outcome, so it is recorded before the post, which an
-    interrupt could otherwise leave the run without."""
+    interview decided the outcome, so it is recorded, summary included, before the
+    post. An interrupt during the post counts as a failed one: running `placido spec`
+    again would only be refused, so placido says how to post it by hand."""
 
     run.event("spec.deferred", trigger=deferred.trigger, result=str(result))
     run.event("run.end", outcome="deferred", reason=deferred.trigger)
     runner.status(status.text(status.DONE, f"deferred: {deferred.trigger}"))
-    posted, failed = None, ""
+    summary.write(run.path)
+    posted, failed, interrupted = None, "", False
     try:
         posted = github.post_deferral(run, worktree, deferred)
     except (github.GitHubError, OSError) as error:
         failed = str(error)
+    except KeyboardInterrupt:
+        failed, interrupted = "interrupted", True
+    if failed:
         run.event("deferral.post_failed", error=failed)
     summary.write(run.path)
     print(f"\nrun deferred, nothing built: {deferred.trigger}")
     if posted:
         print(f"posted on the issue: {posted}")
     if failed:
-        print(f"placido: posting it on the issue failed: {failed}\n{_post_by_hand(run, result)}", file=sys.stderr)
+        maybe = " It may have gone out before the interrupt: look at the issue first." if interrupted else ""
+        print(f"placido: posting it on the issue failed: {failed}.{maybe}\n{_post_by_hand(run, result)}",
+              file=sys.stderr)
     print(f"summary: {run.path / 'summary.md'}\nClose the run with placido close once you are done with it.")
-    return 0
+    return 130 if interrupted else 0
 
 
 def _post_by_hand(run: runlog.Run, result: Path) -> str:

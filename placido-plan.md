@@ -2569,3 +2569,11 @@ ran:
   quitting agent skips the step's check, the by-hand `gh` command is quoted, the docs
   say a deferral is posted only for an issue on GitHub, and a retro is done only once
   its report is kept.
+- Codex's second round, on those fixes: the deferral's comment had kept a footer
+  naming the local run, which the user never saw, so the comment is now only the
+  trigger and the why. A post interrupted by Ctrl+C now counts as a failed one: the
+  summary is written before the post, and placido prints the `gh` command, warning that
+  the comment may have gone out, where it used to say to run `placido spec` again,
+  which refuses a deferred run. The test of the post's destination now holds it. A
+  draft cut short by a failing disk, with the user then posting it by hand unread, is
+  an accepted risk.
