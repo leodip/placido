@@ -96,12 +96,13 @@ class PromptTest(SpecTestCase):
     def test_says_how_to_end_with_nothing_to_build(self):
         text = spec.prompt(self.run.path, self.root / "wt", self.settings)
         self.assertIn("- **Nothing to build yet:** when the user decides the issue waits for something outside"
-                      " the project, write no agreement: write the result as `Deferred: <when to start>`", text)
+                      " the project, write no agreement: write the result as `Deferred: <when to start>`, then"
+                      " why for the issue's readers, then `## Evidence`", text)
         self.assertIn("Placido ends the run as deferred.", text)  # a local issue: nothing is posted
         record = json.loads((self.run.path / "run.json").read_text())
         (self.run.path / "run.json").write_text(json.dumps({**record, "issue_number": 494}))
         text = spec.prompt(self.run.path, self.root / "wt", self.settings)
-        self.assertIn("Placido ends the run as deferred and posts the result on the issue.", text)
+        self.assertIn("Placido ends the run as deferred and posts what is above `## Evidence` on the issue.", text)
 
     def test_names_the_issue_s_earlier_deferral(self):
         # #494's second run measured everything again, as nothing of the first was recorded.
@@ -194,18 +195,25 @@ class DeferralTest(SpecTestCase):
         path.write_text(text)
         return path
 
-    def test_a_result_that_defers_says_when_to_start_and_why(self):
-        found = spec.deferral(self.result("Deferred: start once tool 2.16.0 is out\n\nIt bundles the fix.\n"))
-        self.assertEqual(found, spec.Deferral("start once tool 2.16.0 is out", "It bundles the fix."))
+    def test_a_result_that_defers_says_when_to_start_why_and_its_evidence(self):
+        found = spec.deferral(self.result("Deferred: start once tool 2.16.0 is out\n\nIt bundles the fix.\n\n"
+                                          "## Evidence\n- 10 of 12 cold runs failed on /home/me/wt.\n"))
+        self.assertEqual(found, spec.Deferral("start once tool 2.16.0 is out", "It bundles the fix.",
+                                              "- 10 of 12 cold runs failed on /home/me/wt."))
         self.assertEqual(spec.deferral_problems(found), [])
         self.assertIsNone(spec.deferral(self.result("Agreement and 2 slices written.\n")))
         self.assertIsNone(spec.deferral(self.root / "missing.md"))
 
-    def test_a_deferral_without_when_or_why_is_sent_back(self):
+    def test_a_deferral_without_when_why_or_evidence_is_sent_back(self):
         problems = spec.deferral_problems(spec.deferral(self.result("Deferred:\n")))
-        self.assertEqual(len(problems), 2)
+        self.assertEqual(len(problems), 3)
         self.assertIn("needs when to start after 'Deferred:'", problems[0])
-        self.assertIn("needs why after its first line", problems[1])
+        self.assertIn("needs why after its first line and before '## Evidence', for the issue's readers", problems[1])
+        self.assertIn("needs a '## Evidence' section", problems[2])
+        only_why = spec.deferral(self.result("Deferred: start once tool 2.16.0 is out\n\nIt bundles the fix.\n"))
+        self.assertEqual(spec.deferral_problems(only_why), [
+            "the deferral needs a '## Evidence' section: what you measured and checked, and where, for the next"
+            " run; it stays with the run."])
 
 
 class SealTest(SpecTestCase):

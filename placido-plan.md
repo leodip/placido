@@ -2552,3 +2552,10 @@ ran:
   included. A retro of one run works in that run's folder, so the run gets back the
   status it had: the retro is not the run's work, and `done · retro` there would have
   shown a run waiting for the user as done.
+- Codex reviewed the four changes. Its main point, on the deferral: placido posted the
+  agent's whole reasoning on the issue unread, and the skill asked for the evidence and
+  where it was run, so local paths, hosts and addresses could go public (#420's
+  diagnosis named the test machine's address). The user chose a short public why: the
+  result is `Deferred: <when to start>`, then why for the issue's readers, then
+  `## Evidence`, which stays with the run for the next interview. Placido posts only
+  what is above the evidence, and the agent shows the user that text first.

@@ -257,21 +257,25 @@ Sometimes the interview settles that nothing can be built yet: the issue waits o
 something outside the project, such as an upstream release, and no route today
 reaches what the user wants. Waiting is the user's decision, asked as a question like
 any other, with your recommendation. Once they decide to wait, write no agreement or
-slices. Tell the user the run ends deferred, then write the result file your prompt
-names in this shape:
+slices. Write the result file your prompt names in this shape:
 
 ```markdown
 Deferred: <when to start, in one line, such as "start once tool 2.16.0 is released">
 
-<why nothing can be built before then: what you measured and checked, with the
-evidence and where it was run; what the change will need when the time comes; and
-the routes you looked at that would not do, and why>
+<why it waits, for the issue's readers: a few sentences anyone following the issue
+can act on, with no local paths, hosts, addresses, or anything else private>
+
+## Evidence
+<what you measured and checked, and where; what the change will need when the time
+comes; the routes you looked at that would not do, and why>
 ```
 
-Placido ends the run as deferred, an outcome of its own rather than a failure, and
-when the issue is on GitHub posts the result on it as a comment, so the next run's
-interview starts from it. Do not post it yourself. Keep your probes in the `probe/`
-folder, which the next run of the issue finds too.
+Placido ends the run as deferred, an outcome of its own rather than a failure. When
+the issue is on GitHub, it posts everything above `## Evidence` on it as a comment, so
+the people following it know when it can start. The evidence stays with the run,
+where the next run's interview finds it, as it does your probes in the `probe/`
+folder. That comment is public: before you write the result, tell the user the run
+ends deferred and show them the text placido will post. Do not post it yourself.
 
 **Done when** the user has decided to wait and the result file says when to start and
 why.

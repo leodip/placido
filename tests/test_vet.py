@@ -177,9 +177,9 @@ class SpecCheckTest(VetTestCase):
     def test_a_deferral_skips_the_agreement_and_the_vet(self):
         check = self.check(["vet finding"])
         result = self.root / "result.md"
-        result.write_text("Deferred: start once tool 2.16.0 is out\n\nIt bundles the fix.\n")
+        result.write_text("Deferred: start once tool 2.16.0 is out\n\nIt bundles the fix.\n\n## Evidence\n- x\n")
         self.assertEqual(check(result), [])  # no agreement is written, and none is checked
-        result.write_text("Deferred: start once tool 2.16.0 is out\n")
+        result.write_text("Deferred: start once tool 2.16.0 is out\n\nIt bundles the fix.\n")
         self.assertEqual(len(check(result)), 1)
         self.assertEqual(self.vetted, [])
 
@@ -223,7 +223,8 @@ class Interview:
         return StepResult("invalid", folder)
 
 
-DEFERRAL = "Deferred: start once tool 2.16.0 is out\n\nThe pinned 2.15.0 bundles the old analyzer; 2.16.0 the fix.\n"
+DEFERRAL = ("Deferred: start once tool 2.16.0 is out\n\nThe pinned 2.15.0 bundles the old analyzer; 2.16.0 the fix.\n\n"
+            "## Evidence\n- 10 of 12 cold runs failed in the devcontainer.\n")
 
 
 class Deferring(Interview):

@@ -116,9 +116,10 @@ class DeliverCase(unittest.TestCase):
 
 
 class DeferralTest(DeliverCase):
-    DEFERRAL = spec.Deferral("start once tool 2.16.0 is out", "The pinned 2.15.0 bundles the old analyzer.")
+    DEFERRAL = spec.Deferral("start once tool 2.16.0 is out", "The pinned 2.15.0 bundles the old analyzer.",
+                             "- 10 of 12 cold runs failed in /home/me/.herdr/worktrees/x, on host 10.0.0.7.")
 
-    def test_the_trigger_and_the_reasons_go_on_the_issue(self):
+    def test_the_trigger_and_the_why_go_on_the_issue_and_the_evidence_does_not(self):
         url = github.post_deferral(self.run, self.repo, self.DEFERRAL, self.hub)
         self.assertEqual(url, "https://github.com/leodip/goiabada/issues/439#issuecomment-9001")
         comment = next(argv for argv in self.gh.calls if argv[1:3] == ["issue", "comment"])
@@ -126,6 +127,7 @@ class DeferralTest(DeliverCase):
         self.assertEqual(self.gh.bodies["issue comment"],
                          "**Deferred:** start once tool 2.16.0 is out\n\nThe pinned 2.15.0 bundles the old analyzer.\n\n"
                          f"From placido's run `439-rate-limit/{self.run.path.name}`, which ends here with nothing built.\n")
+        self.assertNotIn("10.0.0.7", self.gh.bodies["issue comment"])  # the evidence stays with the run
         self.assertEqual([(e["issue"], e["url"]) for e in self.events("deferral.posted")], [(439, url)])
 
     def test_an_issue_not_on_github_gets_nothing(self):

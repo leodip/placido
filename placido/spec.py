@@ -33,12 +33,17 @@ BENCHMARK_LINES = ("Command", "Baseline", "Target")
 # agent left the step waiting, placido emailed that it exited, and `placido close`
 # recorded the run as abandoned; the second run measured everything again.
 DEFERRED = "Deferred:"
+# What a deferral keeps with the run and never posts: the measurements, where they were
+# taken, and the routes rejected. Above it, the why is written for the issue's readers,
+# as it is posted there (Codex, reviewing 444aead: local paths and hosts went public).
+EVIDENCE = "## Evidence"
 
 
 @dataclass(frozen=True)
 class Deferral:
     trigger: str  # when to start, in one line
-    why: str  # what the interview found, and what the change will need then
+    why: str  # why it waits, for the issue's readers: what placido posts with the trigger
+    evidence: str  # what the interview found and where, for the next run: kept with the run
 
 
 def section(text: str, name: str, level: int = 2) -> str:
@@ -84,8 +89,9 @@ def prompt(run_dir: Path, worktree: Path, settings: config.Config) -> str:
         " the arguments its description asks for, if any, after it (\"data mysql\").",
         f"- **Nothing to build yet:** when the user decides the issue waits for something outside"
         f" the project, write no agreement: write the result as `{DEFERRED} <when to start>`, then"
-        " why, as the skill's section on deferring says. Placido ends the run as deferred"
-        + (" and posts the result on the issue." if record.get("issue_number") else "."),
+        f" why for the issue's readers, then `{EVIDENCE}`, as the skill's section on deferring says."
+        " Placido ends the run as deferred"
+        + (f" and posts what is above `{EVIDENCE}` on the issue." if record.get("issue_number") else "."),
     ]
     for run, event in deferred_before(run_dir):
         lines.append(
@@ -104,7 +110,9 @@ def deferral(result: Path) -> Deferral | None:
     if not text.startswith(DEFERRED):
         return None
     first, _, rest = text.partition("\n")
-    return Deferral(first[len(DEFERRED):].strip(), rest.strip())
+    parts = re.split(rf"(?m)^{re.escape(EVIDENCE)}[ \t]*$", rest, maxsplit=1)
+    why, evidence = parts[0], parts[1] if len(parts) > 1 else ""
+    return Deferral(first[len(DEFERRED):].strip(), why.strip(), evidence.strip())
 
 
 def deferral_problems(found: Deferral) -> list[str]:
@@ -115,8 +123,11 @@ def deferral_problems(found: Deferral) -> list[str]:
         problems.append(f"the result's first line needs when to start after '{DEFERRED}', in one line,"
                         f" such as '{DEFERRED} start once <the release> is out'.")
     if not found.why:
-        problems.append("the deferral needs why after its first line: what you found, with the evidence,"
-                        " and what the change will need then.")
+        problems.append(f"the deferral needs why after its first line and before '{EVIDENCE}', for the"
+                        " issue's readers, as placido posts it there.")
+    if not found.evidence:
+        problems.append(f"the deferral needs a '{EVIDENCE}' section: what you measured and checked, and"
+                        " where, for the next run; it stays with the run.")
     return problems
 
 
