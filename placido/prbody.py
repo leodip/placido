@@ -102,6 +102,16 @@ def flaky(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(by_log.values())
 
 
+def code(text: str) -> str:
+    """text as a Markdown code span, exactly as it is, backticks included: a delimiter one
+    longer than its longest run of them, and a space inside it when text starts or ends
+    with one, which Markdown then drops."""
+
+    fence = "`" * (max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
+    pad = " " if text[:1] == "`" or text[-1:] == "`" else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
 def flaky_gate(note: dict[str, Any]) -> str:
     """Which gate a flaky note is about, in words: "the last gate `e2e`"."""
 
@@ -122,14 +132,14 @@ def _flaky(run_dir: Path, events: list[dict[str, Any]]) -> list[str]:
         which = which[:1].upper() + which[1:]
         log = Path(str(note.get("log") or ""))
         where = log.relative_to(run_dir) if log.is_relative_to(run_dir) else log.name
-        tests = [str(t).replace("`", "'") for t in note.get("tests") or []]
+        tests = [str(t) for t in note.get("tests") or []]
         if not tests:
             lines += [f"{which} passed only once it ran some of its tests again;"
                       f" its log, `{where}` in the run's folder, does not name them.", ""]
             continue
         lines += [f"{which} passed only once it ran these tests again, which failed"
                   f" on its first run. Its log: `{where}`, in the run's folder.", ""]
-        lines += [f"- `{test}`" for test in tests]
+        lines += [f"- {code(test)}" for test in tests]
         more = int(note.get("count") or 0) - len(tests)
         if more > 0:
             lines.append(f"- … and {more} more, in the log.")

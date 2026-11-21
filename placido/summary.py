@@ -89,9 +89,9 @@ def _facts(
         cause = f". Nothing in this change causes it: {why}" if why else ""
         facts.append(f"- **Last gates:** fail after placido's fixes{failed}; logs in {run_dir / 'last-gates'}{cause}")
     for note in prbody.flaky(events):
-        tests = [str(test).replace("`", "'") for test in note.get("tests") or []]
+        tests = [str(test) for test in note.get("tests") or []]
         more = int(note.get("count") or 0) - len(tests)
-        named = ("; ".join(f"`{test}`" for test in tests) + (f"; and {more} more" if more > 0 else "")) \
+        named = ("; ".join(prbody.code(test) for test in tests) + (f"; and {more} more" if more > 0 else "")) \
             if tests else "tests its log does not name"
         facts.append(f"- **Flaky tests:** {prbody.flaky_gate(note)} passed only on a rerun of {named};"
                      f" log {note.get('log')}")

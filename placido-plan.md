@@ -2597,3 +2597,10 @@ ran:
   attempt by attempt (the rerun replaces only those of the gates it reran), and the
   notes go in the stage's own `passed` or `gave_up` event, which is all the pull
   request reads.
+- In the same round: a FLAKY line now names only the rest of itself, unless it ends
+  with a colon or names nothing, when the indented or bulleted lines below are the
+  names, so output after an inline name is never taken for one; and a test's title
+  keeps its backticks in the pull request and the summary, in a code span built to
+  hold them. Two gates whose log names collide is an accepted risk, and the gate's
+  name in the pull request was public already, in the config and the failing gates'
+  line.

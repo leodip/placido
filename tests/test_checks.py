@@ -200,9 +200,9 @@ class FinalGatesTest(unittest.TestCase):
                          ("e2e", ["[webkit] a.spec.ts:7 › one", "b `two`"], 2, str(log)))
         self.assertIn("## Flaky tests\n\nThe last gate `e2e` passed only once it ran these tests again, which failed"
                       " on its first run. Its log: `last-gates/1/gates/e2e.log`, in the run's folder.\n\n"
-                      "- `[webkit] a.spec.ts:7 › one`\n- `b 'two'`\n", prbody.build(self.run.path, []))
+                      "- `[webkit] a.spec.ts:7 › one`\n- `` b `two` ``\n", prbody.build(self.run.path, []))
         self.assertIn("- **Flaky tests:** the last gate `e2e` passed only on a rerun of `[webkit] a.spec.ts:7 › one`;"
-                      f" `b 'two'`; log {log}\n", summary.write(self.run.path))
+                      f" `` b `two` ``; log {log}\n", summary.write(self.run.path))
 
     def test_a_gate_that_says_no_flaky_test_adds_nothing(self):
         checks.last_gates(self.flaky_ctx('echo "968 passed"\n'), config.AgentSpec("claude", "opus", "high"))
