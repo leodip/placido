@@ -2510,3 +2510,97 @@ ran:
   pull request's follow-ups comment. The retro's other point, ending the comment loop
   once a pass uses its round budget, was not taken: the reviewers' next comments would
   then go unanswered.
+
+### 2026-11-21
+
+- The retro on Goiabada's last six runs (`retros/2026-11-21T090903`) raised four
+  points about placido. First, the commit subject: placido refuses one over 72
+  characters, but no prompt said so, and in #420 `09-implement-slice-7` (75) and
+  `29-comments-2-fix-2` (74) were sent back for it. Now every prompt whose first line
+  placido commits or merges with states the limit, from the constant the checks hold
+  (`implement.SUBJECT_MAX`): the implementer's, the review's and the comments' fixers,
+  the checks fixer, and `placido pr`'s fixer, judge and decide roles. The skills say 72
+  too, and a test holds their number to the constant.
+- Second, the checks fixer's reason for changing nothing was cut at 500 characters, so
+  #420's and #492's summaries ended mid-word ("(`src/*/web` and `e2e/` are u"). It is
+  now kept whole: in the event, the summary's Last gates line and the pull request's
+  quote, the only places it shows (the email and the status never carry it). The
+  summary names the logs before the reason, which now ends the line.
+- Third, an interview that settles "nothing to build yet" had no way to end. #494
+  waits for golangci-lint 2.16.0; its interview reached that on 2026-10-23 and again on
+  2026-11-20. Both times the agent wrote no result, so the spec step kept waiting,
+  placido emailed "spec-wct-p2 exited" when the agent quit, and `placido close`
+  recorded the run as abandoned, "closed before the work was done". The second run
+  measured everything again, since the first had recorded nothing. Now waiting is the
+  user's decision in the interview, and the agent then writes its result as
+  `Deferred: <when to start>`, then why. The check takes that shape alone, with no
+  agreement and no vet. Placido records `spec.deferred` and posts the trigger and the
+  reasons as a comment on the issue when it is on GitHub, the one comment a run
+  posts before a pull request, so the next run's interview reads it in issue.md; a
+  post that fails is logged and printed with the `gh` command that posts it by hand.
+  The run ends `deferred`, an outcome of its own: `placido status` shows `done ·
+  deferred: <when to start>`, `placido runs` shows `deferred`, the summary says when
+  to start and where it was posted, and `placido close` keeps it. `placido spec`,
+  `run` and `review` refuse a deferred run. The retro's prompt names every run's
+  outcome, a deferred one with its trigger, and its skill reads a deferral as an end
+  the interview chose. A later run of the issue gets a prompt line naming the earlier
+  deferral and its reasons, so it checks that first.
+- Fourth, a retro's folder never reached a final status: the retro of the last six
+  runs had `retro.done` and a successful `step.end`, and its status still said
+  `working · retro`, as the step leaves it while it works. A retro's own folder now
+  ends `done · retro`, or `stopped · retro <how the step ended>`, a broken step
+  included. A retro of one run works in that run's folder, so the run gets back the
+  status it had: the retro is not the run's work, and `done · retro` there would have
+  shown a run waiting for the user as done.
+- Codex reviewed the four changes. Its main point, on the deferral: placido posted the
+  agent's whole reasoning on the issue unread, and the skill asked for the evidence and
+  where it was run, so local paths, hosts and addresses could go public (#420's
+  diagnosis named the test machine's address). The user chose a short public why: the
+  result is `Deferred: <when to start>`, then why for the issue's readers, then
+  `## Evidence`, which stays with the run for the next interview. Placido posts only
+  what is above the evidence, and the agent shows the user that text first.
+- Codex also found that a retro of one run, which put back the run's earlier status,
+  could put it back over one another command wrote during the retro. The user chose
+  that such a retro never writes the run's status: `cmd_retro` gives it a step with
+  `show_status` off, so the run keeps saying where it is throughout, and only a
+  retro's own folder gets `done · retro` or `stopped · retro …`. Its other findings were
+  fixed as found: the deferral goes to the repository the issue's URL names, its
+  outcome is recorded before the post, `placido spec` checks a deferral again since a
+  quitting agent skips the step's check, the by-hand `gh` command is quoted, the docs
+  say a deferral is posted only for an issue on GitHub, and a retro is done only once
+  its report is kept.
+- Codex's second round, on those fixes: the deferral's comment had kept a footer
+  naming the local run, which the user never saw, so the comment is now only the
+  trigger and the why. A post interrupted by Ctrl+C now counts as a failed one: the
+  summary is written before the post, and placido prints the `gh` command, warning that
+  the comment may have gone out, where it used to say to run `placido spec` again,
+  which refuses a deferred run. The test of the post's destination now holds it. A
+  draft cut short by a failing disk, with the user then posting it by hand unread, is
+  an accepted risk.
+- Goiabada's e2e gate now reruns its failed tests once and passes when they do,
+  printing `FLAKY: these tests did not pass on the first run and passed on the rerun:`
+  and the tests' names, indented, one per line. Placido writes the pull request itself
+  and shows a passing gate's log to nobody, so the names would have gone unseen. That
+  is now a convention any gate can use (README): a line that starts with `FLAKY`, then
+  the names on the indented or bulleted lines right after it, or on the rest of the
+  line. When the final or last gates pass, by their first run, a fix, or placido's own
+  rerun, each gate's passing log (`gate.end` now names it; a reused pass, the one it
+  reused) is read for FLAKY lines, and `<kind>_gates.flaky` records up to 20 names, the
+  count, and the log. The pull request gets a "Flaky tests" section with each gate, its
+  tests, and its log's place in the run folder (no home path goes out), and the summary
+  a line. Nothing is added when no FLAKY line is there.
+- Codex's third round, on the FLAKY notes: a last gate that kept failing left the
+  others' flaky tests unsaid, though the pull request still opens; after placido's
+  rerun, a gate's log was its latest pass in the whole run, which could be a rejected
+  fix's on another tree; and the notes, recorded before the stage's outcome, could
+  outlive a pass interrupted before it. `_gates` now keeps each gate's passing log
+  attempt by attempt (the rerun replaces only those of the gates it reran), and the
+  notes go in the stage's own `passed` or `gave_up` event, which is all the pull
+  request reads.
+- In the same round: a FLAKY line now names only the rest of itself, unless it ends
+  with a colon or names nothing, when the indented or bulleted lines below are the
+  names, so output after an inline name is never taken for one; and a test's title
+  keeps its backticks in the pull request and the summary, in a code span built to
+  hold them. Two gates whose log names collide is an accepted risk, and the gate's
+  name in the pull request was public already, in the config and the failing gates'
+  line.

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from placido import checks, config, driver, runlog
+from placido import checks, config, driver, implement, prbody, runlog, summary
 from placido.step import StepResult
 
 RESULT = "Fix the final gates: add ok.txt\n\nThe gate needs it.\n\n## Evidence\n- passes\n"
@@ -108,6 +108,7 @@ class FinalGatesTest(unittest.TestCase):
         self.assertEqual(outcome, "passed")
         self.assertIn("Fix the last gates", self.fixer.prompts[0])
         self.assertIn("last-gates/1/gates/full.log", self.fixer.prompts[0])
+        self.assertIn(implement.subject_line(), self.fixer.prompts[0])
         self.assertIn("Placido-Check-Fix: last-gates-1", sh(self.repo, "git", "log", "-1", "--format=%B"))
         self.assertIn("last_gates.passed", self.events())
         self.assertEqual(self.events().count("gate.start"), 2)
@@ -176,6 +177,136 @@ class FinalGatesTest(unittest.TestCase):
                          ["the '## Follow-up' section needs a title on its first line, then what to fix and where."])
         self.fixer.unchanged = "No code changes\n\nmain's.\n\n## Evidence\n- x\n"
         self.assertNotIn("followup", runlog.last_event(self.run.path, "checks.unchanged") or {})
+
+    def flaky_ctx(self, script: str, final: str = "", last: str = "e2e") -> driver.Context:
+        (self.tmp / "e2e.sh").write_text(script)
+        cfg = self.tmp / "flaky.toml"
+        quoted = lambda name: f'"{name}"' if name else ""  # noqa: E731
+        cfg.write_text(f'[commands.e2e]\nrun = "sh {self.tmp / "e2e.sh"}"\n'
+                       f"[gates]\nfinal = [{quoted(final)}]\nlast = [{quoted(last)}]\n")
+        return driver.Context(self.run, self.fixer, None, config.load(cfg),
+                              config.AgentSpec("claude", "opus", "high"), self.repo, {})
+
+    def test_tests_a_passing_last_gate_says_passed_only_on_a_rerun_reach_the_pull_request(self):
+        # Goiabada's e2e gate reruns its failed tests once and passes when they do, saying
+        # FLAKY in a log nobody reads (2026-11-21).
+        script = ("echo '1 failed'\necho 'FLAKY: passed on the rerun:'\necho '  [webkit] a.spec.ts:7 › one'\n"
+                  "echo '  b `two`'\n")
+        ctx = self.flaky_ctx(script)
+        self.assertEqual(checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high")), "passed")
+        (note,) = runlog.last_event(self.run.path, "last_gates.passed")["flaky"]
+        log = self.run.path / "last-gates" / "1" / "gates" / "e2e.log"
+        self.assertEqual((note["gate"], note["tests"], note["count"], note["log"]),
+                         ("e2e", ["[webkit] a.spec.ts:7 › one", "b `two`"], 2, str(log)))
+        self.assertIn("## Flaky tests\n\nThe last gate `e2e` passed only once it ran these tests again, which failed"
+                      " on its first run. Its log: `last-gates/1/gates/e2e.log`, in the run's folder.\n\n"
+                      "- `[webkit] a.spec.ts:7 › one`\n- `` b `two` ``\n", prbody.build(self.run.path, []))
+        self.assertIn("- **Flaky tests:** the last gate `e2e` passed only on a rerun of `[webkit] a.spec.ts:7 › one`;"
+                      f" `` b `two` ``; log {log}\n", summary.write(self.run.path))
+
+    def test_a_gate_that_says_no_flaky_test_adds_nothing(self):
+        checks.last_gates(self.flaky_ctx('echo "968 passed"\n'), config.AgentSpec("claude", "opus", "high"))
+        self.assertNotIn("flaky", runlog.last_event(self.run.path, "last_gates.passed"))
+        self.assertNotIn("Flaky tests", prbody.build(self.run.path, []))
+
+    def test_many_flaky_tests_are_bounded(self):
+        script = 'echo "FLAKY:"\nfor i in $(seq 25); do echo "  test_$i"; done\n'
+        checks.last_gates(self.flaky_ctx(script), config.AgentSpec("claude", "opus", "high"))
+        (note,) = runlog.last_event(self.run.path, "last_gates.passed")["flaky"]
+        self.assertEqual((len(note["tests"]), note["count"]), (20, 25))
+        body = prbody.build(self.run.path, [])
+        self.assertIn("- `test_20`\n- … and 5 more, in the log.\n", body)
+        self.assertNotIn("test_21", body)
+
+    def test_a_gate_passing_on_its_fix_names_the_fix_s_log(self):
+        script = 'test -f ok.txt || exit 1\necho "FLAKY: test_tunnel"\n'
+        self.assertEqual(checks.last_gates(self.flaky_ctx(script), config.AgentSpec("claude", "opus", "high")),
+                         "passed")
+        (note,) = runlog.last_event(self.run.path, "last_gates.passed")["flaky"]
+        self.assertEqual(note["tests"], ["test_tunnel"])
+        self.assertEqual(Path(note["log"]).relative_to(self.run.path).parts[-2:], ("gates", "e2e.log"))
+        self.assertTrue(Path(note["log"]).relative_to(self.run.path).parts[1].endswith("fix-last-gates-1"))
+
+    def test_a_last_gate_reused_from_the_final_one_is_said_once(self):
+        ctx = self.flaky_ctx('echo "FLAKY: test_a"\n', final="e2e", last="e2e")
+        checks.final_gates(ctx, config.AgentSpec("claude", "opus", "high"))
+        checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high"))
+        self.assertIn("gate.reused", self.events())
+        final, last = (runlog.last_event(self.run.path, f"{k}_gates.passed")["flaky"][0] for k in ("final", "last"))
+        self.assertEqual(last["log"], final["log"])  # the log of the pass it reused
+        self.assertEqual(prbody.build(self.run.path, []).count("`test_a`"), 1)
+
+    def two_last_gates(self, e2e: str, full: str) -> driver.Context:
+        (self.tmp / "e2e.sh").write_text(e2e)
+        (self.tmp / "full.sh").write_text(full)
+        cfg = self.tmp / "two.toml"
+        cfg.write_text(f'[commands.e2e]\nrun = "sh {self.tmp / "e2e.sh"}"\n'
+                       f'[commands.full]\nrun = "sh {self.tmp / "full.sh"}"\n'
+                       '[gates]\nfinal = []\nlast = ["e2e", "full"]\n')
+        return driver.Context(self.run, self.fixer, None, config.load(cfg),
+                              config.AgentSpec("claude", "opus", "high"), self.repo, {})
+
+    def test_a_gate_that_passes_beside_one_that_fails_still_names_its_flaky_tests(self):
+        # Codex, reviewing 488fcc3: the pull request opens flagged when a last gate keeps
+        # failing, and the flaky tests of the one that passed went unsaid.
+        self.fixer.unchanged = "No code changes\n\nmain fails it too.\n\n## Evidence\n- x\n"
+        ctx = self.two_last_gates('echo "FLAKY: test_browser"\n', "exit 1\n")
+        self.assertEqual(checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high")), "failed")
+        gave_up = runlog.last_event(self.run.path, "last_gates.gave_up")
+        self.assertEqual((gave_up["gates"], [n["gate"] for n in gave_up["flaky"]]), (["full"], ["e2e"]))
+        body = prbody.build(self.run.path, [])
+        self.assertIn("> **The last gates fail after placido's fixes (full).**", body)
+        self.assertIn("The last gate `e2e` passed only once it ran these tests again", body)
+
+    def test_placido_s_rerun_keeps_the_logs_of_the_tree_it_ran_on(self):
+        # Codex, reviewing 488fcc3: a fix that was not taken ran e2e on its own tree, and
+        # its log, the latest, was the one read once placido's rerun of full passed.
+        flag = self.tmp / "full-ran"
+        e2e = 'if [ -f try.txt ]; then echo "FLAKY: candidate_test"; else echo "FLAKY: original_test"; fi\n'
+        full = f'[ -f try.txt ] && exit 1\ntest -f {flag} || {{ touch {flag}; exit 1; }}\n'
+        ctx = self.two_last_gates(e2e, full)
+
+        def rejected_fix(role, agent, task, name=None, check=None, **kwargs):
+            folder = self.run.step_dir(1, name)
+            (self.repo / "try.txt").write_text("x\n")  # a candidate that fails full
+            (folder / "result.md").write_text(RESULT)
+            problems = check(folder / "result.md")
+            (self.repo / "try.txt").unlink()  # and is set aside
+            return StepResult("invalid" if problems else "success", folder)
+
+        ctx = driver.Context(self.run, rejected_fix, None, ctx.settings, ctx.agent, self.repo, {})
+        self.assertEqual(checks.last_gates(ctx, config.AgentSpec("claude", "opus", "high")), "passed")
+        passed = runlog.last_event(self.run.path, "last_gates.passed")
+        self.assertEqual(passed["by"], "rerun")
+        (note,) = passed["flaky"]
+        self.assertEqual((note["tests"], note["log"]),
+                         (["original_test"], str(self.run.path / "last-gates" / "1" / "gates" / "e2e.log")))
+
+    def test_only_the_stage_s_latest_outcome_is_said(self):
+        # A pass interrupted before its outcome was recorded leaves no note behind.
+        note = {"gate": "e2e", "tests": ["test_a"], "count": 1, "log": "/r/last-gates/1/gates/e2e.log"}
+        events = [{"event": "last_gates.passed", "attempt": 1, "flaky": [note]},
+                  {"event": "last_gates.passed", "attempt": 1}]
+        self.assertEqual(prbody.flaky(events), [])
+        self.assertEqual(prbody.flaky(events[:1]), [{**note, "kind": "last"}])
+
+    def test_the_reason_is_kept_whole(self):
+        # #420's and #492's were cut at 500 characters, so their summaries stopped mid-word.
+        why = (
+            "The one e2e failure was a WebKit navigation that never reached the server: the test's second"
+            " `page.goto` sent its request, which never got an answer, until the 60-second test timeout. The"
+            " VPS's nginx logged no request from the test machine for that whole minute. This branch changes"
+            " only Go repository guards, `core/pkgload`, docs and two comments in the servers' `server.go`;"
+            " it touches nothing the admin console serves (`src/*/web` and `e2e/` are unchanged). The same"
+            " test passed on chromium and firefox at both viewports, and on webkit at 1440x900, in this run."
+        )
+        self.assertGreater(len(why), 500)
+        self.fixer.unchanged = f"No code changes\n\n{why}\n\n## Evidence\n- x\n"
+        checks.last_gates(self.ctx(final="", last="full"), config.AgentSpec("claude", "opus", "high"))
+        self.assertEqual(runlog.last_event(self.run.path, "checks.unchanged")["why"], why)
+        self.assertEqual(checks.outside(self.run.path, "the last gates"), why)
+        self.assertIn(f"Nothing in this change causes it: {why}\n", summary.write(self.run.path))
+        self.assertIn(f"Nothing in this change causes it: {why}\n", prbody.build(self.run.path, []))
 
     def test_the_reason_may_follow_on_the_first_line(self):
         result = self.tmp / "result.md"

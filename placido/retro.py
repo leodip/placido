@@ -16,7 +16,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from placido import config, decisions, runlog, spec
+from placido import config, decisions, runlog, spec, status
 from placido.step import Step, StepResult
 
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "retro" / "SKILL.md"
@@ -33,7 +33,7 @@ def prompt(runs: list[Path], code: Path, folder: Path) -> str:
             "",
             f"Follow the placido retro skill in {SKILL}.",
             "",
-            f"- **The run:** {runs[0]} (start with summary.md, then events.jsonl and steps/).",
+            f"- **The run:** {runs[0]} ({ended(runs[0])}; start with summary.md, then events.jsonl and steps/).",
             f"- **The issue:** {issue} (agreement.md, and {decisions.FILE} if the user decided anything).",
         ]
     else:
@@ -45,7 +45,7 @@ def prompt(runs: list[Path], code: Path, folder: Path) -> str:
             "- **The runs**, newest first. In each, start with summary.md, then events.jsonl and"
             f" steps/; its issue folder holds agreement.md, and {decisions.FILE} if the user"
             " decided anything:",
-            *(f"  - {run.parent.name}: {run} (issue folder {spec.issue_dir(run)})"
+            *(f"  - {run.parent.name}: {run} ({ended(run)}; issue folder {spec.issue_dir(run)})"
               + (f"; an earlier retro of it: {run / 'retro.md'}" if (run / "retro.md").is_file() else "")
               for run in runs),
         ]
@@ -55,6 +55,17 @@ def prompt(runs: list[Path], code: Path, folder: Path) -> str:
         f"- **Write:** {folder / 'retro.md'}.",
     ]
     return "\n".join(lines) + "\n"
+
+
+def ended(run: Path) -> str:
+    """How a run ended, for the retro's prompt: a deferred one with when to start, so it
+    is read as the end its interview chose, not as a failure or work abandoned."""
+
+    outcome = runlog.outcome(run)
+    if outcome == "deferred":
+        trigger = (runlog.last_event(run, "run.end") or {}).get("reason")
+        return f"outcome: deferred, nothing built: {trigger}"
+    return f"outcome: {outcome}"
 
 
 def folder(runs_root: Path, project: str, clock: Callable[[], datetime] = runlog.local_now) -> Path:
@@ -80,14 +91,36 @@ def check(result: Path) -> list[str]:
 
 def retro(runner: Step, agent: config.AgentSpec, runs: list[Path], code: Path) -> StepResult:
     """Run the retro step, then keep its retro.md in the runner's run folder too: the
-    run's own, or with several runs, the retro's folder."""
+    run's own, or with several runs, the retro's folder. In the retro's folder, the
+    step leaves its status as working, and settle() gives it its final one, however
+    the step ends. A run's own folder keeps the run's status: cmd_retro gives a retro
+    of one run a step that shows none, as the retro is not the run's work."""
 
     from placido.step import next_step_number
 
-    folder = runner.run.path / "steps" / f"{next_step_number(runner.run):02d}-retro"
-    result = runner("retro", agent, prompt(runs, code, folder), name="retro", check=check)
-    if result.outcome == "success":
-        kept = runner.run.path / "retro.md"
-        shutil.copyfile(result.path / "retro.md", kept)
-        runner.run.event("retro.done", path=str(kept), runs=[str(run) for run in runs])
-    return result
+    host = runner.run.path
+    own = not (host / "run.json").is_file()  # the retro's own folder, not a run's
+    folder = host / "steps" / f"{next_step_number(runner.run):02d}-retro"
+    outcome = "failed"
+    try:
+        result = runner("retro", agent, prompt(runs, code, folder), name="retro", check=check)
+        if result.outcome == "success":
+            kept = host / "retro.md"
+            shutil.copyfile(result.path / "retro.md", kept)
+            runner.run.event("retro.done", path=str(kept), runs=[str(run) for run in runs])
+        outcome = result.outcome  # only once its retro.md is kept: a failed copy is no success
+        return result
+    finally:
+        if own:
+            settle(host, outcome)
+
+
+def settle(host: Path, outcome: str) -> None:
+    """The final status of a retro's own folder: done, or stopped with how the step
+    ended. A retro of the last six runs finished on 2026-11-21, and its folder still
+    said `working · retro`."""
+
+    if outcome == "success":
+        status.show(host, status.text(status.DONE, "retro"))
+    else:
+        status.show(host, status.text(status.STOPPED, f"retro {outcome.replace('-', ' ')}"))

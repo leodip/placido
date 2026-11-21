@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from placido import config, decisions, review, runlog
+from placido import config, decisions, implement, review, runlog
 from placido.outcomes import Failure
 from placido.step import StepResult, next_step_number
 
@@ -471,6 +471,10 @@ class FollowUpTest(LoopTestCase):
         self.assertIn("a number that misses its target is a blocking spec finding", text)
         fixer = review.fixer_prompt(self.run.path, self.repo, self.tmp / "f", self.tmp / "o", self.tmp / "r", self.settings)
         self.assertNotIn("Benchmark", fixer)
+
+    def test_the_fixer_hears_of_the_commit_subject_limit(self):
+        fixer = review.fixer_prompt(self.run.path, self.repo, self.tmp / "f", self.tmp / "o", self.tmp / "r", self.settings)
+        self.assertIn(implement.subject_line(), fixer)
 
     def test_the_first_round_prompt_lists_the_slices_results(self):
         self.run.event("slice.committed", slice=1)

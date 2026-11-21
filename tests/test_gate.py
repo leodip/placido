@@ -50,6 +50,49 @@ class GateTestCase(unittest.TestCase):
         return [e for e in runlog.read_events(self.run.path) if e["event"] == kind]
 
 
+class FlakyTest(unittest.TestCase):
+    """The FLAKY lines a gate prints when tests passed only on its rerun of them."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.log = Path(tmp.name) / "e2e.log"
+
+    def names(self, text: str) -> list[str] | None:
+        self.log.write_text(text)
+        return gate.flaky(self.log)
+
+    def test_goiabada_s_e2e_gate_a_heading_then_the_names_indented(self):
+        self.assertEqual(self.names(
+            "  2 failed\nRerunning these tests once, after the setup project's sweep:\n"
+            "  [webkit] › tests/a.spec.ts:1:1 › one\n  [chromium] › tests/b.spec.ts:9:3 › two\n"
+            "  2 passed (41.2s)\n\n"
+            "FLAKY: these tests did not pass on the first run and passed on the rerun:\n"
+            "  [webkit] › tests/a.spec.ts:1:1 › one\n  [chromium] › tests/b.spec.ts:9:3 › two\n"),
+            ["[webkit] › tests/a.spec.ts:1:1 › one", "[chromium] › tests/b.spec.ts:9:3 › two"])
+
+    def test_the_names_on_the_line_itself(self):
+        self.assertEqual(self.names("ok\nFLAKY: test_login_retries\ndone\n"), ["test_login_retries"])
+        self.assertEqual(self.names("FLAKY test_a, test_b\n"), ["test_a, test_b"])
+
+    def test_output_after_an_inline_name_is_not_a_name(self):
+        # Codex, reviewing 488fcc3: the indented line after it was taken, and the name lost.
+        self.assertEqual(self.names("FLAKY: test_login_retries\n  Runner exited cleanly\n  5 passed (3s)\n"),
+                         ["test_login_retries"])
+
+    def test_bulleted_lines_colours_and_repeats(self):
+        self.assertEqual(self.names(
+            "\x1b[33mFLAKY\x1b[0m:\n- test_a\n* test_b\n\nnot a name\nFLAKY:\n  1. test_a\n  2) test_c\nRan 3\n"),
+            ["test_a", "test_b", "test_c"])
+
+    def test_a_flaky_line_that_names_nothing(self):
+        self.assertEqual(self.names("FLAKY: some tests passed only on a rerun:\n\nsee above\n"), [])
+
+    def test_no_flaky_line(self):
+        self.assertIsNone(self.names("968 passed\nFLAKYNESS is low\n  FLAKY_TESTS=0\n"))
+        self.assertIsNone(gate.flaky(self.log.with_name("missing.log")))
+
+
 class FingerprintTest(GateTestCase):
     def test_the_same_files_give_the_same_fingerprint(self):
         self.assertEqual(gate.fingerprint(self.repo), gate.fingerprint(self.repo))

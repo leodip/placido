@@ -114,6 +114,13 @@ class BodyTest(unittest.TestCase):
         self.assertTrue(body.startswith("Closes #331\n\n> **The last gates fail after placido's fixes (slow).**"
                                         " Nothing in this change causes it: main fails them too.\n"))
 
+    def test_a_code_span_keeps_its_text_whatever_backticks_it_holds(self):
+        # Codex, reviewing 488fcc3: backticks became apostrophes in flaky tests' titles.
+        self.assertEqual(prbody.code("test_a"), "`test_a`")
+        self.assertEqual(prbody.code("accepts the `--token` option"), "``accepts the `--token` option``")
+        self.assertEqual(prbody.code("a ``b`` c"), "```a ``b`` c```")
+        self.assertEqual(prbody.code("`edge`"), "`` `edge` ``")
+
     def test_no_review_yet(self):
         body = prbody.build(self.run.path, [])
         self.assertNotIn("## Review", body)

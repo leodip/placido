@@ -54,6 +54,10 @@ class GithubRepoTest(unittest.TestCase):
     def test_other_hosts(self):
         self.assertIsNone(issues.github_repo("https://gitlab.com/leodip/goiabada.git"))
 
+    def test_the_repository_an_issue_s_url_names(self):
+        self.assertEqual(issues.repo_of("https://github.com/leodip/goiabada/issues/494"), "leodip/goiabada")
+        self.assertIsNone(issues.repo_of("/home/me/code/sandbox/issues/02-many-names.md"))
+
 
 class ResolveGithubTest(unittest.TestCase):
     root = Path("/nowhere")

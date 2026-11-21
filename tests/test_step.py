@@ -295,6 +295,13 @@ class StepTest(StepTestCase):
         end = runlog.last_event(self.run.path, "step.end")
         self.assertEqual(end["outcome"], "success")
 
+    def test_a_step_that_shows_no_status_keeps_none(self):
+        # A retro of one run works in the run's folder, whose status is the run's to say.
+        runner = step.Step(self.run, self.fake, "w8", self.tmp / "wt", home=self.home, sleep=self.fake.sleep,
+                           wall=lambda: self.now, show_status=False)
+        self.assertEqual(runner("implement", CLAUDE, "Look back.").outcome, "success")
+        self.assertNotIn("status", [call[0] for call in self.fake.calls])
+
     def test_prompt_file_holds_the_task_and_where_to_write(self):
         result = self.step("Summarize the issue.")
         text = (result.path / "prompt.md").read_text()

@@ -274,7 +274,9 @@ class Step:
         sleep: Callable[[float], None] = time.sleep,
         quota_wait: int = 2 * 3600,
         wall: Callable[[], float] = time.time,
+        show_status: bool = True,
     ) -> None:
+        self.show_status = show_status  # False: the run's status is not this step's to say
         self.env = env or {}
         self.sleep = sleep
         self.quota_wait = quota_wait  # longest wait for a quota reset before giving up the step
@@ -829,4 +831,5 @@ class Step:
         self._status(text)
 
     def _status(self, text: str) -> None:
-        status.show(self.run.path, text)
+        if self.show_status:
+            status.show(self.run.path, text)

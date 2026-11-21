@@ -1074,6 +1074,7 @@ def fix_prompt(ctx: Context, rnd: Round, listed: Path, folder: Path) -> str:
          " pr-fix skill says, with the reason in resolutions.json's `skip_gates`."
          if skippable else "- **Gates you may skip:** none; every gate runs."),
         decisions.prompt_line(ctx.run.path, pragents.OVER),
+        implement.subject_line(),
         f"- **Write:** {folder / 'resolutions.json'} and the result file.",
     ]
     menu_ = config.command_menu(ctx.settings)

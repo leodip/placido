@@ -8,7 +8,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from placido import cli, doctor
+from placido import cli, doctor, runlog
 from placido.doctor import FAIL, OK, WARN
 
 PLACIDO = Path(__file__).resolve().parent.parent / "bin" / "placido"
@@ -96,6 +96,13 @@ class RunCommandsTest(unittest.TestCase):
         self.assertRegex(lines[0], r"^trial/00-trial/\S+  success$")
         self.assertEqual(lines[1], "other/01-x/r1                       unfinished")
         self.assertTrue(lines[2].startswith(f"trial/00-trial/{first.name}"))
+
+    def test_runs_shows_a_deferred_run_as_deferred(self):
+        run = runlog.Run.create(self.root, "goiabada", "494-drop", {})
+        run.event("run.end", outcome="deferred", reason="start once tool 2.16.0 is out")
+        code, out, _ = self.placido("runs")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.split(), [f"goiabada/494-drop/{run.path.name}", "deferred"])
 
     def test_runs_limit(self):
         self.placido("trial")
@@ -220,6 +227,11 @@ class RetroCommandTest(unittest.TestCase):
         self.assertEqual((runs, runner.run.path, code_dir), ([self.newer], self.newer, self.repo.resolve()))
         self.assertEqual(runner.workspace_id, "w7")
         self.assertIn("placido: a retro on 02-b, its run of 2026-01-01T000000", out)
+
+    def test_a_retro_of_one_run_shows_no_status_in_it_and_of_several_does(self):
+        self.placido()
+        self.placido("--last", "2")
+        self.assertEqual([runner.show_status for runner, _, _ in self.calls], [False, True])
 
     def test_an_issue_by_prefix(self):
         self.assertEqual(self.placido("01")[0], 0)

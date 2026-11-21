@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,17 @@ from placido import config, proc
 
 RECORD = "gates.jsonl"  # in the run folder, shared by every step of the run
 TAIL = 30  # lines of the gate's output shown to the agent
+# A gate that runs its failed tests again, and passes on that, can say so in its output: a
+# line that starts with FLAKY, then the tests' names, on the rest of that line, or, when it
+# ends with a colon or names nothing, on the indented or bulleted lines right after it.
+# Placido carries the names from a passing
+# final or last gate's log into the pull request and the summary, since it shows a passing
+# gate's log to nobody (decided 2026-11-21, when Goiabada's e2e gate began to rerun them).
+FLAKY = "FLAKY"
+FLAKY_KEPT = 20  # the most names placido carries out of one log
+_FLAKY_LINE = re.compile(rf"^{FLAKY}\b[\s:.\-–—]*(.*)$")
+_BULLET = re.compile(r"^(?:[-*•+]|\d+[.)])\s+")
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 def fingerprint(worktree: Path) -> str | None:
@@ -84,6 +96,37 @@ def passed(run_dir: Path, gate: str, command: str, tree: str | None) -> dict[str
         if isinstance(entry, dict) and entry.get("exit") == 0 \
                 and (entry.get("gate"), entry.get("command"), entry.get("tree")) == (gate, command, tree):
             found = entry
+    return found
+
+
+def flaky(log: Path) -> list[str] | None:
+    """The tests a gate's log says passed only when it ran them again, in order and once
+    each; None when no line of it starts with FLAKY. A FLAKY line names the rest of the
+    line; one that ends with a colon, as a heading does, or names nothing names the
+    indented or bulleted lines right after it instead, so output that follows an inline
+    name is never taken for one; [] when no FLAKY line names any."""
+
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    lines = [_ANSI.sub("", line).rstrip() for line in text.splitlines()]
+    found: list[str] | None = None
+    i = 0
+    while i < len(lines):
+        match = _FLAKY_LINE.match(lines[i].strip())
+        i += 1
+        if not match:
+            continue
+        found = found or []
+        rest = match.group(1).strip()
+        heading = not rest or rest.endswith(":")
+        names = [] if heading else [rest]
+        while (heading and i < len(lines) and lines[i].strip()
+               and (lines[i][:1].isspace() or _BULLET.match(lines[i])) and not _FLAKY_LINE.match(lines[i].strip())):
+            names.append(_BULLET.sub("", lines[i].strip()))
+            i += 1
+        found += [name for name in dict.fromkeys(names) if name and name not in found]
     return found
 
 

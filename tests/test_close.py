@@ -41,6 +41,12 @@ class CloseTest(StartTestCase):
         ends = [e for e in runlog.read_events(self.run.path) if e["event"] == "run.end"]
         self.assertEqual([e["outcome"] for e in ends], ["passed"])
 
+    def test_a_deferred_run_stays_deferred_not_abandoned(self):
+        self.run.event("run.end", outcome="deferred", reason="start once tool 2.16.0 is out")
+        self.close()
+        self.assertEqual(runlog.outcome(self.run.path), "deferred")
+        self.assertNotIn("abandoned", (self.run.path / "events.jsonl").read_text())
+
     def test_uncommitted_changes_are_refused(self):
         (self.worktree / "wip.txt").write_text("half done\n")
         with self.assertRaisesRegex(close.CloseError, r"uncommitted changes:\n\?\? wip.txt"):

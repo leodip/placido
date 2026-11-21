@@ -57,9 +57,19 @@ def _facts(
     run_dir: Path, record: dict[str, Any], events: list[dict[str, Any]], stopped: str | None,
 ) -> list[str]:
     state = runlog.outcome(run_dir)
+    deferred = next((e for e in reversed(events) if e.get("event") == "spec.deferred"), None) \
+        if state == "deferred" else None
     if state == "unfinished":
         state = f"stopped ({stopped}); run placido again to resume" if stopped else "in progress"
+    elif deferred:
+        state = f"deferred, nothing built: {deferred.get('trigger')}"
     facts = [f"- **State:** {state}"]
+    if deferred:
+        posted = next((e for e in reversed(events) if e.get("event") == "deferral.posted"), None)
+        failed = next((e for e in reversed(events) if e.get("event") == "deferral.post_failed"), None)
+        where = (f"; posted on {posted.get('url')}" if posted else
+                 f"; posting it on the issue failed: {failed.get('error')}" if failed else "")
+        facts.append(f"- **Deferral:** why, in {deferred.get('result')}{where}")
     if record.get("issue_source"):
         facts.append(f"- **Issue:** {record['issue_source']}")
     if record.get("branch"):
@@ -76,8 +86,15 @@ def _facts(
     if last:
         failed = f" ({', '.join(last.get('gates') or [])})" if last.get("gates") else ""
         why = checks.outside(run_dir, "the last gates")
-        cause = f"; nothing in this change causes it: {why}" if why else ""
-        facts.append(f"- **Last gates:** fail after placido's fixes{failed}{cause}; logs in {run_dir / 'last-gates'}")
+        cause = f". Nothing in this change causes it: {why}" if why else ""
+        facts.append(f"- **Last gates:** fail after placido's fixes{failed}; logs in {run_dir / 'last-gates'}{cause}")
+    for note in prbody.flaky(events):
+        tests = [str(test) for test in note.get("tests") or []]
+        more = int(note.get("count") or 0) - len(tests)
+        named = ("; ".join(prbody.code(test) for test in tests) + (f"; and {more} more" if more > 0 else "")) \
+            if tests else "tests its log does not name"
+        facts.append(f"- **Flaky tests:** {prbody.flaky_gate(note)} passed only on a rerun of {named};"
+                     f" log {note.get('log')}")
     if events:
         took = _seconds(events[0].get("ts"), events[-1].get("ts"))
         facts.append(f"- **Time:** {str(events[0].get('ts', ''))[:16].replace('T', ' ')}"

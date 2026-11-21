@@ -39,7 +39,12 @@ is posted, pushed, or merged until you pick it (see
    *slices*. Before it is sealed, an agent from another vendor reads it against the
    code: claims about today's code that are not so, precedents copied wrongly, and
    decisions that contradict each other come back to the interview while you are
-   still there, rather than stopping the run at night. When the issue's goal is a number (faster, smaller, fewer), the
+   still there, rather than stopping the run at night. When you decide with it that
+   nothing can be built yet, as for an issue that waits on an upstream release, the
+   run ends *deferred*. When the issue is on GitHub, placido posts when to start, and
+   a short why the interview shows you first, on it, where the next run's interview
+   reads it; the evidence stays with the run. `placido status`, `runs` and `retro`
+   show the run as deferred, not failed or abandoned. When the issue's goal is a number (faster, smaller, fewer), the
    agreement makes it a *benchmark*: a command, today's baseline, and a target. Each
    slice reports the number before and after, the review holds the change to the
    target, and the pull request shows how it moved.
@@ -196,6 +201,15 @@ changes nothing and says why, and the description gives that reason with the fai
 When it can see the fix all the same, such as the same fragile assertion in other
 tests, it names it, and placido drafts it as a follow-up on the pull request, as it
 does for a CI failure the fixer finds outside the change.
+
+A gate that runs its failed tests again, and passes on that, can say so, since a
+passing gate's log is read by nobody: a line of its output that starts with `FLAKY`,
+then the tests' names, on the rest of that line (`FLAKY: test_login_retries`), or,
+when that line ends with a colon or names nothing, one per indented or bulleted line
+right after it. When a final or last gate passes,
+placido carries those names from its log into the pull request's description, under
+"Flaky tests", with where the log is, up to 20 a gate, and into the run's summary. A
+gate that prints no `FLAKY` line adds nothing.
 
 Setup, teardown, the gates, and every agent's tab get these variables, so your own
 scripts can find the run's resources:

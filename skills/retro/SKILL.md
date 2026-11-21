@@ -48,6 +48,13 @@ Look for trouble that a change to the project would prevent, cheapest fix first:
 Skip what went fine, one-off accidents no rule would prevent, and anything already
 written down that an agent simply missed; for those, say so in one line at most.
 
+A run whose outcome is **deferred** ended where its interview chose to: the user
+decided that nothing could be built until its trigger. It is neither a failure nor
+work abandoned. Its summary's Deferral line says whether placido posted the trigger on
+the issue: only an issue on GitHub gets it, and the post can fail, which is worth a
+line. Count the deferral as trouble only if it could have ended sooner, such as an
+interview that measured again what an earlier deferral of the same issue had found.
+
 ## Several runs
 
 Read each run as above, then look across them first: trouble that came back in two

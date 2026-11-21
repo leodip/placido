@@ -101,12 +101,16 @@ def spec_check(
 ) -> Callable[[Path], list[str]]:
     """The spec step's check: the agreement's own checks, then, the first time they
     pass, the vet. Once is enough: its findings go to the interview, and what the
-    interview settles with the user is the user's to seal."""
+    interview settles with the user is the user's to seal. A deferral has no agreement
+    to check, only its own shape."""
 
     vetted = False
 
     def check_spec(result: Path) -> list[str]:
         nonlocal vetted
+        deferred = spec.deferral(result)
+        if deferred is not None:
+            return spec.deferral_problems(deferred)
         problems = spec.check(folder, settings)
         if problems or vetted:
             return problems

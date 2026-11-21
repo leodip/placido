@@ -6,11 +6,12 @@ import argparse
 from typing import Callable
 import json
 import os
+import shlex
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from placido import __version__, checks, comments, config, doctor, driver, followups, gate, github, implement, mutate, pr, pragents, prgh, prmenu, report, review, runlog, spec, start, status, step, summary, vet
+from placido import __version__, checks, comments, config, doctor, driver, followups, gate, github, implement, issues, mutate, pr, pragents, prgh, prmenu, report, review, runlog, spec, start, status, step, summary, vet
 from placido import close as closing
 from placido import retro as retrospect
 from placido.herdr import Herdr, HerdrError
@@ -149,6 +150,8 @@ def cmd_spec(args: argparse.Namespace) -> int:
         return 1
     _, settings, path, created = found
     folder = spec.issue_dir(path)
+    if _refuse_deferred(path):
+        return 1
     if spec.sealed(folder):
         print(f"placido: the agreement in {folder} is already sealed; remove seal.json to redo it", file=sys.stderr)
         return 1
@@ -171,12 +174,82 @@ def cmd_spec(args: argparse.Namespace) -> int:
         runner.status(status.text(status.STOPPED, f"spec {result.outcome.replace('-', ' ')}"))
         print(f"\nplacido: the specification ended {result.outcome}; see {result.path}", file=sys.stderr)
         return 1
+    deferred = spec.deferral(result.path / "result.md")
+    if deferred is not None:
+        # Checked again: an agent that quits right after writing its result ends the step
+        # with no check run (step.Step), and an incomplete one must not end the run.
+        problems = spec.deferral_problems(deferred)
+        if problems:
+            runner.status(status.text(status.STOPPED, "spec deferral incomplete"))
+            print(f"\nplacido: the interview's deferral is incomplete, so the run is not deferred: {' '.join(problems)}"
+                  f" See {result.path}; run placido spec again.", file=sys.stderr)
+            return 1
+        return _defer(run, runner, worktree, deferred, result.path / "result.md")
     spec.seal(folder, run)
     runner.status(status.text(status.READY, "run placido run"))
     slices = spec.load_slices(folder)
     count = f"{len(slices)} slice{'s' if len(slices) != 1 else ''}"
     print(f"\nagreement sealed: {folder / 'agreement.md'} ({count})")
     return _after_seal(args)
+
+
+def _defer(run: runlog.Run, runner: step.Step, worktree: Path, deferred: spec.Deferral, result: Path) -> int:
+    """End the run as deferred: the interview settled with the user that nothing can
+    be built until its trigger. The trigger and the reasons go on the issue when it is
+    on GitHub; a post that fails says how to post it by hand. The run then waits for
+    `placido close`, as a finished one does, and never goes on to `placido run`. The
+    interview decided the outcome, so it is recorded, summary included, before the
+    post. An interrupt during the post counts as a failed one: running `placido spec`
+    again would only be refused, so placido says how to post it by hand."""
+
+    run.event("spec.deferred", trigger=deferred.trigger, result=str(result))
+    run.event("run.end", outcome="deferred", reason=deferred.trigger)
+    runner.status(status.text(status.DONE, f"deferred: {deferred.trigger}"))
+    summary.write(run.path)
+    posted, failed, interrupted = None, "", False
+    try:
+        posted = github.post_deferral(run, worktree, deferred)
+    except (github.GitHubError, OSError) as error:
+        failed = str(error)
+    except KeyboardInterrupt:
+        failed, interrupted = "interrupted", True
+    if failed:
+        run.event("deferral.post_failed", error=failed)
+    summary.write(run.path)
+    print(f"\nrun deferred, nothing built: {deferred.trigger}")
+    if posted:
+        print(f"posted on the issue: {posted}")
+    if failed:
+        maybe = " It may have gone out before the interrupt: look at the issue first." if interrupted else ""
+        print(f"placido: posting it on the issue failed: {failed}.{maybe}\n{_post_by_hand(run, result)}",
+              file=sys.stderr)
+    print(f"summary: {run.path / 'summary.md'}\nClose the run with placido close once you are done with it.")
+    return 130 if interrupted else 0
+
+
+def _post_by_hand(run: runlog.Run, result: Path) -> str:
+    """How to post a deferral whose post failed: the gh command, quoted for the shell;
+    or, when even its text could not be written, where that text is."""
+
+    body = run.path / github.DEFERRAL_COMMENT
+    if not body.is_file():
+        return f"its text is the trigger and the why, above {spec.EVIDENCE}, in {result}"
+    record = runlog.read_record(run.path)
+    repo = issues.repo_of(str(record.get("issue_source") or "")) or "?"
+    return "post it with: " + shlex.join(
+        ["gh", "issue", "comment", str(record.get("issue_number")), "-R", repo, "--body-file", str(body)]
+    )
+
+
+def _refuse_deferred(path: Path) -> bool:
+    """Whether the run ended deferred, saying so: nothing more happens in it."""
+
+    if runlog.outcome(path) != "deferred":
+        return False
+    trigger = (runlog.last_event(path, "run.end") or {}).get("reason")
+    print(f"placido: this run ended deferred ({trigger}); close it with placido close, and start the issue"
+          " again once that has come to pass", file=sys.stderr)
+    return True
 
 
 def _after_seal(args: argparse.Namespace, run_command: Callable[[argparse.Namespace], int] | None = None) -> int:
@@ -207,6 +280,8 @@ def _slice_context(
         return None
     _, settings, path, created = found
     folder = spec.issue_dir(path)
+    if _refuse_deferred(path):
+        return None
     if not spec.sealed(folder):
         print(f"placido: no sealed agreement in {folder}; run `placido spec` first", file=sys.stderr)
         return None
@@ -453,7 +528,9 @@ def cmd_retro(args: argparse.Namespace) -> int:
         host = retrospect.folder(runs_root, root.name)
         env = start.run_env(root.name, host.parent.name, None, root, host, root)
     run = runlog.Run(host, echo=sys.stdout)
-    runner = step.Step(run, Herdr(), workspace, code, env=env, quota_wait=settings.quota_wait)
+    # A retro of one run works in the run's own folder: the run's status is not the retro's.
+    runner = step.Step(run, Herdr(), workspace, code, env=env, quota_wait=settings.quota_wait,
+                       show_status=one is None)
     _log_override(run, args, agent)
     try:
         result = retrospect.retro(runner, agent, runs, code)

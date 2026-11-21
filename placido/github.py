@@ -3,7 +3,8 @@ ready for review, post the agreement's release notes and the follow-ups as comme
 it and the notes on other issues the change affects, then wait for CI and fix a red run.
 
 Decided with the user (step 13): nothing is pushed before the review is done, so a
-stopped or abandoned run leaves nothing on GitHub; the body closes the run's issue,
+stopped or abandoned run leaves nothing on GitHub; a deferred one only says on its
+issue when to start, and why (decided 2026-11-21); the body closes the run's issue,
 and every issue folded in during the interview, with `Closes #N`, so the user's merge
 closes them and placido never does. Each action is an event, so a resumed run picks
 up where it stopped.
@@ -23,7 +24,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import checks, config, followups, implement, prbody, runlog, spec, start, status, summary
+from placido import checks, config, followups, implement, issues, prbody, runlog, spec, start, status, summary
 from placido.proc import Runner, run_command
 
 ATTACH_SECONDS = 180  # how long CI may take to show its first check after a push
@@ -454,6 +455,29 @@ def _post_follow_ups(github: GitHub, run: runlog.Run, record: dict[str, Any], pr
         body.write_text(f"{note}\n\nFrom {pr}.\n", encoding="utf-8")
         url = github.comment("issue", number, body)
         run.event("issue.noted", issue=number, url=url)
+
+
+DEFERRAL_COMMENT = "deferral-comment.md"  # in the run folder: the comment a deferral posts
+
+
+def post_deferral(run: runlog.Run, worktree: Path, deferral: spec.Deferral, gh: Runner = run_command) -> str | None:
+    """The run's deferral as a comment on its issue, so the issue says when to start
+    and the next run's interview reads it in issue.md; the comment's URL, or None when
+    the issue is not on GitHub. The one comment placido posts before a pull request:
+    the run ends there. It goes to the repository the issue's own URL names, which the
+    run started from, whatever the checkout's origin is now."""
+
+    record = runlog.read_record(run.path)
+    number = record.get("issue_number")
+    repo = issues.repo_of(str(record.get("issue_source") or "")) if number else None
+    if repo is None:
+        return None
+    # Exactly what the interview showed the user: the trigger and the why, nothing more.
+    body = run.path / DEFERRAL_COMMENT
+    body.write_text(f"**{spec.DEFERRED}** {deferral.trigger}\n\n{deferral.why}\n", encoding="utf-8")
+    url = GitHub(repo, worktree, gh).comment("issue", int(number), body)
+    run.event("deferral.posted", issue=number, url=url)
+    return url
 
 
 FOLLOW_UPS = ("followups.posted", "followups.updated", "followups.continued")

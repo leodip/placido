@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -8,7 +9,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from placido import cli, config, runlog, spec, vet
+from placido import cli, config, github, runlog, spec, status, vet
 from placido.step import StepResult
 from tests.test_spec import AGREEMENT, SLICES, settings
 
@@ -174,6 +175,15 @@ class SpecCheckTest(VetTestCase):
         self.assertEqual(check(self.root / "result.md"), [])  # settled by the interview: sealed
         self.assertEqual(self.vetted, [1])
 
+    def test_a_deferral_skips_the_agreement_and_the_vet(self):
+        check = self.check(["vet finding"])
+        result = self.root / "result.md"
+        result.write_text("Deferred: start once tool 2.16.0 is out\n\nIt bundles the fix.\n\n## Evidence\n- x\n")
+        self.assertEqual(check(result), [])  # no agreement is written, and none is checked
+        result.write_text("Deferred: start once tool 2.16.0 is out\n\nIt bundles the fix.\n")
+        self.assertEqual(len(check(result)), 1)
+        self.assertEqual(self.vetted, [])
+
     def test_a_later_problem_of_the_agreement_s_own_is_still_caught(self):
         self.write()
         check = self.check([])
@@ -214,6 +224,28 @@ class Interview:
         return StepResult("invalid", folder)
 
 
+DEFERRAL = ("Deferred: start once tool 2.16.0 is out\n\nThe pinned 2.15.0 bundles the old analyzer; 2.16.0 the fix.\n\n"
+            "## Evidence\n- 10 of 12 cold runs failed in the devcontainer.\n")
+
+
+class Deferring(Interview):
+    """An interview that settles with the user that nothing can be built yet."""
+
+    def status(self, text: str) -> None:
+        status.show(self.run.path, text)
+
+    text = DEFERRAL  # the result the agent writes
+    check = True  # False: the agent quit right after writing, and the step ran no check
+
+    def __call__(self, role, agent, task, **kwargs) -> StepResult:
+        self.roles.append(role)
+        folder = self.run.new_step_dir(role)
+        (folder / "result.md").write_text(self.text)
+        if not self.check:
+            return StepResult("success", folder)
+        return StepResult("invalid" if kwargs["check"](folder / "result.md") else "success", folder)
+
+
 class SpecCommandTest(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -244,11 +276,120 @@ class SpecCommandTest(unittest.TestCase):
         self.assertEqual(interview.roles, ["spec", "vet"])
         self.assertEqual(interview.sent_back, [])
 
+    def defer(self, code: int = 0) -> tuple[Deferring, str, str]:
+        interview = Deferring(self.run, self.folder, CLEAN)
+        user = self.root / "user.toml"
+        user.write_text("[spec]\nthen_run = true\n")  # a deferred run never goes on
+        env = {"PLACIDO_RUNS_DIR": str(self.root / "runs"), "PLACIDO_USER_CONFIG": str(user)}
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch.object(Path, "cwd", return_value=self.repo), \
+                mock.patch.object(cli, "_runner", return_value=(self.run, interview)), \
+                mock.patch.object(cli, "cmd_run", side_effect=AssertionError("placido run")), \
+                mock.patch("sys.stderr", err), redirect_stdout(out):
+            self.assertEqual(cli.main(["spec"]), code)
+        return interview, out.getvalue(), err.getvalue()
+
+    def test_a_deferral_ends_the_run_as_deferred(self):
+        # #494: the interview settled that it waits for an upstream release, and the run
+        # had no way to end but the agent quitting and placido close calling it abandoned.
+        interview, out, err = self.defer()
+        self.assertEqual(interview.roles, ["spec"])  # nothing to vet
+        self.assertFalse(spec.sealed(self.folder))
+        deferred = runlog.last_event(self.run.path, "spec.deferred")
+        self.assertEqual(deferred["trigger"], "start once tool 2.16.0 is out")
+        self.assertTrue(deferred["result"].endswith("-spec/result.md"))
+        end = runlog.last_event(self.run.path, "run.end")
+        self.assertEqual((end["outcome"], end["reason"]), ("deferred", "start once tool 2.16.0 is out"))
+        self.assertEqual(runlog.outcome(self.run.path), "deferred")
+        self.assertEqual(status.read(self.run.path), "done · deferred: start once tool 2.16.0 is out")
+        self.assertIn("- **State:** deferred, nothing built: start once tool 2.16.0 is out\n",
+                      (self.run.path / "summary.md").read_text())
+        self.assertIn("run deferred, nothing built: start once tool 2.16.0 is out", out)
+        self.assertIsNone(runlog.last_event(self.run.path, "deferral.posted"))  # the issue is not on GitHub
+        self.assertEqual(err, "")
+
+    def test_a_deferred_run_takes_no_more_steps(self):
+        self.defer()
+        for command in (["spec"], ["run"], ["review"]):
+            err = io.StringIO()
+            env = {"PLACIDO_RUNS_DIR": str(self.root / "runs"), "PLACIDO_USER_CONFIG": str(self.root / "none.toml")}
+            with self.subTest(command=command), mock.patch.dict(os.environ, env), \
+                    mock.patch.object(Path, "cwd", return_value=self.repo), \
+                    mock.patch.object(cli, "_runner", side_effect=AssertionError("a step ran")), \
+                    mock.patch("sys.stderr", err), redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.main(command), 1)
+            self.assertIn("this run ended deferred (start once tool 2.16.0 is out); close it with placido close",
+                          err.getvalue())
+
+    def test_an_incomplete_deferral_the_check_missed_ends_nothing(self):
+        # Codex, reviewing 444aead: an agent that quits right after writing its result
+        # ends the step with no check run, and the run was deferred on a bare header.
+        interview = Deferring(self.run, self.folder, CLEAN)
+        interview.text, interview.check = "Deferred:\n", False
+        err = io.StringIO()
+        env = {"PLACIDO_RUNS_DIR": str(self.root / "runs"), "PLACIDO_USER_CONFIG": str(self.root / "none.toml")}
+        with mock.patch.dict(os.environ, env), mock.patch.object(Path, "cwd", return_value=self.repo), \
+                mock.patch.object(cli, "_runner", return_value=(self.run, interview)), \
+                mock.patch.object(github, "post_deferral", side_effect=AssertionError("posted")), \
+                mock.patch("sys.stderr", err), redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["spec"]), 1)
+        self.assertIn("the interview's deferral is incomplete, so the run is not deferred", err.getvalue())
+        self.assertEqual(runlog.outcome(self.run.path), "unfinished")
+        self.assertIsNone(runlog.last_event(self.run.path, "spec.deferred"))
+        self.assertEqual(status.read(self.run.path), "stopped · spec deferral incomplete")
+
+    def test_an_interrupted_post_leaves_the_run_deferred(self):
+        # Codex, reviewing 444aead: run.end came after the post, so an interrupt left none,
+        # and placido close then called the run abandoned. Reviewing 0051abb: it then said
+        # to run placido spec again, which refuses a deferred run, and wrote no summary.
+        with mock.patch.object(github, "post_deferral", side_effect=KeyboardInterrupt):
+            _, _, err = self.defer(code=130)
+        self.assertEqual(runlog.outcome(self.run.path), "deferred")
+        self.assertEqual(status.read(self.run.path), "done · deferred: start once tool 2.16.0 is out")
+        self.assertEqual(runlog.last_event(self.run.path, "deferral.post_failed")["error"], "interrupted")
+        self.assertIn("posting it on the issue failed: interrupted. It may have gone out before the interrupt:"
+                      " look at the issue first.", err)
+        self.assertNotIn("Run the same command again", err)
+        self.assertIn("posting it on the issue failed: interrupted", (self.run.path / "summary.md").read_text())
+
+    def test_a_deferral_that_cannot_be_posted_says_how_to_post_it(self):
+        with mock.patch.object(github, "post_deferral", side_effect=github.GitHubError("gh issue comment: HTTP 502")):
+            _, _, err = self.defer()
+        self.assertEqual(runlog.last_event(self.run.path, "deferral.post_failed")["error"], "gh issue comment: HTTP 502")
+        self.assertEqual(runlog.outcome(self.run.path), "deferred")
+        self.assertIn("posting it on the issue failed: gh issue comment: HTTP 502", err)
+        self.assertIn("posting it on the issue failed: gh issue comment: HTTP 502",
+                      (self.run.path / "summary.md").read_text())
+
     def test_findings_go_to_the_interview_and_the_seal_waits_for_them(self):
         interview = self.spec(FOUND)
         self.assertEqual(interview.roles, ["spec", "vet"])
         ((problem,),) = interview.sent_back
         self.assertIn("found 2 problems", problem)
+
+
+class PostByHandTest(unittest.TestCase):
+    """What placido prints when a deferral's post fails."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        # Codex, reviewing 444aead: a runs folder with a space split the printed --body-file.
+        self.run = runlog.Run.create(Path(tmp.name) / "my runs", "repo", "494-x", {
+            "issue_number": 494, "issue_source": "https://github.com/o/r/issues/494"})
+        self.result = self.run.path / "steps" / "01-spec" / "result.md"
+
+    def test_the_command_is_quoted_for_the_shell(self):
+        body = self.run.path / github.DEFERRAL_COMMENT
+        body.write_text("**Deferred:** x\n")
+        said = cli._post_by_hand(self.run, self.result)
+        self.assertTrue(said.startswith("post it with: "))
+        self.assertEqual(shlex.split(said.removeprefix("post it with: ")),
+                         ["gh", "issue", "comment", "494", "-R", "o/r", "--body-file", str(body)])
+
+    def test_without_the_comment_s_text_it_points_at_the_result(self):
+        self.assertEqual(cli._post_by_hand(self.run, self.result),
+                         f"its text is the trigger and the why, above ## Evidence, in {self.result}")
 
 
 class RoleTest(unittest.TestCase):

@@ -22,6 +22,10 @@ to supply:** the code, its history, the tools, a published specification, or a p
 you run settle them. The project's own documents (`AGENTS.md` or `CLAUDE.md`, a
 glossary, ADRs) and the role notes your prompt names say how the project thinks.
 
+When your prompt names an earlier run that deferred this issue, or the issue's
+comments say when to start it, check that first: whether it has come to pass, and what
+that run found, so you build on its measurements rather than take them all again.
+
 Note adjacent work as you go: the user would rather fold related work into this
 change than leave it for later. That is problems in the code the issue touches (a bug
 next to the change, a missing test, a name the change makes worse), and open issues
@@ -246,3 +250,32 @@ write the result file again. Placido seals the agreement when nothing is left.
 
 **Done when** both files are written, the result file says so, the check's findings
 are settled, and the user has the summary.
+
+## Deferring: nothing to build yet
+
+Sometimes the interview settles that nothing can be built yet: the issue waits on
+something outside the project, such as an upstream release, and no route today
+reaches what the user wants. Waiting is the user's decision, asked as a question like
+any other, with your recommendation. Once they decide to wait, write no agreement or
+slices. Write the result file your prompt names in this shape:
+
+```markdown
+Deferred: <when to start, in one line, such as "start once tool 2.16.0 is released">
+
+<why it waits, for the issue's readers: a few sentences anyone following the issue
+can act on, with no local paths, hosts, addresses, or anything else private>
+
+## Evidence
+<what you measured and checked, and where; what the change will need when the time
+comes; the routes you looked at that would not do, and why>
+```
+
+Placido ends the run as deferred, an outcome of its own rather than a failure. When
+the issue is on GitHub, it posts everything above `## Evidence` on it as a comment, so
+the people following it know when it can start. The evidence stays with the run,
+where the next run's interview finds it, as it does your probes in the `probe/`
+folder. That comment is public: before you write the result, tell the user the run
+ends deferred and show them the text placido will post. Do not post it yourself.
+
+**Done when** the user has decided to wait and the result file says when to start and
+why.
