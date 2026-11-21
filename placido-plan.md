@@ -2559,3 +2559,13 @@ ran:
   result is `Deferred: <when to start>`, then why for the issue's readers, then
   `## Evidence`, which stays with the run for the next interview. Placido posts only
   what is above the evidence, and the agent shows the user that text first.
+- Codex also found that a retro of one run, which put back the run's earlier status,
+  could put it back over one another command wrote during the retro. The user chose
+  that such a retro never writes the run's status: `cmd_retro` gives it a step with
+  `show_status` off, so the run keeps saying where it is throughout, and only a
+  retro's own folder gets `done · retro` or `stopped · retro …`. Its other findings were
+  fixed as found: the deferral goes to the repository the issue's URL names, its
+  outcome is recorded before the post, `placido spec` checks a deferral again since a
+  quitting agent skips the step's check, the by-hand `gh` command is quoted, the docs
+  say a deferral is posted only for an issue on GitHub, and a retro is done only once
+  its report is kept.

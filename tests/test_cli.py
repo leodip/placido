@@ -228,6 +228,11 @@ class RetroCommandTest(unittest.TestCase):
         self.assertEqual(runner.workspace_id, "w7")
         self.assertIn("placido: a retro on 02-b, its run of 2026-01-01T000000", out)
 
+    def test_a_retro_of_one_run_shows_no_status_in_it_and_of_several_does(self):
+        self.placido()
+        self.placido("--last", "2")
+        self.assertEqual([runner.show_status for runner, _, _ in self.calls], [False, True])
+
     def test_an_issue_by_prefix(self):
         self.assertEqual(self.placido("01")[0], 0)
         self.assertEqual(self.calls[0][1], [self.older])

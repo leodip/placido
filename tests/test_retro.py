@@ -10,12 +10,17 @@ from placido.step import StepResult
 
 
 class FakeRunner:
-    def __init__(self, run: runlog.Run, text: str | None, error: Exception | None = None) -> None:
+    def __init__(self, run: runlog.Run, text: str | None, error: Exception | None = None,
+                 show_status: bool = True, during=None) -> None:
         self.run, self.text, self.calls, self.error = run, text, [], error
+        self.show_status, self.during = show_status, during
 
     def __call__(self, role, agent, task, name=None, check=None, **kwargs):
         self.calls.append((role, agent.agent, task))
-        status.show(self.run.path, "working · retro")  # as the step does while it works
+        if self.show_status:
+            status.show(self.run.path, "working · retro")  # as the step does while it works
+        if self.during is not None:
+            self.during()
         if self.error is not None:
             raise self.error
         folder = self.run.step_dir(1, name)
@@ -114,16 +119,18 @@ class RetroTest(unittest.TestCase):
         self.assertEqual(status.read(folder), "stopped · retro failed")
         self.assertIsNone(runlog.last_event(folder, "retro.done"))
 
-    def test_a_run_s_own_folder_gets_its_status_back(self):
-        status.show(self.run.path, "you · the last gates fail on pull request 889")
-        retro.retro(FakeRunner(self.run, "# Retro\n\n## Suggestions\n\nNone.\n"),
+    def test_a_run_s_own_status_is_left_to_the_run(self):
+        # Codex, reviewing 8a02533: restoring the status from before the retro put it back
+        # over one another command wrote meanwhile.
+        status.show(self.run.path, "working · slice 1/2")
+        finished = lambda: status.show(self.run.path, "done · review passed")  # noqa: E731
+        retro.retro(FakeRunner(self.run, "# Retro\n\n## Suggestions\n\nNone.\n", show_status=False, during=finished),
                     config.AgentSpec("claude", "opus", "high"), [self.run.path], self.code)
-        self.assertEqual(status.read(self.run.path), "you · the last gates fail on pull request 889")
-        (self.run.path / status.FILE).unlink()
+        self.assertEqual(status.read(self.run.path), "done · review passed")
         with self.assertRaises(HerdrError):
-            retro.retro(FakeRunner(self.run, None, HerdrError("tab gone")),
+            retro.retro(FakeRunner(self.run, None, HerdrError("tab gone"), show_status=False),
                         config.AgentSpec("claude", "opus", "high"), [self.run.path], self.code)
-        self.assertFalse((self.run.path / status.FILE).exists())  # it had none, and gets none
+        self.assertEqual(status.read(self.run.path), "done · review passed")
 
     def test_a_missing_or_shapeless_retro_is_sent_back(self):
         for text, problem in ((None, "write the retro"), ("# Retro\n\nfine\n", "'## Suggestions'")):

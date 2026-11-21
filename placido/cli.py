@@ -521,7 +521,9 @@ def cmd_retro(args: argparse.Namespace) -> int:
         host = retrospect.folder(runs_root, root.name)
         env = start.run_env(root.name, host.parent.name, None, root, host, root)
     run = runlog.Run(host, echo=sys.stdout)
-    runner = step.Step(run, Herdr(), workspace, code, env=env, quota_wait=settings.quota_wait)
+    # A retro of one run works in the run's own folder: the run's status is not the retro's.
+    runner = step.Step(run, Herdr(), workspace, code, env=env, quota_wait=settings.quota_wait,
+                       show_status=one is None)
     _log_override(run, args, agent)
     try:
         result = retrospect.retro(runner, agent, runs, code)
