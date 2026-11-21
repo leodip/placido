@@ -49,6 +49,13 @@ def github_repo(remote_url: str) -> str | None:
     return f"{match.group(1)}/{match.group(2)}" if match else None
 
 
+def repo_of(source: str) -> str | None:
+    """owner/name of the repository a GitHub issue's URL names; None for any other source."""
+
+    match = _URL.match(source.strip())
+    return f"{match.group(1)}/{match.group(2)}" if match else None
+
+
 def resolve(arg: str, root: Path, remote: str | None, gh: GitHubRunner = run_command) -> Issue:
     """The issue named by arg: a GitHub URL, owner/repo#N, or a bare number when the
     repository's origin is on GitHub; otherwise a local issue file by name or prefix."""

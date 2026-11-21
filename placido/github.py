@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import checks, config, followups, implement, prbody, runlog, spec, start, status, summary
+from placido import checks, config, followups, implement, issues, prbody, runlog, spec, start, status, summary
 from placido.proc import Runner, run_command
 
 ATTACH_SECONDS = 180  # how long CI may take to show its first check after a push
@@ -461,11 +461,12 @@ def post_deferral(run: runlog.Run, worktree: Path, deferral: spec.Deferral, gith
     """The run's deferral as a comment on its issue, so the issue says when to start
     and the next run's interview reads it in issue.md; the comment's URL, or None when
     the issue is not on GitHub. The one comment placido posts before a pull request:
-    the run ends there."""
+    the run ends there. It goes to the repository the issue's own URL names, which the
+    run started from, whatever the checkout's origin is now."""
 
     record = runlog.read_record(run.path)
     number = record.get("issue_number")
-    repo = start.origin_repo(Path(record.get("repo") or worktree)) if number else None
+    repo = issues.repo_of(str(record.get("issue_source") or "")) if number else None
     if repo is None:
         return None
     body = run.path / "deferral-comment.md"

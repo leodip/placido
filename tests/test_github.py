@@ -85,6 +85,7 @@ class DeliverCase(unittest.TestCase):
         self.run = runlog.Run.create(self.tmp / "runs", "goiabada", "439-rate-limit", {
             "repo": str(self.repo), "branch": "placido/439-rate-limit", "base": "main",
             "issue_title": "Rate limiter counts half moves", "issue_number": 439,
+            "issue_source": "https://github.com/leodip/goiabada/issues/439",
         })
         (self.run.path.parent / "agreement.md").write_text(
             "# Agreement\n\n## Decisions\n1. x\n\n### Folded in\n- #440 shares the counter\n- #439 itself\n\n## Seams\n- #999 not this\n"
@@ -128,15 +129,23 @@ class DeferralTest(DeliverCase):
         self.assertEqual([(e["issue"], e["url"]) for e in self.events("deferral.posted")], [(439, url)])
 
     def test_an_issue_not_on_github_gets_nothing(self):
-        sh(self.repo, "git", "remote", "remove", "origin")
-        self.assertIsNone(github.post_deferral(self.run, self.repo, self.DEFERRAL, self.hub))
         record = runlog.read_record(self.run.path)
         del record["issue_number"]
-        (self.run.path / "run.json").write_text(json.dumps(record))
-        sh(self.repo, "git", "remote", "add", "origin", "https://github.com/leodip/goiabada.git")
+        (self.run.path / "run.json").write_text(json.dumps({**record, "issue_source": "/repo/issues/02-x.md"}))
         self.assertIsNone(github.post_deferral(self.run, self.repo, self.DEFERRAL, self.hub))
         self.assertEqual(self.gh.calls, [])
         self.assertEqual(self.events("deferral.posted"), [])
+
+    def test_it_goes_to_the_issue_s_own_repository_whatever_the_origin(self):
+        # Codex, reviewing 444aead: the checkout's origin decided where it went.
+        sh(self.repo, "git", "remote", "remove", "origin")
+        for origin in (None, "https://github.com/someone/fork.git"):
+            if origin:
+                sh(self.repo, "git", "remote", "add", "origin", origin)
+            with self.subTest(origin=origin):
+                github.post_deferral(self.run, self.repo, self.DEFERRAL, self.hub)
+                comment = [argv for argv in self.gh.calls if argv[1:3] == ["issue", "comment"]][-1]
+                self.assertEqual(comment[3:6], ["439", "-R", "leodip/goiabada"])
 
 
 class DeliverTest(DeliverCase):

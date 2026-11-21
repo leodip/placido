@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from placido import __version__, checks, comments, config, doctor, driver, followups, gate, github, implement, mutate, pr, pragents, prgh, prmenu, report, review, runlog, spec, start, status, step, summary, vet
+from placido import __version__, checks, comments, config, doctor, driver, followups, gate, github, implement, issues, mutate, pr, pragents, prgh, prmenu, report, review, runlog, spec, start, status, step, summary, vet
 from placido import close as closing
 from placido import retro as retrospect
 from placido.herdr import Herdr, HerdrError
@@ -205,7 +205,7 @@ def _defer(run: runlog.Run, runner: step.Step, worktree: Path, deferred: spec.De
         print(f"posted on the issue: {posted}")
     if failed:
         record = runlog.read_record(run.path)
-        repo = start.origin_repo(Path(record.get("repo") or worktree))
+        repo = issues.repo_of(str(record.get("issue_source") or ""))
         print(f"placido: posting it on the issue failed: {failed}\npost it with: gh issue comment"
               f" {record.get('issue_number')} -R {repo} --body-file {run.path / 'deferral-comment.md'}",
               file=sys.stderr)
