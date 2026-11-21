@@ -2589,3 +2589,11 @@ ran:
   count, and the log. The pull request gets a "Flaky tests" section with each gate, its
   tests, and its log's place in the run folder (no home path goes out), and the summary
   a line. Nothing is added when no FLAKY line is there.
+- Codex's third round, on the FLAKY notes: a last gate that kept failing left the
+  others' flaky tests unsaid, though the pull request still opens; after placido's
+  rerun, a gate's log was its latest pass in the whole run, which could be a rejected
+  fix's on another tree; and the notes, recorded before the stage's outcome, could
+  outlive a pass interrupted before it. `_gates` now keeps each gate's passing log
+  attempt by attempt (the rerun replaces only those of the gates it reran), and the
+  notes go in the stage's own `passed` or `gave_up` event, which is all the pull
+  request reads.

@@ -89,24 +89,23 @@ def _benchmark(run_dir: Path) -> list[str]:
 
 
 def flaky(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The latest note of each final or last gate whose passing log named flaky tests
-    (checks.flaky), in the order they first came, each log once: a last gate reused from
-    the same final gate's pass has its log."""
+    """The flaky tests of the final and last gates (checks.flaky), as their stages' latest
+    outcomes, passed or gave up, recorded them, each note with its kind; each log once, as
+    a last gate reused from the same final gate's pass has its log."""
 
-    latest: dict[tuple[str, str], dict[str, Any]] = {}
-    for event in events:
-        if event.get("event") in ("final_gates.flaky", "last_gates.flaky"):
-            latest[(event["event"], str(event.get("gate")))] = event
     by_log: dict[str, dict[str, Any]] = {}
-    for note in latest.values():
-        by_log.setdefault(str(note.get("log")), note)
+    for kind in ("final", "last"):
+        ends = (f"{kind}_gates.passed", f"{kind}_gates.gave_up")
+        outcome = next((e for e in reversed(events) if e.get("event") in ends), None) or {}
+        for note in outcome.get("flaky") or []:
+            by_log.setdefault(str(note.get("log")), {**note, "kind": kind})
     return list(by_log.values())
 
 
 def flaky_gate(note: dict[str, Any]) -> str:
     """Which gate a flaky note is about, in words: "the last gate `e2e`"."""
 
-    return f"the {str(note.get('event')).split('_', 1)[0]} gate `{note.get('gate')}`"
+    return f"the {note.get('kind')} gate `{note.get('gate')}`"
 
 
 def _flaky(run_dir: Path, events: list[dict[str, Any]]) -> list[str]:

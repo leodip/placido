@@ -20,6 +20,7 @@ import re
 import subprocess
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from placido import decisions, gate, implement, runlog, spec, status
 from placido.step import Step
@@ -59,53 +60,74 @@ def _gates(ctx: "driver.Context", fixer: "config.AgentSpec", kind: str, names: l
     folder = run.path / f"{kind}-gates" / "1"
     folder.mkdir(parents=True, exist_ok=True)
     status.show(run.path, status.text(status.WORKING, f"{kind} gates"))
+    # Each gate's passing log, attempt by attempt, for the tests it names flaky (flaky()).
+    mark = _seen(run)
     problems = implement.run_gates(names, ctx.settings, ctx.worktree, folder, ctx.env, run)
+    passing = _passing(run, mark, names)
     if not problems:
-        flaky(run, kind, names)
-        run.event(f"{kind}_gates.passed", attempt=1)
+        run.event(f"{kind}_gates.passed", attempt=1, **flaky(passing, names))
         return "passed"
     run.event(f"{kind}_gates.failed", attempt=1, problems=problems)
     logs = sorted((folder / "gates").glob("*.log"))
+    mark = _seen(run)
     if fix(ctx, fixer, f"the {kind} gates", logs, names, f"{kind}-gates-1"):
         # The fix's check ran these same gates on the tree placido then committed, and
         # they passed: running them again would repeat it, and a slow gate (a suite
         # against a deployment) took ten more minutes for nothing (#580, 2026-10-14).
-        flaky(run, kind, names)
-        run.event(f"{kind}_gates.passed", attempt=2, by="fix")
+        run.event(f"{kind}_gates.passed", attempt=2, by="fix", **flaky(_passing(run, mark, names), names))
         return "passed"
     failed = [n for n in names if any(p.startswith(f"gate {n} (`") for p in problems)]
     # Nothing fixed: the failed gates run once more before placido gives up, as a flaky
-    # test may pass then; #869's e2e was left failing on one try (2026-11-20).
+    # test may pass then; #869's e2e was left failing on one try (2026-11-20). The others
+    # keep their first run's logs: a fix that was not taken ran them on another tree.
     again = run.path / f"{kind}-gates" / "2"
     again.mkdir(parents=True, exist_ok=True)
     status.show(run.path, status.text(status.WORKING, f"{kind} gates, once more"))
+    mark = _seen(run)
     problems = implement.run_gates(failed or names, ctx.settings, ctx.worktree, again, ctx.env, run)
+    passing.update(_passing(run, mark, failed or names))
     if not problems:
-        flaky(run, kind, names)
-        run.event(f"{kind}_gates.passed", attempt=2, by="rerun")
+        run.event(f"{kind}_gates.passed", attempt=2, by="rerun", **flaky(passing, names))
         return "passed"
     run.event(f"{kind}_gates.failed", attempt=2, problems=problems)
     failed = [n for n in names if any(p.startswith(f"gate {n} (`") for p in problems)]
-    run.event(f"{kind}_gates.gave_up", gates=failed)
+    # The pull request opens flagged, and the gates that passed still say their flaky tests.
+    held = {n: log for n, log in passing.items() if n not in failed}
+    run.event(f"{kind}_gates.gave_up", gates=failed, **flaky(held, names))
     return "failed"
 
 
-def flaky(run: runlog.Run, kind: str, names: list[str]) -> None:
-    """Note, for each of the gates that just passed, the tests its log says passed only
-    when it ran them again (gate.FLAKY), as `<kind>_gates.flaky`: placido shows a passing
-    gate's log to nobody, so the pull request and the summary say them. Each gate's log
-    is that of its latest pass, run or reused, which is the one that just passed."""
+def _seen(run: runlog.Run) -> int:
+    """How many events the run has: the mark from which _passing reads an attempt's."""
+
+    return sum(1 for _ in runlog.read_events(run.path))
+
+
+def _passing(run: runlog.Run, mark: int, names: list[str]) -> dict[str, str]:
+    """The log of each of the gates that passed, run or reused, in the events after mark:
+    those of one attempt."""
 
     logs: dict[str, str] = {}
-    for event in runlog.read_events(run.path):
+    for n, event in enumerate(runlog.read_events(run.path)):
         passed = (event.get("event") == "gate.end" and event.get("exit") == 0) or event.get("event") == "gate.reused"
-        if passed and event.get("gate") in names and event.get("log"):
+        if n >= mark and passed and event.get("gate") in names and event.get("log"):
             logs[event["gate"]] = str(event["log"])
+    return logs
+
+
+def flaky(passing: dict[str, str], names: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """The tests each passing gate's log says passed only when it ran them again
+    (gate.FLAKY), up to gate.FLAKY_KEPT a gate, as the `flaky` field of the stage's own
+    passed or gave_up event: placido shows a passing gate's log to nobody, so the pull
+    request and the summary say them. Kept with the outcome, so a pass interrupted
+    before it was recorded leaves none behind. Empty when no log says any."""
+
+    notes = []
     for name in names:
-        tests = gate.flaky(Path(logs[name])) if name in logs else None
+        tests = gate.flaky(Path(passing[name])) if name in passing else None
         if tests is not None:
-            run.event(f"{kind}_gates.flaky", gate=name, tests=tests[:gate.FLAKY_KEPT], count=len(tests),
-                      log=logs[name])
+            notes.append({"gate": name, "tests": tests[:gate.FLAKY_KEPT], "count": len(tests), "log": passing[name]})
+    return {"flaky": notes} if notes else {}
 
 
 def fix(
