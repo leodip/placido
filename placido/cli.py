@@ -175,6 +175,14 @@ def cmd_spec(args: argparse.Namespace) -> int:
         return 1
     deferred = spec.deferral(result.path / "result.md")
     if deferred is not None:
+        # Checked again: an agent that quits right after writing its result ends the step
+        # with no check run (step.Step), and an incomplete one must not end the run.
+        problems = spec.deferral_problems(deferred)
+        if problems:
+            runner.status(status.text(status.STOPPED, "spec deferral incomplete"))
+            print(f"\nplacido: the interview's deferral is incomplete, so the run is not deferred: {' '.join(problems)}"
+                  f" See {result.path}; run placido spec again.", file=sys.stderr)
+            return 1
         return _defer(run, runner, worktree, deferred, result.path / "result.md")
     spec.seal(folder, run)
     runner.status(status.text(status.READY, "run placido run"))

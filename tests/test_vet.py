@@ -233,10 +233,15 @@ class Deferring(Interview):
     def status(self, text: str) -> None:
         status.show(self.run.path, text)
 
+    text = DEFERRAL  # the result the agent writes
+    check = True  # False: the agent quit right after writing, and the step ran no check
+
     def __call__(self, role, agent, task, **kwargs) -> StepResult:
         self.roles.append(role)
         folder = self.run.new_step_dir(role)
-        (folder / "result.md").write_text(DEFERRAL)
+        (folder / "result.md").write_text(self.text)
+        if not self.check:
+            return StepResult("success", folder)
         return StepResult("invalid" if kwargs["check"](folder / "result.md") else "success", folder)
 
 
@@ -314,6 +319,23 @@ class SpecCommandTest(unittest.TestCase):
                 self.assertEqual(cli.main(command), 1)
             self.assertIn("this run ended deferred (start once tool 2.16.0 is out); close it with placido close",
                           err.getvalue())
+
+    def test_an_incomplete_deferral_the_check_missed_ends_nothing(self):
+        # Codex, reviewing 444aead: an agent that quits right after writing its result
+        # ends the step with no check run, and the run was deferred on a bare header.
+        interview = Deferring(self.run, self.folder, CLEAN)
+        interview.text, interview.check = "Deferred:\n", False
+        err = io.StringIO()
+        env = {"PLACIDO_RUNS_DIR": str(self.root / "runs"), "PLACIDO_USER_CONFIG": str(self.root / "none.toml")}
+        with mock.patch.dict(os.environ, env), mock.patch.object(Path, "cwd", return_value=self.repo), \
+                mock.patch.object(cli, "_runner", return_value=(self.run, interview)), \
+                mock.patch.object(github, "post_deferral", side_effect=AssertionError("posted")), \
+                mock.patch("sys.stderr", err), redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["spec"]), 1)
+        self.assertIn("the interview's deferral is incomplete, so the run is not deferred", err.getvalue())
+        self.assertEqual(runlog.outcome(self.run.path), "unfinished")
+        self.assertIsNone(runlog.last_event(self.run.path, "spec.deferred"))
+        self.assertEqual(status.read(self.run.path), "stopped · spec deferral incomplete")
 
     def test_an_interrupted_post_leaves_the_run_deferred(self):
         # Codex, reviewing 444aead: run.end came after the post, so an interrupt left none,
