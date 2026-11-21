@@ -188,17 +188,19 @@ def _defer(run: runlog.Run, runner: step.Step, worktree: Path, deferred: spec.De
     """End the run as deferred: the interview settled with the user that nothing can
     be built until its trigger. The trigger and the reasons go on the issue when it is
     on GitHub; a post that fails says how to post it by hand. The run then waits for
-    `placido close`, as a finished one does, and never goes on to `placido run`."""
+    `placido close`, as a finished one does, and never goes on to `placido run`. The
+    interview decided the outcome, so it is recorded before the post, which an
+    interrupt could otherwise leave the run without."""
 
     run.event("spec.deferred", trigger=deferred.trigger, result=str(result))
+    run.event("run.end", outcome="deferred", reason=deferred.trigger)
+    runner.status(status.text(status.DONE, f"deferred: {deferred.trigger}"))
     posted, failed = None, ""
     try:
         posted = github.post_deferral(run, worktree, deferred)
     except (github.GitHubError, OSError) as error:
         failed = str(error)
         run.event("deferral.post_failed", error=failed)
-    run.event("run.end", outcome="deferred", reason=deferred.trigger)
-    runner.status(status.text(status.DONE, f"deferred: {deferred.trigger}"))
     summary.write(run.path)
     print(f"\nrun deferred, nothing built: {deferred.trigger}")
     if posted:

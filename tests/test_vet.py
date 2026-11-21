@@ -270,7 +270,7 @@ class SpecCommandTest(unittest.TestCase):
         self.assertEqual(interview.roles, ["spec", "vet"])
         self.assertEqual(interview.sent_back, [])
 
-    def defer(self) -> tuple[Deferring, str, str]:
+    def defer(self, code: int = 0) -> tuple[Deferring, str, str]:
         interview = Deferring(self.run, self.folder, CLEAN)
         user = self.root / "user.toml"
         user.write_text("[spec]\nthen_run = true\n")  # a deferred run never goes on
@@ -280,7 +280,7 @@ class SpecCommandTest(unittest.TestCase):
                 mock.patch.object(cli, "_runner", return_value=(self.run, interview)), \
                 mock.patch.object(cli, "cmd_run", side_effect=AssertionError("placido run")), \
                 mock.patch("sys.stderr", err), redirect_stdout(out):
-            self.assertEqual(cli.main(["spec"]), 0)
+            self.assertEqual(cli.main(["spec"]), code)
         return interview, out.getvalue(), err.getvalue()
 
     def test_a_deferral_ends_the_run_as_deferred(self):
@@ -314,6 +314,14 @@ class SpecCommandTest(unittest.TestCase):
                 self.assertEqual(cli.main(command), 1)
             self.assertIn("this run ended deferred (start once tool 2.16.0 is out); close it with placido close",
                           err.getvalue())
+
+    def test_an_interrupted_post_leaves_the_run_deferred(self):
+        # Codex, reviewing 444aead: run.end came after the post, so an interrupt left none,
+        # and placido close then called the run abandoned.
+        with mock.patch.object(github, "post_deferral", side_effect=KeyboardInterrupt):
+            self.defer(code=130)
+        self.assertEqual(runlog.outcome(self.run.path), "deferred")
+        self.assertEqual(status.read(self.run.path), "done · deferred: start once tool 2.16.0 is out")
 
     def test_a_deferral_that_cannot_be_posted_says_how_to_post_it(self):
         with mock.patch.object(github, "post_deferral", side_effect=github.GitHubError("gh issue comment: HTTP 502")):
