@@ -120,7 +120,7 @@ class DeferralTest(DeliverCase):
                              "- 10 of 12 cold runs failed in /home/me/.herdr/worktrees/x, on host 10.0.0.7.")
 
     def test_the_trigger_and_the_why_go_on_the_issue_and_the_evidence_does_not(self):
-        url = github.post_deferral(self.run, self.repo, self.DEFERRAL, self.hub)
+        url = github.post_deferral(self.run, self.repo, self.DEFERRAL, self.gh)
         self.assertEqual(url, "https://github.com/leodip/goiabada/issues/439#issuecomment-9001")
         comment = next(argv for argv in self.gh.calls if argv[1:3] == ["issue", "comment"])
         self.assertEqual(comment[3:6], ["439", "-R", "leodip/goiabada"])
@@ -134,7 +134,7 @@ class DeferralTest(DeliverCase):
         record = runlog.read_record(self.run.path)
         del record["issue_number"]
         (self.run.path / "run.json").write_text(json.dumps({**record, "issue_source": "/repo/issues/02-x.md"}))
-        self.assertIsNone(github.post_deferral(self.run, self.repo, self.DEFERRAL, self.hub))
+        self.assertIsNone(github.post_deferral(self.run, self.repo, self.DEFERRAL, self.gh))
         self.assertEqual(self.gh.calls, [])
         self.assertEqual(self.events("deferral.posted"), [])
 
@@ -145,8 +145,9 @@ class DeferralTest(DeliverCase):
             if origin:
                 sh(self.repo, "git", "remote", "add", "origin", origin)
             with self.subTest(origin=origin):
-                github.post_deferral(self.run, self.repo, self.DEFERRAL, self.hub)
-                comment = [argv for argv in self.gh.calls if argv[1:3] == ["issue", "comment"]][-1]
+                before = len(self.gh.calls)
+                github.post_deferral(self.run, self.repo, self.DEFERRAL, self.gh)
+                (comment,) = [argv for argv in self.gh.calls[before:] if argv[1:3] == ["issue", "comment"]]
                 self.assertEqual(comment[3:6], ["439", "-R", "leodip/goiabada"])
 
 
