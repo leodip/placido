@@ -172,7 +172,7 @@ def last_failure(transcript: Path, agent: str, now: datetime | None = None) -> F
     """The failure that ended the agent's last turn, or None if it did not fail."""
 
     now = now or datetime.now().astimezone()
-    reader = {"codex": _codex, "claude": _claude, "pi": _pi}.get(agent)
+    reader = {"codex": _codex, "claude": _claude, "agy": _agy, "pi": _pi}.get(agent)
     return reader(list(_lines(transcript)), now) if reader else None
 
 
@@ -300,6 +300,19 @@ def _pi(events: list[dict[str, Any]], now: datetime) -> Failure | None:
         when = datetime.fromtimestamp(stamp / 1000).astimezone() if isinstance(stamp, (int, float)) else now
         resets_at = parse_reset(text, when)
     return Failure(kind, text, resets_at)
+
+
+def _agy(events: list[dict[str, Any]], now: datetime) -> Failure | None:
+    """agy writes one row per step. A tool's error is a GENERIC row in status ERROR, which
+    the model goes on from; a turn that failed ends on a row of the model's own in that
+    status. Read from agy 1.5.14's rows; no failed turn has been seen yet (2026-11-21)."""
+
+    last = next((e for e in reversed(events) if e.get("source") == "MODEL"), None)
+    if last is None or last.get("type") == "GENERIC" or last.get("status") != "ERROR":
+        return None
+    text = " ".join(str(last.get("error") or last.get("content") or "turn ended in error").split())
+    kind = classify(text)
+    return Failure(kind, text, parse_reset(text, now) if kind == "quota" else None)
 
 
 # ---- screens -----------------------------------------------------------------------------

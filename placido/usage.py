@@ -8,6 +8,8 @@ transcript holds every earlier round too. Each agent records usage its own way:
 - codex: running totals in `token_count` events, so a step's share is the last
   total in its window minus the last one before it; the same events carry the
   ChatGPT usage window's `used_percent`.
+- agy: `input_tokens` (without the cached part), `cache_read_tokens` and
+  `output_tokens` on each of the model's PLANNER_RESPONSE rows, stamped `created_at`.
 - pi: `usage` on each assistant message, with the dollars OpenRouter charged.
 """
 
@@ -89,7 +91,7 @@ def read(transcript: Path, agent: str, start: datetime, end: datetime) -> Usage:
             continue
         if isinstance(event, dict):
             events.append(event)
-    reader = {"claude": _claude, "codex": _codex, "pi": _pi}.get(agent)
+    reader = {"claude": _claude, "codex": _codex, "agy": _agy, "pi": _pi}.get(agent)
     usage = reader(events, start, end) if reader else Usage()
     if usage.total or usage.cost:
         usage.agents = {agent}
@@ -168,6 +170,17 @@ def _window(limits: Any) -> tuple[float, int | None] | None:
         minutes = primary.get("window_minutes")
         return float(primary["used_percent"]), int(minutes) if minutes else None
     return None
+
+
+def _agy(events: list[dict[str, Any]], start: datetime, end: datetime) -> Usage:
+    usage = Usage()
+    for event in events:
+        if event.get("type") != "PLANNER_RESPONSE" or not _inside(event, start, end, "created_at"):
+            continue
+        usage.input += int(event.get("input_tokens") or 0)
+        usage.cache_read += int(event.get("cache_read_tokens") or 0)
+        usage.output += int(event.get("output_tokens") or 0)
+    return usage
 
 
 def _pi(events: list[dict[str, Any]], start: datetime, end: datetime) -> Usage:

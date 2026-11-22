@@ -14,7 +14,9 @@ from placido.proc import Result, Runner, run_command
 
 OK, WARN, FAIL = "ok", "warn", "fail"
 
-AGENTS = ("claude", "codex", "pi")
+AGENTS = ("claude", "codex", "agy", "pi")
+# Herdr names an integration after the agent, except agy's.
+INTEGRATIONS = {"agy": "antigravity-cli"}
 
 # Any of these switches claude or codex from the subscription to paid API billing.
 BILLING_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY")
@@ -125,6 +127,16 @@ def check_codex_login(run: Runner) -> Check:
     return Check(name, FAIL, f"not logged in: {_first_line(out)}; run `codex login`")
 
 
+def check_agy_login(run: Runner) -> Check:
+    """agy has no login status command; listing its models needs the sign-in."""
+
+    name = "agy login"
+    result = run(["agy", "models"])
+    if "gemini-" in result.out:
+        return Check(name, OK, "signed in")
+    return Check(name, FAIL, f"cannot list models: {_first_line(result.out)}; run `agy` to sign in")
+
+
 def check_pi_login(run: Runner) -> Check:
     name = "pi login"
     result = run(["pi", "auth", "check", "--provider", "openrouter", "--json"])
@@ -154,17 +166,18 @@ def check_integrations(run: Runner) -> list[Check]:
     checks = []
     for agent in AGENTS:
         name = f"{agent} integration"
-        state = states.get(agent, "")
+        integration = INTEGRATIONS.get(agent, agent)
+        state = states.get(integration, "")
         if state.startswith("current"):
             checks.append(Check(name, OK, state.split(" (/")[0]))
         elif not state or state.startswith("not installed"):
-            checks.append(Check(name, FAIL, f"not installed; run `herdr integration install {agent}`"))
+            checks.append(Check(name, FAIL, f"not installed; run `herdr integration install {integration}`"))
         else:
-            checks.append(Check(name, WARN, f"{state.split(' (/')[0]}; run `herdr integration install {agent}`"))
+            checks.append(Check(name, WARN, f"{state.split(' (/')[0]}; run `herdr integration install {integration}`"))
     return checks
 
 
-LOGIN_CHECKS = {"claude": check_claude_login, "codex": check_codex_login, "pi": check_pi_login}
+LOGIN_CHECKS = {"claude": check_claude_login, "codex": check_codex_login, "agy": check_agy_login, "pi": check_pi_login}
 
 
 def check_codex_daemon() -> Check:

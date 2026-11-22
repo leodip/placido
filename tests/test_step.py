@@ -39,6 +39,7 @@ class FakeHerdr:
         self.pending: str | None = None  # the behaviour of the turn in progress
         self.starting = False
         self.codex = False  # the trust question is codex's: yes first, marked with ›
+        self.agy = False  # the trust question is agy's: yes first, marked with >
         self.notice = False  # codex's startup warning panel is showing
         self.questions = 0  # questions an interviewing agent asks before writing its result
         self.refuses_exit = False  # the agent ignores its exit command
@@ -165,6 +166,13 @@ class FakeHerdr:
                 "command-line configuration overrides (-c) requires embedded mode.\n"
                 "k keep & next · esc dismiss & close · ctrl+o copy\n"
             )
+        if self.trust is not None and self.agy:
+            marks = [">" if self.trust == i else " " for i in (0, 1)]
+            return (
+                "Accessing workspace:\n\n/wt\n\nDo you trust the contents of this project?\n\n"
+                "Antigravity CLI requires permission to read, edit, and execute files here.\n\n"
+                f"{marks[0]} Yes, I trust this folder\n{marks[1]} No, exit\n\n  ↑/↓ Navigate · enter Confirm\n"
+            )
         if self.trust is not None and self.codex:
             marks = ["›" if self.trust == i else " " for i in (0, 1)]
             return (
@@ -207,7 +215,7 @@ class FakeHerdr:
             if key == "down":
                 self.trust = min(1, self.trust + 1)
             elif key == "enter" and self.trust is not None:
-                yes, self.trust = self.trust == (0 if self.codex else 1), None
+                yes, self.trust = self.trust == (0 if self.codex or self.agy else 1), None
                 self.dialog, self.status, self.alive = False, "idle", yes
 
     def sleep(self, seconds):
@@ -533,6 +541,15 @@ class DialogTest(StepTestCase):
         self.assertEqual(keys, [("enter",)])  # "Trust and continue" is selected from the start
         self.assertIn("agent.trusted", self.events())
 
+    def test_agy_trust_question_is_answered_too(self):
+        self.fake.startup_dialog = "trust"
+        self.fake.agy = True
+        result = self.step()
+        self.assertEqual(result.outcome, "success")
+        keys = [c[1] for c in self.fake.calls if c[0] == "keys"]
+        self.assertEqual(keys, [("enter",)])  # "Yes, I trust this folder" is selected from the start
+        self.assertIn("agent.trusted", self.events())
+
     def test_open_warnings_panel_waits_for_the_user(self):
         # Codex's warnings panel only opens when the user presses F2; placido must not
         # type into it, and leaves closing it to the user.
@@ -674,7 +691,7 @@ class TabTest(StepTestCase):
         self.assertFalse(any(c[0] in ("exit", "close") for c in self.fake.calls))
 
     def test_exit_command_per_agent(self):
-        self.assertEqual(step.EXIT_COMMANDS, {"claude": "/exit", "codex": "/quit", "pi": "/quit"})
+        self.assertEqual(step.EXIT_COMMANDS, {"claude": "/exit", "codex": "/quit", "agy": "/exit", "pi": "/quit"})
 
 
 class GoneTabTest(StepTestCase):
@@ -812,12 +829,17 @@ class TranscriptTest(StepTestCase):
         codex = self.home / ".codex" / "sessions" / "2026" / "10" / "02"
         codex.mkdir(parents=True)
         (codex / "rollout-2026-10-02T05-34-20-cid.jsonl").write_text("")
+        agy = self.home / ".gemini" / "antigravity-cli" / "brain" / "aid" / ".system_generated" / "logs"
+        agy.mkdir(parents=True)
+        (agy / "transcript.jsonl").write_text("")
+        (agy / "transcript_full.jsonl").write_text("")
         pi = self.home / ".pi" / "agent" / "sessions" / "--wt--"
         pi.mkdir(parents=True)
         (pi / "2026-10-02T08-34-27-355Z_pid.jsonl").write_text("")
         cases = {
             "claude": ({"agent": "claude", "kind": "id", "value": "abc-123"}, "abc-123.jsonl"),
             "codex": ({"agent": "codex", "kind": "id", "value": "cid"}, "rollout-2026-10-02T05-34-20-cid.jsonl"),
+            "agy": ({"agent": "agy", "kind": "id", "value": "aid"}, "transcript.jsonl"),
             "pi": ({"agent": "pi", "kind": "id", "value": "pid"}, "2026-10-02T08-34-27-355Z_pid.jsonl"),
         }
         for agent, (session, name) in cases.items():
@@ -850,6 +872,17 @@ class NamesTest(unittest.TestCase):
             step.launch_args(AgentSpec("pi", "a/b", "low")),
             ["--provider", "openrouter", "--model", "a/b", "--thinking", "low"],
         )
+
+    def test_agy_runs_freely_and_trusts_the_folder_it_starts_in(self):
+        args = step.launch_args(AgentSpec("agy", "gemini-4-neon", "high"), cwd=Path("/wt"))
+        self.assertEqual(args[:5], ["--model", "gemini-4-neon", "--effort", "high", "--dangerously-skip-permissions"])
+        self.assertEqual(args[5], "--settings")
+        self.assertEqual(json.loads(args[6]), {
+            "allowNonWorkspaceAccess": True, "enableTerminalSandbox": False, "trustedWorkspaces": ["/wt"],
+        })
+        self.assertNotIn(" ", args[6])  # one word on the shell line Herdr types
+        claude = step.launch_args(AgentSpec("claude", "opus", "high"), cwd=Path("/wt"))
+        self.assertFalse(any("trustedWorkspaces" in arg for arg in claude))
 
 
     def test_claude_and_codex_start_with_their_memory_off(self):

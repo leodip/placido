@@ -24,7 +24,7 @@ class DefaultsTest(unittest.TestCase):
         roles = self.config.roles
         self.assertEqual(roles["spec"].agent, AgentSpec("claude", "fable", "high"))
         self.assertEqual(roles["implement"].agent, AgentSpec("claude", "opus", "high"))
-        self.assertEqual(roles["review"].agent, AgentSpec("codex", "gpt-6.2-sol", "xhigh", "fast"))
+        self.assertEqual(roles["review"].agent, AgentSpec("agy", "gemini-4-neon", "high"))
 
     def test_fallback_chain_is_claude_then_deepseek(self):
         self.assertEqual(
@@ -134,13 +134,20 @@ class OverrideTest(unittest.TestCase):
 
     def test_changing_the_agent_alone_picks_its_default_model(self):
         c = load_text('[roles.review]\nagent = "claude"\n')
-        self.assertEqual(c.roles["review"].agent, AgentSpec("claude", "opus", "xhigh", "fast"))
+        self.assertEqual(c.roles["review"].agent, AgentSpec("claude", "opus", "high"))
         c = load_text('[roles.spec]\nagent = "pi"\n')
         self.assertEqual(c.roles["spec"].agent.model, "deepseek/deepseek-v4.1-flash")
 
     def test_tier_can_be_turned_off(self):
-        c = load_text('[roles.review]\ntier = "default"\n')
+        c = load_text('[roles.review]\nagent = "codex"\ntier = "fast"\n')
+        self.assertEqual(c.roles["review"].agent.tier, "fast")
+        c = load_text('[roles.review]\nagent = "codex"\ntier = "default"\n')
         self.assertEqual(c.roles["review"].agent.tier, "default")
+
+    def test_agy_names_the_model_and_the_effort_apart(self):
+        # agy 1.5.14 ignored gemini-4-neon-high in an interactive start.
+        self.assertEqual(AgentSpec("agy", "gemini-4-neon", "high").args(),
+                         ["--model", "gemini-4-neon", "--effort", "high"])
 
     def test_global_fallback_replaces_the_chain(self):
         c = load_text('[[fallback]]\nagent = "pi"\nmodel = "x/y"\neffort = "low"\n')
@@ -298,10 +305,10 @@ class PRSettingsTest(unittest.TestCase):
         c = config.load(None)
         self.assertEqual(
             [r.agent for r in c.pr.reviewers],
-            [AgentSpec("claude", "opus", "xhigh"), AgentSpec("codex", "gpt-6.2-sol", "xhigh", "fast")],
+            [AgentSpec("claude", "opus", "xhigh"), AgentSpec("agy", "gemini-4-neon", "high")],
         )
         self.assertEqual(c.pr.reviewers[1].fallback, c.roles["review"].fallback)
-        self.assertEqual(c.pr.host_paths, (".placido", ".claude", ".codex", ".mcp.json"))
+        self.assertEqual(c.pr.host_paths, (".placido", ".claude", ".codex", ".agents", ".gemini", ".mcp.json"))
         self.assertEqual(c.pr.gates, ())
         self.assertEqual(c.roles["scan"].agent, AgentSpec("claude", "opus", "high"))
         self.assertEqual(c.roles["judge"].agent, AgentSpec("claude", "opus", "high"))
@@ -350,8 +357,8 @@ class PRSettingsTest(unittest.TestCase):
     def test_described(self):
         text = config.describe(config.load(None), Path("."))
         self.assertIn("[pr]\nreviewer A claude --model opus --effort xhigh", text)
-        self.assertIn("reviewer B codex -m gpt-6.2-sol", text)
-        self.assertIn("host paths .placido, .claude, .codex, .mcp.json", text)
+        self.assertIn("reviewer B agy --model gemini-4-neon --effort high", text)
+        self.assertIn("host paths .placido, .claude, .codex, .agents, .gemini, .mcp.json", text)
 
 
 class ReviewCommentsTest(unittest.TestCase):
@@ -409,7 +416,7 @@ class ConfigCommandTest(unittest.TestCase):
         self.assertIn("unit  make unit", out)
         self.assertIn("slice  unit", out)
         self.assertIn(
-            "review     codex -m gpt-6.2-sol -c model_reasoning_effort=xhigh -c service_tier=fast", out
+            "review     agy --model gemini-4-neon --effort high", out
         )
         self.assertIn("  then     pi --provider openrouter", out)
         self.assertIn("limits.quota_wait           2h", out)

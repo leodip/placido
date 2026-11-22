@@ -91,6 +91,17 @@ class PiTest(UsageCase):
         self.assertAlmostEqual(found.cost, 0.5)
 
 
+class AgyTest(UsageCase):
+    def test_the_model_rows_inside_the_step(self):
+        row = {"type": "PLANNER_RESPONSE", "source": "MODEL", "created_at": at(4),
+               "input_tokens": 2948, "cache_read_tokens": 7350, "output_tokens": 172}
+        tool = {"type": "GENERIC", "source": "MODEL", "created_at": at(4), "content": "Created file."}
+        before = row | {"created_at": "2026-01-01T00:00:00Z"}
+        found = self.read("agy", before, row, tool, row | {"created_at": at(5)})
+        self.assertEqual((found.input, found.cache_read, found.output), (5896, 14700, 344))
+        self.assertEqual(found.agents, {"agy"})
+
+
 class AddTest(unittest.TestCase):
     def test_keeps_the_first_and_last_window_readings(self):
         a = usage.Usage(input=1, window_first=40.0, window_last=41.0, window_minutes=10080, agents={"codex"})

@@ -842,7 +842,7 @@ def cmd_log(args: argparse.Namespace) -> int:
 
 def _override_options(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("one-off changes to the role's agent, for this command only")
-    group.add_argument("--agent", help="claude, codex, or pi")
+    group.add_argument("--agent", help="claude, codex, agy, or pi")
     group.add_argument("--model", help="the model, as the agent names it")
     group.add_argument("--effort", help="low, medium, high, xhigh, or max")
 

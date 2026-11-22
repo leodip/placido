@@ -282,6 +282,27 @@ class PiTest(TranscriptCase):
         self.assertIsNone(self.failure("pi", pi_message("a", "aborted", "Request was aborted")))
 
 
+def agy_row(kind: str, status: str = "DONE", error: str | None = None) -> dict:
+    row = {"step_index": 1, "source": "MODEL", "type": kind, "status": status, "created_at": "2026-10-02T15:00:00Z"}
+    return row | ({"error": error} if error else {})
+
+
+class AgyTest(TranscriptCase):
+    def test_a_successful_turn(self):
+        self.assertIsNone(self.failure("agy", agy_row("PLANNER_RESPONSE")))
+
+    def test_a_tools_error_is_not_the_turns(self):
+        denied = agy_row("GENERIC", "ERROR", "permission check failed for write_file")
+        self.assertIsNone(self.failure("agy", agy_row("PLANNER_RESPONSE"), denied))
+        self.assertIsNone(self.failure("agy", denied, agy_row("PLANNER_RESPONSE")))
+
+    def test_a_failed_turn(self):
+        found = self.failure("agy", agy_row("PLANNER_RESPONSE"), agy_row("PLANNER_RESPONSE", "ERROR", "503 the model is overloaded"))
+        self.assertEqual(found.kind, "transient")
+        found = self.failure("agy", agy_row("PLANNER_RESPONSE", "ERROR", "Quota exceeded for this model"))
+        self.assertEqual(found.kind, "quota")
+
+
 class MissingTest(TranscriptCase):
     def test_no_file(self):
         self.assertIsNone(outcomes.last_failure(self.path, "codex", NOW))

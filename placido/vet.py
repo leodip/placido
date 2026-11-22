@@ -79,10 +79,10 @@ def vet(runner: Step, agent: config.AgentSpec, run_dir: Path, worktree: Path) ->
     agreement is sealed unchecked rather than held)."""
 
     folder = runner.run.new_step_dir("vet")
-    result = runner(
-        "vet", agent, prompt(run_dir, worktree, folder), check=check, folder=folder,
-        confined=(worktree, spec.issue_dir(run_dir)),
-    )
+    # It runs in the worktree as freely as the review does, no longer confined: it reads
+    # the project's own code, and its default agent, agy, has no confined mode placido
+    # uses (decided 2026-11-21).
+    result = runner("vet", agent, prompt(run_dir, worktree, folder), check=check, folder=folder)
     if result.outcome != "success":
         runner.run.event("vet.skipped", outcome=result.outcome)
         print(f"\nplacido: the agreement's check ended {result.outcome.replace('-', ' ')};"

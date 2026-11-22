@@ -16,8 +16,8 @@ placido run            slices built and committed, final checks, review, pull re
 placido close 439      after you merge: teardown, worktree removed, main pulled, branch deleted
 ```
 
-It also reviews pull requests other people send: `placido pr 602` has a Claude and a
-Codex reviewer each review the pull request on its own, cross-check each other, and a
+It also reviews pull requests other people send: `placido pr 602` has a Claude and an
+Antigravity reviewer each review the pull request on its own, cross-check each other, and a
 judge settle both into one review, with a drafted comment for the contributor. What
 the judge leaves to you, you decide in a conversation, question by question. Nothing
 is posted, pushed, or merged until you pick it (see
@@ -100,12 +100,13 @@ resumes where it left off when you run the same command again.
 
 > **Read this first.** Placido runs its agents with every approval bypassed (claude
 > with `--dangerously-skip-permissions`, codex with
-> `--dangerously-bypass-approvals-and-sandbox`), so an unattended run never stalls on
-> a permission prompt. The agents can run any command your user can. Use placido only
+> `--dangerously-bypass-approvals-and-sandbox`, agy with `--dangerously-skip-permissions`,
+> its sandbox off and its folder trusted), so an unattended run never stalls on a
+> permission prompt. The agents can run any command your user can. Use placido only
 > on code and machines where you accept that, such as a dedicated user, VM, or
 > container. Nothing is pushed until the review is done. The agents keep no memory
 > between sessions: placido turns off Claude's auto-memory and Codex's memories for
-> every agent it starts, so what one agent read, such as a stranger's pull request,
+> every agent it starts (agy 1.5.14 has no such setting), so what one agent read, such as a stranger's pull request,
 > never reaches the next, nor your own sessions in the project.
 
 ## Requirements
@@ -116,7 +117,10 @@ resumes where it left off when you run the same command again.
   pane.
 - **The agent CLIs**, logged in:
   - [Claude Code](https://claude.com/claude-code) (`claude`), on a Claude subscription;
-  - [Codex CLI](https://github.com/openai/codex) (`codex`), on a ChatGPT subscription;
+  - [Antigravity CLI](https://antigravity.google/docs/cli/reference/) (`agy`), signed in with
+    Google, for the default reviewer;
+  - [Codex CLI](https://github.com/openai/codex) (`codex`), on a ChatGPT subscription, if
+    a project names it;
   - [pi](https://github.com/badlogic/pi-mono), with an OpenRouter key, used only as a
     last fallback.
 
@@ -134,6 +138,7 @@ git clone https://github.com/leodip/placido.git ~/code/placido
 ln -s ~/code/placido/bin/placido ~/.local/bin/placido   # any folder on your PATH
 
 herdr integration install claude
+herdr integration install antigravity-cli
 herdr integration install codex
 herdr integration install pi
 
@@ -251,9 +256,9 @@ Each role has an agent, model, and effort, and a fallback chain:
 | Role | Default |
 |---|---|
 | `spec` (the interview) | claude, Fable, high effort |
-| `vet` (checks the agreement against the code before it is sealed) | codex, gpt-6.2-sol, xhigh, fast tier |
+| `vet` (checks the agreement against the code before it is sealed) | agy, Gemini 4 Neon, high |
 | `implement` | claude, Opus, high |
-| `review` | codex, gpt-6.2-sol, xhigh, fast tier |
+| `review` | agy, Gemini 4 Neon, high |
 | `fix` | as `implement` |
 | `retro` | claude, Opus, high (it reads whole runs, so not Fable like `spec`) |
 | `scan` (`placido pr`, confined) | claude, Opus, high |
@@ -296,10 +301,10 @@ ci_wait        = "1h"  # wait this long for CI on the pull request
 [pr]                   # placido pr: reviewing other people's pull requests
 reviewers = [          # each reviews on its own, in this order; each may name a fallback list
   { agent = "claude", model = "opus", effort = "xhigh" },
-  { agent = "codex", model = "gpt-6.2-sol", effort = "xhigh", tier = "fast" },
+  { agent = "agy", model = "gemini-4-neon", effort = "high" },
 ]
 gates = []             # commands run once before the reviews; none named: the slice and final gates
-host_paths = [".placido", ".claude", ".codex", ".mcp.json"]  # run here: changes run on the scan's word
+host_paths = [".placido", ".claude", ".codex", ".agents", ".gemini", ".mcp.json"]  # run here: changes run on the scan's word
 parallel   = true      # reviewers at once, each in a worktree and stack of its own
 fix_rounds = 3         # fixes, each reviewed in full in a round of its own, before the menu asks again
 ```

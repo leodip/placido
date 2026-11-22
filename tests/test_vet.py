@@ -128,7 +128,7 @@ class VetStepTest(VetTestCase):
         self.assertEqual((role, agent), ("vet", self.agent))
         self.assertEqual(folder.name, "01-vet")
         self.assertIn(str(folder / vet.FILE), task)
-        self.assertEqual(kwargs["confined"], (self.worktree, self.folder))
+        self.assertNotIn("confined", kwargs)  # it runs as freely as the review (2026-11-21)
         self.assertIn("found 2 problems, in " + str(folder / vet.FILE), problem)
         self.assertIn("ask the user as an interview question first", problem)
         self.assertEqual([e["findings"] for e in self.events("vet.done")], [2])
@@ -395,7 +395,7 @@ class PostByHandTest(unittest.TestCase):
 class RoleTest(unittest.TestCase):
     def test_another_vendor_than_the_interview_by_default(self):
         roles = settings().roles
-        self.assertEqual(roles["vet"].agent, config.AgentSpec("codex", "gpt-6.2-sol", "xhigh", "fast"))
+        self.assertEqual(roles["vet"].agent, config.AgentSpec("agy", "gemini-4-neon", "high"))
         self.assertNotEqual(roles["vet"].agent.agent, roles["spec"].agent.agent)
 
     def test_a_project_can_change_it(self):

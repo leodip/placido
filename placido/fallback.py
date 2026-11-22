@@ -20,9 +20,9 @@ from placido.config import AgentSpec, Config
 SWITCH = ("refusal", "quota", "unavailable")  # failures another agent may get past
 WHAT = {"refusal": "refused it", "quota": "is out of quota", "unavailable": "cannot run for this login"}
 
-# Whose quota each agent spends: claude and codex run on their subscriptions, and
+# Whose quota each agent spends: claude, codex and agy run on their subscriptions, and
 # pi always names OpenRouter.
-SUBSCRIPTION = {"claude": "anthropic", "codex": "chatgpt", "pi": "openrouter"}
+SUBSCRIPTION = {"claude": "anthropic", "codex": "chatgpt", "agy": "google", "pi": "openrouter"}
 
 
 class Chain:

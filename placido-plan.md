@@ -2604,3 +2604,22 @@ ran:
   hold them. Two gates whose log names collide is an accepted risk, and the gate's
   name in the pull request was public already, in the config and the failing gates'
   line.
+- The reviewer moves from Codex to Antigravity: `vet`, `review` and `placido pr`'s
+  second reviewer default to agy on Gemini 4 Neon at high, in place of codex's
+  gpt-6.2-sol at xhigh (decided with the user). agy is a fourth agent kind. It runs as
+  freely as the others: `--dangerously-skip-permissions`, and through `--settings`,
+  which agy never saves, non-workspace access on (a step's prompt and result are
+  outside the worktree), its terminal sandbox off (it hides `~/.ssh` and cuts the
+  network), and the folder it starts in trusted, since agy asks once per new folder
+  and has no flag to skip it. Measured through Herdr with agy 1.5.14: it read and
+  wrote outside its folder, reached the network and ran ssh, asking nothing. The
+  model goes without its effort suffix (`--model gemini-4-neon --effort high`): an
+  interactive start ignored `gemini-4-neon-high`. Its transcript is
+  `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl`,
+  read for usage and a failed turn; Herdr names its integration `antigravity-cli`,
+  and `placido doctor` checks the sign-in by listing models. `.agents` and `.gemini`,
+  which agy reads in a project, join `pr.host_paths`. No setting turns off agy's
+  knowledge items, an accepted gap.
+- The vet no longer runs confined: the user wants the reviewers free, and agy has no
+  confined mode placido uses. `placido pr`'s scan of a contributor's pull request
+  stays confined, so it still needs claude or codex.

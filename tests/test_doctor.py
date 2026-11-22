@@ -12,15 +12,18 @@ CLAUDE_SUBSCRIPTION = json.dumps(
 INTEGRATIONS = """pi: current (v9) (/home/u/.pi/agent/extensions/herdr-agent-state.ts)
 omp: not installed (/home/u/.omp/agent/extensions/herdr-omp-agent-state.ts)
 claude: current (v10) (/home/u/.claude/hooks/herdr-agent-state.sh)
-codex: current (v8) (/home/u/.codex/herdr-agent-state.sh)"""
+codex: current (v8) (/home/u/.codex/herdr-agent-state.sh)
+antigravity-cli: current (v3) (/home/u/.gemini/config/hooks/herdr-agent-state.sh)"""
 
 HEALTHY = {
     "herdr --version": Result(0, "herdr 0.9.3"),
     "claude --version": Result(0, "2.1.287 (Claude Code)"),
     "codex --version": Result(0, "codex-cli 0.160.0"),
+    "agy --version": Result(0, "1.5.14"),
     "pi --version": Result(0, "1.0.0"),
     "claude auth status": Result(0, CLAUDE_SUBSCRIPTION),
     "codex login status": Result(0, "Logged in using ChatGPT"),
+    "agy models": Result(0, "Fetching available models...\ngemini-4-neon-high\tGemini 4 Neon (High)"),
     "pi auth check --provider openrouter --json": Result(
         0, '{"status":"ready","provider":"openrouter","authType":"api_key"}'
     ),
@@ -68,9 +71,10 @@ class HealthyMachineTest(unittest.TestCase):
                 "herdr", "herdr pane",
                 "claude", "claude login", "claude bypass", "claude compact",
                 "codex", "codex login", "codex daemon",
+                "agy", "agy login",
                 "pi", "pi login",
                 "billing",
-                "claude integration", "codex integration", "pi integration", "email",
+                "claude integration", "codex integration", "agy integration", "pi integration", "email",
             ],
         )
         self.assertEqual({c.status for c in checks.values()}, {OK})
@@ -139,6 +143,11 @@ class LoginTest(unittest.TestCase):
         check = FakeMachine({"codex login status": out}).checks()["codex login"]
         self.assertEqual(check.status, FAIL)
         self.assertIn("API key", check.detail)
+
+    def test_agy_signed_out_fails(self):
+        check = FakeMachine({"agy models": Result(1, "authentication required")}).checks()["agy login"]
+        self.assertEqual(check.status, FAIL)
+        self.assertIn("authentication required", check.detail)
 
     def test_codex_logged_out_fails(self):
         check = FakeMachine({"codex login status": Result(1, "Not logged in")}).checks()["codex login"]
@@ -224,6 +233,11 @@ class IntegrationTest(unittest.TestCase):
         checks = self.status(INTEGRATIONS.replace("codex: current (v8)", "codex: not installed"))
         self.assertEqual(checks["codex integration"].status, FAIL)
         self.assertIn("herdr integration install codex", checks["codex integration"].detail)
+
+    def test_agy_is_named_antigravity_cli_by_herdr(self):
+        checks = self.status(INTEGRATIONS.replace("antigravity-cli: current (v3)", "antigravity-cli: not installed"))
+        self.assertEqual(checks["agy integration"].status, FAIL)
+        self.assertIn("herdr integration install antigravity-cli", checks["agy integration"].detail)
 
     def test_absent_from_the_list_fails(self):
         checks = self.status("claude: current (v10) (/x)\ncodex: current (v8) (/y)")

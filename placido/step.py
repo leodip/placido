@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import time
@@ -21,6 +22,8 @@ from placido.herdr import UNANSWERED, Herdr, HerdrError
 UNATTENDED = {
     "claude": ["--dangerously-skip-permissions"],
     "codex": ["--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust"],
+    # agy also needs settings no flag gives: see agy_settings.
+    "agy": ["--dangerously-skip-permissions"],
     "pi": [],
 }
 
@@ -33,6 +36,9 @@ UNATTENDED = {
 NO_MEMORY = {
     "claude": ["--settings", str(Path(__file__).with_name("claude-settings.json"))],
     "codex": ["-c", "features.memories=false"],
+    # agy 1.5.14 keeps "knowledge items" across conversations and has no setting that
+    # turns them off; none showed in a reviewer's session (2026-11-21).
+    "agy": [],
     "pi": [],
 }
 
@@ -43,6 +49,7 @@ NO_MEMORY = {
 NO_UPDATE_PROMPT = {
     "claude": [],
     "codex": ["-c", "check_for_update_on_startup=false"],
+    "agy": [],  # agy 1.5.14 offered no update at its start
     "pi": [],
 }
 
@@ -54,8 +61,23 @@ NO_UPDATE_PROMPT = {
 NO_USER_MODES = {
     "claude": [],
     "codex": ["-c", "daybreak=false"],
+    "agy": [],  # its --model and --effort win over the user's own /model choice
     "pi": [],
 }
+
+# Decided 2026-11-21: agy (Antigravity) runs as freely as the others do with their
+# bypasses. --dangerously-skip-permissions covers commands, the network, and tools; a
+# file outside the folder it starts in, such as its step folder's prompt and result,
+# still asks unless allowNonWorkspaceAccess is on; its terminal sandbox, which hides
+# ~/.ssh and cuts the network, stays off; and it asks once per new folder whether to
+# trust it, which trustedWorkspaces answers for this session only (--settings is never
+# saved). Measured with agy 1.5.14 through Herdr: with these, it read and wrote outside
+# its folder, reached the network, and ran ssh, and asked nothing.
+def agy_settings(cwd: Path | None) -> list[str]:
+    settings: dict[str, Any] = {"allowNonWorkspaceAccess": True, "enableTerminalSandbox": False}
+    if cwd is not None:
+        settings["trustedWorkspaces"] = [str(cwd)]
+    return ["--settings", json.dumps(settings, separators=(",", ":"))]
 
 
 def quiet_args(agent: str) -> list[str]:
@@ -83,7 +105,8 @@ Placido takes that file as the sign that you are done, so write it last.
 # Claude Code: "Enter to confirm · Esc to cancel". Codex: "enter continue · esc quit"
 # (folder trust), "t trust all · enter review · esc close" (hook review), and
 # "k keep & next · esc dismiss & close" (the warnings panel, opened by the user with F2).
-DIALOG_MARKERS = ("Enter to confirm", "Esc to cancel", "esc quit", "esc close", "esc dismiss")
+# agy: "↑/↓ Navigate · enter Confirm" (folder trust) and "↑/↓ Navigate" (file access).
+DIALOG_MARKERS = ("Enter to confirm", "Esc to cancel", "esc quit", "esc close", "esc dismiss", "↑/↓ Navigate")
 
 @dataclass(frozen=True)
 class TrustDialog:
@@ -99,6 +122,8 @@ class TrustDialog:
 TRUST_DIALOGS = (
     TrustDialog("Is this a project you created or one you trust?", "Yes, I trust this folder", "❯"),
     TrustDialog("Trust this folder? Codex can read, edit, and run files here", "Trust and continue", "›"),
+    # agy is told its folder is trusted (agy_settings); this answers it should it ask.
+    TrustDialog("Do you trust the contents of this project?", "Yes, I trust this folder", "> "),
 )
 
 # Claude Code can run commands in the background and end its turn while they run,
@@ -143,7 +168,7 @@ STALL_LIMIT = 1800
 STALL_PAUSE = 10
 
 # How each agent quits by itself, so its session log is complete before its tab closes.
-EXIT_COMMANDS = {"claude": "/exit", "codex": "/quit", "pi": "/quit"}
+EXIT_COMMANDS = {"claude": "/exit", "codex": "/quit", "agy": "/exit", "pi": "/quit"}
 EXIT_SECONDS = 30
 
 SETTLE_SECONDS = 2  # an agent must stay ready this long before placido types into it
@@ -190,11 +215,16 @@ class StepResult:
     failure: outcomes.Failure | None = None  # why the agent's turn failed, if it did
 
 
-def launch_args(spec: AgentSpec, confined_to: Path | None = None, reads: tuple[Path, ...] = ()) -> list[str]:
+def launch_args(
+    spec: AgentSpec, confined_to: Path | None = None, reads: tuple[Path, ...] = (), cwd: Path | None = None,
+) -> list[str]:
+    """cwd: the folder the agent starts in, which agy is told to trust."""
+
     quiet = quiet_args(spec.agent)
     if confined_to is not None:
         return [*spec.args(), *quiet, *confined_args(spec.agent, confined_to, reads)]
-    return [*spec.args(), *quiet, *UNATTENDED[spec.agent]]
+    extra = agy_settings(cwd) if spec.agent == "agy" else []
+    return [*spec.args(), *quiet, *UNATTENDED[spec.agent], *extra]
 
 
 # Agents that can run confined: reading only their step folder and the folders they are
@@ -246,6 +276,7 @@ def find_transcript(session: dict[str, Any] | None, home: Path) -> Path | None:
     patterns = {
         "claude": (home / ".claude" / "projects", f"*/{value}.jsonl"),
         "codex": (home / ".codex" / "sessions", f"**/rollout-*{value}.jsonl"),
+        "agy": (home / ".gemini" / "antigravity-cli" / "brain", f"{value}/.system_generated/logs/transcript.jsonl"),
         "pi": (home / ".pi" / "agent" / "sessions", f"**/*_{value}.jsonl"),
     }
     folder, pattern = patterns.get(str(session.get("agent")), (None, ""))
@@ -331,7 +362,7 @@ class Step:
         self._status(status.text(status.WORKING, status.label(folder.name)))
         if spec.agent == "codex":
             codexd.ensure(self.run)  # its shared daemon must not run from a worktree
-        args = launch_args(spec, folder, confined) if confined is not None else launch_args(spec)
+        args = launch_args(spec, folder, confined) if confined is not None else launch_args(spec, cwd=cwd)
         try:
             self.herdr.start_agent(agent, spec.agent, pane, args)
         except HerdrError as error:

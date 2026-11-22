@@ -12,12 +12,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-AGENTS = ("claude", "codex", "pi")
+AGENTS = ("claude", "codex", "agy", "pi")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TIERS = ("fast", "default")
 ROLES = ("spec", "vet", "implement", "review", "fix", "retro", "scan", "judge", "decide")
 
-DEFAULT_MODELS = {"claude": "opus", "codex": "gpt-6.2-sol", "pi": "deepseek/deepseek-v4.1-flash"}
+DEFAULT_MODELS = {"claude": "opus", "codex": "gpt-6.2-sol", "agy": "gemini-4-neon", "pi": "deepseek/deepseek-v4.1-flash"}
 
 DEFAULTS: dict[str, Any] = {
     "project": {"base": "main", "setup": "", "teardown": ""},
@@ -30,11 +30,12 @@ DEFAULTS: dict[str, Any] = {
         # Fable's gains level off, rather than xhigh (decided 2026-11-09).
         "spec": {"agent": "claude", "model": "fable", "effort": "high"},
         # Reads the agreement against the code before it is sealed, from another vendor
-        # than the interview's, at xhigh rather than max since the user waits on it at the
-        # end of the interview (decided 2026-11-05, after #783).
-        "vet": {"agent": "codex", "model": "gpt-6.2-sol", "effort": "xhigh", "tier": "fast"},
+        # than the interview's (decided 2026-11-05, after #783). The vet and the review run
+        # on Antigravity's Gemini 4 Neon at high, in place of Codex's gpt-6.2-sol at xhigh
+        # (decided 2026-11-21).
+        "vet": {"agent": "agy", "model": "gemini-4-neon", "effort": "high"},
         "implement": {"agent": "claude", "model": "opus", "effort": "high"},
-        "review": {"agent": "codex", "model": "gpt-6.2-sol", "effort": "xhigh", "tier": "fast"},
+        "review": {"agent": "agy", "model": "gemini-4-neon", "effort": "high"},
         # A retro reads whole runs, several with --last, so it spends far more than an
         # interview: on Opus rather than following `spec` onto Fable (2026-11-20).
         "retro": {"agent": "claude", "model": "opus", "effort": "high"},
@@ -73,12 +74,12 @@ DEFAULTS: dict[str, Any] = {
     "pr": {
         "reviewers": [
             {"agent": "claude", "model": "opus", "effort": "xhigh"},
-            {"agent": "codex", "model": "gpt-6.2-sol", "effort": "xhigh", "tier": "fast"},
+            {"agent": "agy", "model": "gemini-4-neon", "effort": "high"},
         ],
         "gates": [],
         # Placido's own project scripts, and the agents' project settings, whose hooks and
         # MCP servers run on this machine when an agent starts in the worktree.
-        "host_paths": [".placido", ".claude", ".codex", ".mcp.json"],
+        "host_paths": [".placido", ".claude", ".codex", ".agents", ".gemini", ".mcp.json"],
         # Reviewers at once, each in a worktree and stack of its own (decided 2026-10-16);
         # and how many times a fix and the full review of it follow each other, on their
         # own, before the menu asks again (decided 2026-10-17).
@@ -116,6 +117,10 @@ class AgentSpec:
                 "-c", f"model_reasoning_effort={self.effort}",
                 "-c", f"service_tier={self.tier}",
             ]
+        if self.agent == "agy":
+            # The model without its effort suffix: agy 1.5.14 ignored gemini-4-neon-high
+            # in an interactive start, and honoured gemini-4-neon with --effort high.
+            return ["--model", self.model, "--effort", self.effort]
         return ["--provider", "openrouter", "--model", self.model, "--thinking", self.effort]
 
     def command(self) -> str:
