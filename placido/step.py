@@ -36,8 +36,11 @@ UNATTENDED = {
 NO_MEMORY = {
     "claude": ["--settings", str(Path(__file__).with_name("claude-settings.json"))],
     "codex": ["-c", "features.memories=false"],
-    # agy 1.5.14 keeps "knowledge items" across conversations and has no setting that
-    # turns them off; none showed in a reviewer's session (2026-11-21).
+    # agy needs nothing: its CLI ships with knowledge items, Antigravity's memory, off
+    # (`cascade-knowledge-config` enabled: false in 1.5.14's built-in flags), and no
+    # setting turns them on. It keeps every conversation on disk for /resume, but a new
+    # one, in print or interactive mode, saw nothing of an earlier one in the same folder
+    # and had no tool to search them (measured 2026-11-21).
     "agy": [],
     "pi": [],
 }

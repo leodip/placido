@@ -106,7 +106,7 @@ resumes where it left off when you run the same command again.
 > on code and machines where you accept that, such as a dedicated user, VM, or
 > container. Nothing is pushed until the review is done. The agents keep no memory
 > between sessions: placido turns off Claude's auto-memory and Codex's memories for
-> every agent it starts (agy 1.5.14 has no such setting), so what one agent read, such as a stranger's pull request,
+> every agent it starts (agy's CLI ships with its memory off), so what one agent read, such as a stranger's pull request,
 > never reaches the next, nor your own sessions in the project.
 
 ## Requirements

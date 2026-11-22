@@ -2618,8 +2618,13 @@ ran:
   `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl`,
   read for usage and a failed turn; Herdr names its integration `antigravity-cli`,
   and `placido doctor` checks the sign-in by listing models. `.agents` and `.gemini`,
-  which agy reads in a project, join `pr.host_paths`. No setting turns off agy's
-  knowledge items, an accepted gap.
+  which agy reads in a project, join `pr.host_paths`. agy needs no memory switch: its
+  CLI ships with knowledge items, Antigravity's memory, off (`cascade-knowledge-config`
+  enabled: false in 1.5.14's built-in flags), with no setting to turn them on. It keeps
+  every conversation on disk for `/resume`, but a new conversation, in print or
+  interactive mode, saw nothing of an earlier one in the same folder (a planted
+  codeword) and had no tool to search them. Google can change its flags remotely, so a
+  later version could differ.
 - The vet no longer runs confined: the user wants the reviewers free, and agy has no
   confined mode placido uses. `placido pr`'s scan of a contributor's pull request
   stays confined, so it still needs claude or codex.
