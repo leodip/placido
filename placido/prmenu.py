@@ -637,15 +637,14 @@ def merge(ctx: Context, rnd: Round, s: State, confirm: Ask) -> None:
                    "pending": f"CI was still running on {head[:12]} after {wait}",
                    "moved": f"the pull request moved on from {head[:12]} while CI ran",
                    }.get(ci, f"CI showed no result on {head[:12]}")
-            pr.notify(ctx, "not merged", f"#{number}: {why}")
+            pr.notify(ctx, "not merged", f"#{number}: {why}", mail=True)
             then = "" if ci == "moved" else f" See {s.pull.url}/checks"  # the menu shows what the new head allows
             raise PRStop(f"{why}; nothing was merged.{then}")
     ctx.hub.merge(number, head, subject, body)
     ctx.run.event("pr.merged", round=rnd.number, head=head, subject=subject)
     status.show(ctx.run.path, status.text(status.DONE, f"merged; placido close pr-{number}"))
     if later != "?":
-        pr.notify(ctx, "merged", f"#{number} into {s.pull.base} once CI was green; placido close pr-{number}",
-                  mail=False)
+        pr.notify(ctx, "merged", f"#{number} into {s.pull.base} once CI was green; placido close pr-{number}")
     print(f"merged #{number}")  # the menu then says how to end the run
 
 
@@ -676,7 +675,7 @@ def fix(ctx: Context, rnd: Round, s: State, confirm: Ask) -> Round:
     verdict = prcheck.verdict_of(final(rnd))
     more = (f"; still fix-here after {rounds} fix(es): placido pr {ctx.pr.number} fixes again"
             if verdict == "fix-here" else f"; placido pr {ctx.pr.number}")
-    pr.notify(ctx, "the fixes are reviewed", f"#{ctx.pr.number}: round {rnd.number}, {verdict}{more}", mail=False)
+    pr.notify(ctx, "the fixes are reviewed", f"#{ctx.pr.number}: round {rnd.number}, {verdict}{more}")
     return rnd
 
 
@@ -758,7 +757,7 @@ def resolve_conflicts(ctx: Context, rnd: Round, tip: str, head: str, conflicts: 
     created = set(_untracked(wt))  # what git wrote itself, such as both sides of a rename
     merged = _merged_entries(wt)
     chain = fallback.Chain(
-        run, "fix", fallback.entries(ctx.settings, "fix"), lambda title, body: pr.notify(ctx, title, body),
+        run, "fix", fallback.entries(ctx.settings, "fix"), lambda title, body, mail: pr.notify(ctx, title, body, mail),
         since=lambda event: event.get("event") == "pr.fix_start",
     )
 
@@ -901,7 +900,7 @@ def fix_once(ctx: Context, rnd: Round, items: list[dict[str, Any]], attempt_no: 
     head = pr.git(wt, "rev-parse", "HEAD")
     pr.verify_host_paths(ctx, rnd, "the fix")
     chain = fallback.Chain(
-        run, "fix", fallback.entries(ctx.settings, "fix"), lambda title, body: pr.notify(ctx, title, body),
+        run, "fix", fallback.entries(ctx.settings, "fix"), lambda title, body, mail: pr.notify(ctx, title, body, mail),
         since=lambda event: event.get("event") == "pr.fix_start",
     )
     entry = {"id": f"pr-{ctx.pr.number}", "title": "review fixes", "gates": list(ctx.settings.pr.gates)}

@@ -2,10 +2,15 @@
 
 Decided with the user on 2026-10-03: what needs the user or ends a run is also emailed,
 in simple HTML, with both subscriptions' quota. Since 2026-10-22 only what went wrong
-or waits unforeseen is: a stop, a failure, a fallback, a quota wait, an agent's
-question. What a run does in its course, a review ready, fixes reviewed, a merge, a
-pull request opened, gets Herdr's notification alone ("I want to receive
-notifications only on exceptional / errors states"). Email is off unless the user's own config
+or waits unforeseen is ("I want to receive notifications only on exceptional / errors
+states"). Since 2026-11-22 only an error that stops the run is: an agent quitting
+mid-step, a setup, gates, review, GitHub or CI failure, a logout, every agent failing a
+role, a host path changed. An agent's question, a dialog waiting, a fallback, a quota
+wait, a kept tab and a pull request opened with its last gates failing (the user's
+e2e gate failed on every run) get Herdr's notification alone. The user was not reading
+the emails, and asked for none unless it is "some error, something unexpected, or
+something exceptional", naming "Placido needs you" among the ones to stop. So a
+notification is emailed only when its caller says mail=True. Email is off unless the user's own config
 (~/.config/placido/config.toml) enables it; the Resend API key is read from a file at
 send time and never copied. A failed email is logged and never stops a run.
 """
@@ -21,7 +26,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
-from placido import config, quota, report, runlog, status
+from placido import config, quota, runlog, status
 from placido.herdr import Herdr, HerdrError
 
 RESEND_URL = "https://api.resend.com/emails"
@@ -44,24 +49,19 @@ def _post(key: str, payload: dict[str, Any]) -> None:
 SENDER: list[Sender] = [_post]  # what email() sends with; the test suite replaces it
 
 
-def notify(
-    run: runlog.Run, herdr: Herdr, title: str, body: str, times: bool = False, mail: bool = True,
-) -> None:
-    """A Herdr notification naming the issue, and the same as an email unless mail is
-    False, as it is for what a run does in its course; times adds how long each stage
-    of the run took."""
+def notify(run: runlog.Run, herdr: Herdr, title: str, body: str, mail: bool = False) -> None:
+    """A Herdr notification naming the issue, and the same as an email when mail is set,
+    as it is only for an error that stops the run."""
 
     try:
         herdr.notify(f"placido · {run.path.parent.name}: {title}", body, "request")
     except HerdrError as error:
         run.event("herdr.warning", error=str(error))
     if mail:
-        email(run, title, body, times=times)
+        email(run, title, body)
 
 
-def email(
-    run: runlog.Run, title: str, body: str, settings: config.UserConfig | None = None, times: bool = False,
-) -> None:
+def email(run: runlog.Run, title: str, body: str, settings: config.UserConfig | None = None) -> None:
     try:
         settings = settings or config.load_user()
     except config.ConfigError as error:
@@ -78,7 +78,7 @@ def email(
             raise OSError(f"{settings.email.api_key_file} is empty")
         SENDER[0](key, {
             "from": settings.email.sender, "to": [settings.email.to], "subject": subject,
-            "html": render(run.path, title, body, times=times),
+            "html": render(run.path, title, body),
         })
     except OSError as error:
         run.event("email.failed", subject=subject, error=str(error)[:300])
@@ -101,9 +101,8 @@ CELL = "padding:4px 12px 4px 0;vertical-align:top;"
 LABEL = CELL + "color:#656d76;white-space:nowrap;"
 
 
-def render(run_dir: Path, title: str, body: str, now: float | None = None, times: bool = False) -> str:
-    """The email's HTML: what happened, the run's facts, how long each stage took when
-    times is set, and the subscriptions' quota."""
+def render(run_dir: Path, title: str, body: str, now: float | None = None) -> str:
+    """The email's HTML: what happened, the run's facts, and the subscriptions' quota."""
 
     now = time.time() if now is None else now
     record = _record(run_dir)
@@ -129,39 +128,16 @@ def render(run_dir: Path, title: str, body: str, now: float | None = None, times
     quota_rows = "".join(
         f'<tr><td style="{LABEL}">{r.agent}</td><td style="{CELL}">{_windows(r, now)}</td></tr>' for r in readings
     ) or f'<tr><td style="{CELL}">No reading yet.</td></tr>'
-    spent = _times(run_dir, events, now) if times else ""
     return (
         f'<div style="{STYLE}max-width:640px">'
         f'<h2 style="font-size:18px;margin:0 0 6px">{html.escape(title)}</h2>'
         f'<p style="margin:0 0 16px">{html.escape(body)}</p>'
         f'<table style="border-collapse:collapse;margin-bottom:16px">{table}</table>'
-        f'{spent}'
         f'<h3 style="font-size:15px;margin:0 0 4px">Quota</h3>'
         f'<table style="border-collapse:collapse;margin-bottom:16px">{quota_rows}</table>'
         f'<p style="color:#656d76;font-size:12px;margin:0">placido · '
         f'{time.strftime("%Y-%m-%d %H:%M", time.localtime(now))}</p></div>'
     )
-
-
-def _times(run_dir: Path, events: list[dict[str, Any]], now: float) -> str:
-    """The run's stages and their durations, then the unattended total: from the first
-    slice's start, after the interview and any pause before the run, until now. The
-    interview is the user's time, shown on its own line (the user's ask, 2026-10-04)."""
-
-    rows = [(label, report.duration(seconds)) for label, seconds in report.stages(run_dir)]
-    first = next((e for e in events if e.get("event") == "slice.start"), None)
-    started = report.when(first.get("ts")) if first else None
-    if started is not None:
-        rows.append(("<b>Total, unattended</b>", f"<b>{report.duration(now - started.timestamp())}</b>"))
-    if not rows:
-        return ""
-    body = "".join(
-        f'<tr><td style="{LABEL}">{label if label.startswith("<b>") else html.escape(label)}</td>'
-        f'<td style="{CELL}text-align:right">{spent}</td></tr>'
-        for label, spent in rows
-    )
-    return (f'<h3 style="font-size:15px;margin:0 0 4px">Time spent</h3>'
-            f'<table style="border-collapse:collapse;margin-bottom:16px">{body}</table>')
 
 
 def _windows(reading: quota.Reading, now: float) -> str:
@@ -199,7 +175,7 @@ def test(settings: config.UserConfig | None = None, now: float | None = None) ->
     ) or f'<tr><td style="{CELL}">No reading yet.</td></tr>'
     page = (
         f'<div style="{STYLE}max-width:640px"><h2 style="font-size:18px;margin:0 0 6px">Placido can email you</h2>'
-        f'<p style="margin:0 0 16px">This is a test. Runs will email you here when something goes wrong or waits for you unforeseen.</p>'
+        f'<p style="margin:0 0 16px">This is a test. Runs will email you here when an error stops them.</p>'
         f'<h3 style="font-size:15px;margin:0 0 4px">Quota</h3>'
         f'<table style="border-collapse:collapse">{rows}</table></div>'
     )

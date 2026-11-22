@@ -406,14 +406,15 @@ class Loop:
             return True
         if step.outcome == "auth":
             self._notify(f"{chain.current.agent} is logged out",
-                         f"{message[:160]} · log in, then run placido review again")
+                         f"{message[:160]} · log in, then run placido review again", True)
         return False
 
-    def _notify(self, title: str, body: str) -> None:
+    def _notify(self, title: str, body: str, mail: bool = False) -> None:
         if self.herdr is None:
-            alerts.email(self.run, title, body)
+            if mail:
+                alerts.email(self.run, title, body)
             return
-        alerts.notify(self.run, self.herdr, title, body)
+        alerts.notify(self.run, self.herdr, title, body, mail=mail)
 
     # ---- the hooks another stage changes ----------------------------------------------
 

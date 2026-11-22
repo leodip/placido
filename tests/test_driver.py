@@ -255,7 +255,9 @@ class FallbackTest(DriverTestCase):
 
     def test_a_refusal_moves_to_the_next_agent_and_restarts_the_slice(self):
         self.runner.script = ["build", "refusal", "build", "build"]
-        self.assertEqual(driver.drive(self.ctx, SLICES), "done")
+        with mock.patch.object(driver.alerts, "email") as mailed:
+            self.assertEqual(driver.drive(self.ctx, SLICES), "done")
+        mailed.assert_not_called()  # a fallback is placido coping, not an error
         self.assertEqual(self.runner.agents, ["claude", "claude", "pi", "pi"])
         self.assertIn("placido: slice 2 attempt failed (refusal", sh(self.repo, "git", "stash", "list"))
         (moved,) = self.events("agent.fallback")
@@ -269,7 +271,9 @@ class FallbackTest(DriverTestCase):
 
     def test_every_agent_refusing_stops_the_run(self):
         self.runner.script = ["refusal"] * 2
-        self.assertEqual(driver.drive(self.ctx, SLICES), "refused")
+        with mock.patch.object(driver.alerts, "email") as mailed:
+            self.assertEqual(driver.drive(self.ctx, SLICES), "refused")
+        self.assertEqual([c.args[1] for c in mailed.call_args_list], ["implement: every agent refused it"])
         self.assertEqual(self.runner.agents, ["claude", "pi"])
         self.assertEqual(len(self.events("agent.chain_exhausted")), 1)
         self.assertIn("placido · 03-x: implement: every agent refused it", self.runner.herdr.notes)
@@ -350,16 +354,17 @@ class SidebarTest(DriverTestCase):
 
 
 class DeliverMailTest(DriverTestCase):
-    """A pull request opened with its gates green is the run's course, told in Herdr
-    alone; one whose last gates fail is emailed too."""
+    """A pull request opened is told in Herdr alone, even with its last gates failing
+    (goiabada's e2e gate failed on every run); red CI, which stops the run, is emailed
+    too (the user, 2026-11-22: email only errors)."""
 
-    def delivered(self, last: str) -> list[str]:
+    def delivered(self, last: str, ci: str = "green") -> list[str]:
         from placido import alerts, cli
 
         self.run.event("pr.opened", url="https://github.com/o/r/pull/9")
         mailed: list[str] = []
         with mock.patch.object(cli.checks, "last_gates", return_value=last), \
-                mock.patch.object(cli.followups, "draft"), mock.patch.object(cli.github, "deliver", return_value="green"), \
+                mock.patch.object(cli.followups, "draft"), mock.patch.object(cli.github, "deliver", return_value=ci), \
                 mock.patch.object(alerts, "email", lambda run, title, body, **kwargs: mailed.append(title)), \
                 mock.patch("sys.stdout"), mock.patch("sys.stderr"):
             cli._deliver(self.ctx, "passed")
@@ -369,8 +374,13 @@ class DeliverMailTest(DriverTestCase):
         self.assertEqual(self.delivered("passed"), [])
         self.assertIn("placido · 03-x: the pull request is ready", self.runner.herdr.notes)
 
-    def test_one_whose_last_gates_fail_is(self):
-        self.assertEqual(self.delivered("failed"), ["the pull request is ready, but the last gates fail"])
+    def test_nor_one_whose_last_gates_fail(self):
+        self.assertEqual(self.delivered("failed"), [])
+        self.assertIn("placido · 03-x: the pull request is ready, but the last gates fail", self.runner.herdr.notes)
+
+    def test_red_ci_is_emailed_and_pending_ci_is_not(self):
+        self.assertEqual(self.delivered("passed", "red"), ["CI is red"])
+        self.assertEqual(self.delivered("passed", "pending"), [])
 
     def test_findings_the_review_escalates_are_not_emailed(self):
         from types import SimpleNamespace

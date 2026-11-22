@@ -577,7 +577,7 @@ def verify_host_paths(ctx: Context, rnd: Round, before: str, lane: Lane | None =
     files = untrusted_host_files(ctx, rnd, lane)
     if files and not (lane.primary and approved_here(ctx, rnd, host_state(wt, files))):
         ctx.run.event("pr.host_paths_changed", round=rnd.number, before=before, files=files)
-        notify(ctx, "host paths changed", f"{', '.join(files)[:160]}; nothing more runs")
+        notify(ctx, "host paths changed", f"{', '.join(files)[:160]}; nothing more runs", mail=True)
         raise PRStop(
             f"{', '.join(files)} changed since they were trusted, so {before} does not run. Look at"
             f" git -C {wt} status and diff; once they are as the pull request has them,"
@@ -666,7 +666,7 @@ def settle(ctx: Context, rnd: Round, after: str, lane: Lane | None = None) -> li
     host = [f for f in files if _under(f, ctx.settings.pr.host_paths)]
     ctx.run.event("pr.tree_restored", round=rnd.number, after=after, files=files, host=host, evidence=evidence.name)
     if host:
-        notify(ctx, "a host path changed", f"{after} changed {', '.join(host)[:140]}")
+        notify(ctx, "a host path changed", f"{after} changed {', '.join(host)[:140]}", mail=True)
         raise PRStop(
             f"{after} changed {', '.join(host)}, which run on this machine. The tree is restored and"
             f" the change kept in {evidence}; read it before running placido pr again"
@@ -939,5 +939,5 @@ def close_orphans(ctx: Context) -> None:
         ended.add(event.get("step"))
 
 
-def notify(ctx: Context, title: str, body: str, mail: bool = True) -> None:
+def notify(ctx: Context, title: str, body: str, mail: bool = False) -> None:
     alerts.notify(ctx.run, ctx.herdr, title, body, mail=mail)

@@ -123,14 +123,16 @@ def attempt(
             ctx.run.event("pr.fresh_session", role=chain.role, step=step.path.name, reason="context")
         else:
             if step.outcome == "auth":
-                notify(ctx, f"{chain.current.agent} is logged out", f"{message[:160]} · log in, then run placido pr again")
+                notify(ctx, f"{chain.current.agent} is logged out", f"{message[:160]} · log in, then run placido pr again",
+                       mail=True)
             break
         step = start(chain.current)
     return step
 
 
 def _chain(ctx: Context, role: str, entries: tuple[config.AgentSpec, ...]) -> fallback.Chain:
-    return fallback.Chain(ctx.run, role, entries, lambda title, body: notify(ctx, title, body), since=_round_start)
+    return fallback.Chain(ctx.run, role, entries, lambda title, body, mail: notify(ctx, title, body, mail),
+                          since=_round_start)
 
 
 # ---- the scan, and the stacks while it reads --------------------------------------------
@@ -672,8 +674,7 @@ def review(ctx: Context, quiet: bool = False) -> Round:
         waiting = f"; {count} decision(s) wait for you in the r{rnd.number}-decide tab" if count else ""
         if count or not quiet:
             notify(ctx, "the review is ready" + (", with decisions for you" if count else ""),
-                   f"#{ctx.pr.number}: {verdict.get('verdict', '?')}{waiting}; placido pr {ctx.pr.number}",
-                   mail=False)
+                   f"#{ctx.pr.number}: {verdict.get('verdict', '?')}{waiting}; placido pr {ctx.pr.number}")
     decide(ctx, rnd)
     status.show(ctx.run.path, status.text(status.YOU, f"review ready: placido pr {ctx.pr.number}"))
     return rnd

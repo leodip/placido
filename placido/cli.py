@@ -360,7 +360,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 return 1
             if checks.final_gates(ctx, ctx.settings.roles["fix"].agent) == "failed":
                 driver.show_stopped(ctx, "final-gates")
-                driver.notify(ctx, "the final gates fail", f"see {ctx.run.path / 'final-gates'}")
+                driver.notify(ctx, "the final gates fail", f"see {ctx.run.path / 'final-gates'}", mail=True)
                 summary.write(ctx.run.path, stopped="the final gates fail")
                 print("\nplacido: the final gates still fail after the fixes; see the run log.", file=sys.stderr)
                 return 1
@@ -422,12 +422,13 @@ def _review(ctx: driver.Context, reviewer: config.AgentSpec) -> int:
     print("\n" + review.summary(account, ctx.run.path))
     if account.outcome not in ("passed", "escalated"):
         driver.show(ctx, status.STOPPED, "review failed")
-        driver.notify(ctx, "the review failed", f"run placido run again to resume; see {ctx.run.path / 'review.md'}")
+        driver.notify(ctx, "the review failed", f"run placido run again to resume; see {ctx.run.path / 'review.md'}",
+                      mail=True)
         _summarize(ctx)
         return 1
     if account.escalated:
         driver.notify(ctx, "review needs your decision",
-                      f"{len(account.escalated)} finding(s); see {ctx.run.path / 'review.md'}", mail=False)
+                      f"{len(account.escalated)} finding(s); see {ctx.run.path / 'review.md'}")
     return _deliver(ctx, account.outcome)
 
 
@@ -445,7 +446,8 @@ def _deliver(ctx: driver.Context, outcome: str) -> int:
     except github.GitHubError as error:
         ctx.run.event("github.failed", error=str(error))
         driver.show(ctx, status.STOPPED, "GitHub failed")
-        driver.notify(ctx, "delivery to GitHub failed", f"{str(error)[:160]}; run placido run again to retry")
+        driver.notify(ctx, "delivery to GitHub failed", f"{str(error)[:160]}; run placido run again to retry",
+                      mail=True)
         _summarize(ctx)
         print(f"placido: {error}\nFix it, then run placido run again to retry.", file=sys.stderr)
         return 1
@@ -453,14 +455,14 @@ def _deliver(ctx: driver.Context, outcome: str) -> int:
     if ci == comments.FAILED:
         driver.show(ctx, status.STOPPED, "answering the review comments failed")
         driver.notify(ctx, "answering the review comments failed",
-                      f"{pr}; run placido run again to resume; see {ctx.run.path / 'steps'}")
+                      f"{pr}; run placido run again to resume; see {ctx.run.path / 'steps'}", mail=True)
         _summarize(ctx)
         print(f"\nplacido: answering the review comments on {pr} failed; run placido run again to resume.",
               file=sys.stderr)
         return 1
     if ci in ("red", "pending"):
         driver.show(ctx, status.STOPPED if ci == "red" else status.WAITING, f"CI {ci} on the pull request")
-        driver.notify(ctx, f"CI is {ci}", f"{pr}; run placido run again to retry")
+        driver.notify(ctx, f"CI is {ci}", f"{pr}; run placido run again to retry", mail=ci == "red")
         _summarize(ctx)
         print(f"\nplacido: CI is {ci} on {pr}; run placido run again once it is sorted.", file=sys.stderr)
         return 1
@@ -474,7 +476,7 @@ def _deliver(ctx: driver.Context, outcome: str) -> int:
         driver.show(ctx, status.DONE, f"pull request {pr.rsplit('/', 1)[-1]}" if pr else "review passed")
     if pr:
         title = "the pull request is ready, but the last gates fail" if failing else "the pull request is ready"
-        driver.notify(ctx, title, f"{pr} · CI {ci}", times=True, mail=failing)
+        driver.notify(ctx, title, f"{pr} · CI {ci}")
         print(f"\npull request: {pr} (CI {ci})")
     if failing:
         print(f"placido: the last gates still fail after the fixes; see {ctx.run.path / 'last-gates'}.",

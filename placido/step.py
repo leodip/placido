@@ -421,8 +421,9 @@ class Step:
             )
         except AgentGone:
             self.run.event("agent.exited", step=folder.name, name=agent)
-            self._notify(f"{agent} exited", f"{folder.name} stopped because the agent quit")
             outcome = "success" if result.is_file() else "agent-exited"
+            self._notify(f"{agent} exited", f"{folder.name} stopped because the agent quit",
+                         mail=outcome == "agent-exited")
 
         self._record(agent, pane, folder, kind, keep_open)
         self.run.event(
@@ -560,9 +561,7 @@ class Step:
                 continue
             self._status(status.text(status.YOU, f"answer in {status.label(folder.name)}"))
             if not told:
-                # Only Herdr's notification: the user started this conversation and is
-                # at hand, so an email for every interview question is noise (2026-10-07).
-                self._notify(f"{folder.name} needs you", f"answer in the {folder.name} tab", mail=False)
+                self._notify(f"{folder.name} needs you", f"answer in the {folder.name} tab")
                 self.run.event("agent.waiting", step=folder.name, name=agent)
                 told = True
             self._call(self.herdr.wait, agent, ("working", "blocked"))
@@ -710,7 +709,7 @@ class Step:
         tail = "\n".join(screen.splitlines()[-15:])
         return any(marker in tail for marker in DIALOG_MARKERS)
 
-    def _notify(self, title: str, body: str, mail: bool = True) -> None:
+    def _notify(self, title: str, body: str, mail: bool = False) -> None:
         """Notify the user, naming the issue, since several can be in flight at once."""
 
         alerts.notify(self.run, self.herdr, title, body, mail=mail)

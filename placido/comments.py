@@ -576,8 +576,7 @@ def answer(
         left = [a for a in answers if a.outcome == "left"]
         if left:
             alerts.notify(run, ctx.herdr, "review comments need your decision",
-                          f"{_count(len(left), 'comment')} on {pr} left for you; see {run.path / 'review-comments.md'}",
-                          mail=False)
+                          f"{_count(len(left), 'comment')} on {pr} left for you; see {run.path / 'review-comments.md'}")
         if not settled.get("changed"):
             continue  # nothing pushed, so no CI to wait for: read what came in meanwhile
         outcome = ci()

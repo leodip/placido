@@ -168,7 +168,7 @@ def implement_chain(ctx: Context) -> fallback.Chain:
     if ctx.chain is None:
         ctx.chain = fallback.Chain(
             ctx.run, "implement", fallback.entries(ctx.settings, "implement", ctx.agent),
-            lambda title, body: _notify(ctx, title, body),
+            lambda title, body, mail: _notify(ctx, title, body, mail),
         )
     return ctx.chain
 
@@ -187,12 +187,12 @@ def after_failure(ctx: Context, number: int, outcome: str) -> str | None:
         ctx.agent = ctx.chain.current
     elif outcome == "auth":
         _notify(ctx, f"{ctx.agent.agent} is logged out",
-                f"{_failure_message(run.path)[:160]} · log in, then run placido again")
+                f"{_failure_message(run.path)[:160]} · log in, then run placido again", mail=True)
         return "logged-out"
     elif outcome == "context" and failures(run.path, number, "context") >= MAX_CONTEXT_FAILURES:
         run.event("slice.gave_up", slice=number, reason="context")
         _notify(ctx, f"slice {number} overflows the context window",
-                "it overflowed a fresh session twice; it may need splitting")
+                "it overflowed a fresh session twice; it may need splitting", mail=True)
         return "gave-up"
     return None
 
@@ -218,7 +218,7 @@ def drive(ctx: Context, slices: list[dict[str, Any]]) -> str:
         if failures(run.path, number) >= ctx.settings.stage_attempts:
             run.event("slice.gave_up", slice=number, attempts=ctx.settings.stage_attempts)
             _notify(ctx, f"slice {number} failed {ctx.settings.stage_attempts} times",
-                    "see the run log; `placido implement` can retry it by hand")
+                    "see the run log; `placido implement` can retry it by hand", mail=True)
             return "gave-up"
         _status(ctx, status.text(status.WORKING, f"slice {number}/{len(slices)}"))
         outcome = build_slice(ctx, entry, len(slices))
@@ -252,12 +252,12 @@ def _status(ctx: Context, text: str) -> None:
     status.show(ctx.run.path, text)
 
 
-def notify(ctx: Context, title: str, body: str, times: bool = False, mail: bool = True) -> None:
-    _notify(ctx, title, body, times, mail)
+def notify(ctx: Context, title: str, body: str, mail: bool = False) -> None:
+    _notify(ctx, title, body, mail)
 
 
-def _notify(ctx: Context, title: str, body: str, times: bool = False, mail: bool = True) -> None:
-    alerts.notify(ctx.run, ctx.herdr, title, body, times=times, mail=mail)
+def _notify(ctx: Context, title: str, body: str, mail: bool = False) -> None:
+    alerts.notify(ctx.run, ctx.herdr, title, body, mail=mail)
 
 
 class Lock:

@@ -2628,3 +2628,24 @@ ran:
 - The vet no longer runs confined: the user wants the reviewers free, and agy has no
   confined mode placido uses. `placido pr`'s scan of a contributor's pull request
   stays confined, so it still needs claude or codex.
+
+### 2026-11-22
+
+- Email only an error that stops the run. The user was not reading placido's emails,
+  and asked for none unless it is "some error, something unexpected, or something
+  exceptional". They named "Placido needs you" among the ones to stop.
+  - What still emails: an agent quitting mid-step (not one that quit after writing its
+    result), a logout, every agent of a role failing, a slice given up, and a setup,
+    final gates, review, GitHub delivery, review comments or red CI failure. So do a
+    changed host path and a merge that did not happen.
+  - The rest gets Herdr's notification alone: an agent's question, a dialog waiting,
+    a fallback to the next agent, a quota wait, a kept tab, pending CI, the scan's
+    concerns (asked in the terminal) and a pull request opened. That includes a pull
+    request opened with its last gates failing: goiabada's e2e gate failed on all 7
+    recent runs (5 of 968 tests, different ones each run), so that email went out
+    nearly every run.
+  - `alerts.notify` now emails only when its caller passes `mail=True`, so a new
+    notification does not email unless someone decides it should. The fallback chain
+    tells its notifier which of its two messages is the error.
+  - The "Time spent" table (`report.stages`) went only into the pull-request-ready
+    email, so it is removed with it.

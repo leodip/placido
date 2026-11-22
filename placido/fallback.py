@@ -33,7 +33,7 @@ class Chain:
         run: runlog.Run,
         role: str,
         entries: tuple[AgentSpec, ...],
-        notify: Callable[[str, str], None],
+        notify: Callable[[str, str, bool], None],  # (title, body, also email it)
         since: Callable[[dict[str, Any]], bool] | None = None,
     ) -> None:
         """since, given each logged event in order, says where this chain's history
@@ -71,7 +71,7 @@ class Chain:
         if index is None:
             self.run.event("agent.chain_exhausted", role=self.role, kind=kind, message=message, step=step)
             what = WHAT[kind]
-            self.notify(f"{self.role}: every agent {what}", message[:200])
+            self.notify(f"{self.role}: every agent {what}", message[:200], True)
             return False
         self.index = index
         after = self.current
@@ -81,7 +81,7 @@ class Chain:
         )
         self.notify(
             f"{self.role} moves to {after.agent} ({after.model})",
-            f"{before.agent} ({before.model}) {WHAT[kind]}: {message[:160]}",
+            f"{before.agent} ({before.model}) {WHAT[kind]}: {message[:160]}", False,
         )
         return True
 

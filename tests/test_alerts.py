@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from placido import alerts, config, quota, report, runlog, status
+from placido import alerts, config, quota, runlog, status
 from placido.herdr import Herdr
 from placido.proc import Result
 
@@ -98,9 +98,12 @@ class EmailTest(EmailCase):
         calls = []
         herdr = Herdr(lambda argv, timeout=None: calls.append(argv) or Result(0, ""))
         with mock.patch.object(config, "load_user", return_value=self.settings()):
-            alerts.notify(self.run, herdr, "setup failed", "see setup.log")
+            alerts.notify(self.run, herdr, "setup failed", "see setup.log", mail=True)
+            alerts.notify(self.run, herdr, "01-spec asks you", "answer in the 01-spec tab")
         self.assertEqual(calls[0][1:5], ["notification", "show", "placido · 404-login-email: setup failed", "--body"])
-        self.assertEqual(self.sent[0][1]["subject"], "placido · goiabada #404: setup failed")
+        self.assertEqual(len(calls), 2)
+        # Only errors are emailed (the user, 2026-11-22): a question gets Herdr's notification alone.
+        self.assertEqual([s[1]["subject"] for s in self.sent], ["placido · goiabada #404: setup failed"])
 
     def test_the_message(self):
         status.show(self.run.path, "you · answer in 02-spec")
@@ -181,52 +184,3 @@ class TestEmailTest(EmailCase):
             self.assertIn("no Resend key", doctor.check_email().detail)
             cfg.write_text(cfg.read_text().replace(str(self.tmp / "nokey"), str(self.key)))
             self.assertIn("Claude's quota is not saved yet", doctor.check_email().detail)
-
-
-class TimesTest(EmailCase):
-    """The "pull request is ready" email says how long each stage took."""
-
-    def test_stages_from_the_event_log(self):
-        def at(minute: int, kind: str, **fields) -> None:
-            line = {"ts": f"2026-10-03T10:{minute:02d}:00.000-03:00", "event": kind, **fields}
-            with (self.run.path / "events.jsonl").open("a") as out:
-                out.write(json.dumps(line) + "\n")
-        at(0, "step.start", step="01-spec", role="spec")
-        at(20, "step.end", step="01-spec")
-        at(21, "slice.start", slice=1)
-        at(22, "step.start", step="02-implement-slice-1", role="implement")
-        at(29, "gate.start", gate="unit")  # a slice gate, inside the step
-        at(30, "step.end", step="02-implement-slice-1")
-        at(30, "slice.failed", slice=1)
-        at(31, "slice.start", slice=1)
-        at(36, "slice.committed", slice=1)
-        at(37, "gate.start", gate="lint")  # the final gates, outside any step
-        at(40, "final_gates.passed", attempt=1)
-        at(40, "step.start", step="04-review-1", role="review")
-        at(49, "step.end", step="04-review-1")
-        at(49, "gate.start", gate="slow")  # the last gates, outside any step
-        at(50, "last_gates.passed", attempt=1)
-        at(50, "step.start", step="05-followups", role="fix")
-        at(52, "step.end", step="05-followups")
-        at(52, "github.pushed")
-        at(59, "ci.result", outcome="green", attempt=1)
-        self.assertEqual(report.stages(self.run.path), [
-            ("Interview (with you)", 1200.0), ("Slice 1", 900.0), ("Final gates", 180.0),
-            ("Review round 1", 540.0), ("Last gates", 60.0), ("Follow-ups", 120.0), ("CI", 420.0),
-        ])
-        run_start = report.when(next(runlog.read_events(self.run.path))["ts"]).timestamp()
-        text = alerts.render(self.run.path, "the pull request is ready", "CI green", now=run_start + 3600, times=True)
-        self.assertIn("Time spent", text)
-        self.assertIn('>Slice 1</td><td style="padding:4px 12px 4px 0;vertical-align:top;text-align:right">15m 00s<', text)
-        # The total leaves out the 20-minute interview and the pause before the run:
-        # from the first slice's start at 10:21 to the email at 11:00.
-        self.assertIn("<b>Total, unattended</b>", text)
-        self.assertIn("<b>39m 00s</b>", text)
-
-    def test_pr_ready_asks_for_the_times(self):
-        self.run.event("run.start")
-        self.run.event("slice.start", slice=1)
-        with mock.patch.object(config, "load_user", return_value=self.settings()):
-            alerts.notify(self.run, Herdr(lambda argv, timeout=None: Result(0, "")), "the pull request is ready",
-                          "CI green", times=True)
-        self.assertIn("Time spent", self.sent[0][1]["html"])

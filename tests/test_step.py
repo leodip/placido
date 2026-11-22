@@ -7,7 +7,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from placido import cli, herdr, runlog, status, step
+from placido import alerts, cli, herdr, runlog, status, step
 from placido.config import AgentSpec
 from placido.herdr import AgentInfo, Herdr, HerdrError
 from placido.proc import TIMED_OUT, Result
@@ -485,7 +485,9 @@ class DialogMarkerTest(unittest.TestCase):
 class DialogTest(StepTestCase):
     def test_startup_dialog_waits_for_the_user(self):
         self.fake.startup_dialog = "blocked"
-        result = self.step()
+        with mock.patch.object(alerts, "email") as mailed:
+            result = self.step()
+        mailed.assert_not_called()  # "needs you" gets Herdr's notification alone (the user, 2026-11-22)
         self.assertEqual(result.outcome, "success")
         self.assertEqual(
             self.events()[:4], ["step.start", "agent.start", "agent.blocked", "agent.unblocked"]
@@ -516,8 +518,10 @@ class DialogTest(StepTestCase):
 
     def test_agent_exiting_mid_work_ends_the_step(self):
         self.fake.behaviours = ["exit"]
-        result = self.step()
+        with mock.patch.object(alerts, "email") as mailed:
+            result = self.step()
         self.assertEqual(result.outcome, "agent-exited")
+        self.assertEqual([c.args[1] for c in mailed.call_args_list], ["implement-w8-p2 exited"])  # an error: emailed
         self.assertEqual(len(self.fake.prompts()), 1)
         self.assertIn("transcript.copied", self.events())  # its session was logged while it worked
 
@@ -1041,8 +1045,10 @@ class FailedTurnTest(StepTestCase):
 class QuestionTest(StepTestCase):
     def test_a_question_brings_the_user_to_the_tab_and_the_step_goes_on(self):
         self.fake.behaviours = ["ask"]
-        result = self.step(ask=lambda path: path.read_text().split("\n")[0][9:] if
-                           path.read_text().startswith("Blocked:") else None)
+        with mock.patch.object(alerts, "email") as mailed:
+            result = self.step(ask=lambda path: path.read_text().split("\n")[0][9:] if
+                               path.read_text().startswith("Blocked:") else None)
+        mailed.assert_not_called()  # a question is not an error
         self.assertEqual(result.outcome, "success")
         self.assertEqual(result.path.joinpath("result.md").read_text(), "done\n")
         self.assertTrue(result.path.joinpath("question-1.md").read_text().startswith("Blocked: which store"))

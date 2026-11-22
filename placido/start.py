@@ -274,7 +274,7 @@ def _set_up(
         code = run_setup(run, settings.setup, worktree.path, env)
         if code != 0:
             _status(herdr, run, worktree.workspace_id, status.text(status.STOPPED, "setup failed"))
-            alerts.notify(run, herdr, "setup failed", f"see {run.path / 'setup.log'}")
+            alerts.notify(run, herdr, "setup failed", f"see {run.path / 'setup.log'}", mail=True)
             run.event("run.end", outcome="failed", reason="setup")
             raise StartError(
                 f"setup failed with exit {code}; see {run.path / 'setup.log'}. Fix it, then run"
